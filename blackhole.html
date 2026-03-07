@@ -68,6 +68,11 @@
         #zoom-controls button:active {
             background: rgba(255,255,255,0.2);
         }
+        #glow-toggle.on {
+            color: rgba(255,220,140,0.9);
+            border-color: rgba(255,220,140,0.3);
+            text-shadow: 0 0 6px rgba(255,200,100,0.4);
+        }
         #back-btn {
             position: fixed;
             top: 14px;
@@ -99,6 +104,7 @@
     <div id="zoom-controls">
         <button id="zoom-in">+</button>
         <button id="zoom-out">&minus;</button>
+        <button id="glow-toggle" title="toggle glow">✦</button>
     </div>
 
     <script>setTimeout(() => { document.getElementById('info').style.opacity = '0'; }, 1000);</script>
@@ -256,6 +262,7 @@
                 vec3 col = vec3(0.0);
                 float acc = 0.0;
                 float rs  = 1.35;
+                float starFlag = 0.0;
 
                 for (int i = 0; i < 300; i++) {
                     float r = length(pos);
@@ -370,6 +377,7 @@
 
                     if (r > 35.0) {
                         col += stars(vel) * (1.0 - acc);
+                        if (acc < 0.08) starFlag = 1.0;  // glow only on near-pure star pixels
                         acc = 1.0;
                         break;
                     }
@@ -389,7 +397,7 @@
                 /* Brightness lift */
                 col *= 1.5;
 
-                gl_FragColor = vec4(col, 1.0);
+                gl_FragColor = vec4(col, starFlag);
             }
         `;
 
@@ -527,6 +535,15 @@
         document.getElementById('zoom-out').addEventListener('click', (e) => {
             e.stopPropagation();
             zoom = Math.min(30, zoom + ZOOM_STEP);
+        });
+
+        /* ---- Glow toggle ---- */
+        let glowEnabled = false;
+        const glowBtn = document.getElementById('glow-toggle');
+        glowBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            glowEnabled = !glowEnabled;
+            glowBtn.classList.toggle('on', glowEnabled);
         });
 
         /* ===== Explosion System ===== */
@@ -978,7 +995,7 @@
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
                     // Average SS×SS pixel block for this cell
-                    let rSum = 0, gSum = 0, bSum = 0;
+                    let rSum = 0, gSum = 0, bSum = 0, aSum = 0;
                     for (let sy = 0; sy < SS; sy++) {
                         for (let sx = 0; sx < SS; sx++) {
                             const px = x * SS + sx;
@@ -987,11 +1004,13 @@
                             rSum += pixelBuffer[idx];
                             gSum += pixelBuffer[idx + 1];
                             bSum += pixelBuffer[idx + 2];
+                            aSum += pixelBuffer[idx + 3];
                         }
                     }
                     const r = (rSum / ss2) | 0;
                     const g = (gSum / ss2) | 0;
                     const b = (bSum / ss2) | 0;
+                    const isStar = aSum > 0;  // alpha > 0 means star pixels present
 
                     const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
                     const ci  = Math.min(asciiLen - 1, Math.floor(lum * asciiLen));
@@ -1010,7 +1029,8 @@
                     const drawX = x * charW + ox;
                     const drawY = y * charH + oy;
 
-                    if (lum > 0.15) {
+                    // Background glow — stars always, everything else only if toggled on
+                    if ((isStar || glowEnabled) && lum > 0.15) {
                         const bgAlpha = Math.min(0.35, lum * lum * 1.2) * eAlpha;
                         ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + bgAlpha + ')';
                         ctx.fillRect(drawX, drawY, charW, charH);
