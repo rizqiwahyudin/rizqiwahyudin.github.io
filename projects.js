@@ -23,6 +23,15 @@ const projects = [
         classification: "webgl // glsl",
         sim: "milkyway.html",
         tags: ["three.js", "volumetric", "shaders"]
+    },
+    {
+        type: "sim",
+        title: "horsehead nebula",
+        subtitle: "ASCII dark nebula absorption simulation",
+        desc: "",
+        classification: "ascii // sim",
+        sim: "nebula.html",
+        tags: ["webgl", "glsl", "volumetric"]
     }
 ];
 
