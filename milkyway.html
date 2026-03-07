@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASCII Milky Way</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -67,11 +68,33 @@
         #zoom-controls button:active {
             background: rgba(255,255,255,0.2);
         }
+        #back-btn {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            font: 16px 'VT323', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            text-decoration: none;
+            color: rgba(255,255,255,0.35);
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            padding: 6px 14px;
+            z-index: 10;
+            transition: color 0.15s, background 0.15s, border-color 0.15s;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.12);
+            border-color: rgba(255,255,255,0.3);
+        }
     </style>
 </head>
 <body>
     <canvas id="display"></canvas>
     <div id="info">drag to rotate &middot; scroll to zoom &middot; double-click to reset</div>
+    <a id="back-btn" href="index.html">&larr; back</a>
     <div id="zoom-controls">
         <button id="zoom-in">+</button>
         <button id="zoom-out">&minus;</button>
@@ -83,7 +106,7 @@
     (() => {
         /* ===== Config ===== */
         const FONT_SIZE = 6;
-        const SS = 1;
+        const SS = 2;   // supersampling factor — 2×2 pixels per cell anti-aliases stars
         const ASCII = '.,:;itf1(lcg08#@';
 
         /* ===== Display Canvas ===== */
@@ -165,7 +188,8 @@
                     float d = length(fr - off * 0.35);
 
                     /* Wide enough to not flicker across ASCII cell boundaries */
-                    float star = smoothstep(0.10, 0.0, d) * n1;
+                    /* Wide enough for stable 2×2 SS sampling, dimmed to keep count low */
+                    float star = smoothstep(0.10, 0.01, d) * n1 * 0.45;
 
                     vec3 sc = mix(vec3(0.5, 0.65, 1.0), vec3(1.0, 0.85, 0.6), n2);
                     float brightness = (i < 2) ? 1.1 : 0.5;
