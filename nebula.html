@@ -531,8 +531,9 @@
         });
 
         /* ---- Glow toggle ---- */
-        let glowEnabled = false;
+        let glowEnabled = true;
         const glowBtn = document.getElementById('glow-toggle');
+        glowBtn.classList.add('on');
         glowBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             glowEnabled = !glowEnabled;
