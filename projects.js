@@ -45,7 +45,7 @@ function renderCards() {
         card.innerHTML = `
             <iframe src="${p.sim}" loading="lazy" title="${p.title}" allow="accelerometer"></iframe>
             <a class="sim-fullscreen" href="${p.sim}" target="_blank">↗ open</a>
-            <span class="sim-interact-hint">drag to rotate</span>
+            <span class="sim-interact-hint">press, click, drag!</span>
             ${p.classification ? `<span class="card-badge">${p.classification}</span>` : ''}
             <div class="card-body">
                 <div class="card-body-inner">
