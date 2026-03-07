@@ -9,7 +9,7 @@ const projects = [
     {
         type: "sim",
         title: "black hole",
-        subtitle: "gravitational lensing simulation",
+        subtitle: "ASCII gravitational lensing simulation",
         desc: "",
         classification: "webgl // glsl",
         sim: "blackhole.html",
@@ -18,7 +18,7 @@ const projects = [
     {
         type: "sim",
         title: "milky way",
-        subtitle: "volumetric galaxy simulation",
+        subtitle: "ASCII volumetric galaxy simulation",
         desc: "",
         classification: "webgl // glsl",
         sim: "milkyway.html",
