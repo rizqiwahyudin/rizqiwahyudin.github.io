@@ -261,6 +261,35 @@ a { color: inherit; text-decoration: none; }
     border-left: none;
     border-radius: 10px;
     position: relative;
+    overflow: hidden;
+}
+
+/* Flowing color wash over the frosted glass */
+.card-sim .card-body-inner::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(circle, rgba(120, 80, 200, 0.13) 0%, transparent 65%),
+        radial-gradient(circle, rgba(60, 160, 220, 0.10) 0%, transparent 65%);
+    background-size: 160% 160%, 140% 140%;
+    mix-blend-mode: screen;
+    pointer-events: none;
+    z-index: 0;
+    animation: glassFlow 12s ease-in-out infinite alternate;
+}
+
+@keyframes glassFlow {
+    0%   { background-position: 10% 20%, 90% 80%; }
+    33%  { background-position: 80% 10%, 20% 90%; }
+    66%  { background-position: 90% 80%, 10% 20%; }
+    100% { background-position: 20% 90%, 80% 10%; }
+}
+
+/* All card-body-inner children above the ::before wash */
+.card-sim .card-body-inner > * {
+    position: relative;
+    z-index: 1;
 }
 
 /* Card number label */
