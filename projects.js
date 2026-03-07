@@ -38,6 +38,7 @@ function renderCards() {
     projects.forEach((p, i) => {
         const card = document.createElement('div');
         card.className = 'card card-sim';
+        card.dataset.project = p.title.replace(/\s+/g, '-').toLowerCase();
 
         const num = String(i + 1).padStart(3, '0');
 

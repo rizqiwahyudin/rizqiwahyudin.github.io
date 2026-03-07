@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASCII Milky Way</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -72,7 +72,7 @@
             position: fixed;
             top: 14px;
             left: 14px;
-            font: 16px 'VT323', monospace;
+            font: 14px 'DotGothic16', monospace;
             letter-spacing: 2px;
             text-transform: lowercase;
             text-decoration: none;
@@ -95,6 +95,7 @@
     <canvas id="display"></canvas>
     <div id="info">drag to rotate &middot; scroll to zoom &middot; double-click to reset</div>
     <a id="back-btn" href="index.html">&larr; back</a>
+    <script>if (window !== window.top) document.getElementById('back-btn').style.display = 'none';</script>
     <div id="zoom-controls">
         <button id="zoom-in">+</button>
         <button id="zoom-out">&minus;</button>
@@ -438,7 +439,7 @@
         const camQuat = new THREE.Quaternion();
         camQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), 1.5708);
 
-        let zoom = 15.0;
+        let zoom = 19.0;
         let isDragging = false;
         let lastX = 0, lastY = 0;
         let inertiaDx = 0, inertiaDy = 0;
@@ -471,7 +472,7 @@
                 camQuat.copy(defaultQuat);
                 inertiaDx = 0;
                 inertiaDy = 0;
-                zoom = 16.0;
+                zoom = 19.0;
             }
             lastClickTime = now;
         });
