@@ -12,9 +12,14 @@
     <aside class="sidebar">
 
         <div>
-            <div class="sidebar-id">rizqi</div>
+            <div class="sidebar-id-row">
+                <canvas id="logo-dither" class="logo-dither"></canvas>
+                <div class="sidebar-id">rizqi</div>
+            </div>
             <div class="sidebar-classification">portfolio // 2026</div>
         </div>
+
+        <video id="logo-video" src="skull0000-0720.mp4" loop muted playsinline style="display:none"></video>
 
         <div class="sidebar-section">
             <div class="sidebar-section-label">// Profile</div>
@@ -47,5 +52,107 @@
     </main>
 
     <script src="projects.js"></script>
+
+    <script>
+    (function logoDither() {
+        const LOGO_PX    = 1.2;
+        const SPEED       = 2;
+        const BLACK_FLOOR = 0.0035;
+        const COLOR_BOOST = 0.8;
+        const DITHER_SPREAD = 0.5;
+        const LOGO_SIZE   = 36;
+
+        const canvas = document.getElementById('logo-dither');
+        const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+        const video  = document.getElementById('logo-video');
+
+        const dW = Math.floor(LOGO_SIZE / LOGO_PX);
+        const dH = dW;
+        canvas.width  = dW;
+        canvas.height = dH;
+
+        const sampler    = document.createElement('canvas');
+        const samplerCtx = sampler.getContext('2d', { willReadFrequently: true });
+        sampler.width  = dW;
+        sampler.height = dH;
+
+        const BAYER8 = new Float32Array([
+             0, 32,  8, 40,  2, 34, 10, 42,
+            48, 16, 56, 24, 50, 18, 58, 26,
+            12, 44,  4, 36, 14, 46,  6, 38,
+            60, 28, 52, 20, 62, 30, 54, 22,
+             3, 35, 11, 43,  1, 33,  9, 41,
+            51, 19, 59, 27, 49, 17, 57, 25,
+            15, 47,  7, 39, 13, 45,  5, 37,
+            63, 31, 55, 23, 61, 29, 53, 21
+        ]);
+        for (let i = 0; i < 64; i++) BAYER8[i] /= 64.0;
+
+        function frame() {
+            requestAnimationFrame(frame);
+            if (video.readyState < 2) return;
+
+            const w = dW, h = dH;
+            const vidAspect = video.videoWidth / video.videoHeight;
+            let drawW, drawH, drawX, drawY;
+            if (vidAspect > 1) {
+                drawH = h;
+                drawW = h * vidAspect;
+                drawX = (w - drawW) / 2;
+                drawY = 0;
+            } else {
+                drawW = w;
+                drawH = w / vidAspect;
+                drawX = 0;
+                drawY = (h - drawH) / 2;
+            }
+
+            samplerCtx.fillStyle = '#000';
+            samplerCtx.fillRect(0, 0, w, h);
+            samplerCtx.drawImage(video, drawX, drawY, drawW, drawH);
+
+            const srcData = samplerCtx.getImageData(0, 0, w, h);
+            const src = srcData.data;
+            const outData = ctx.createImageData(w, h);
+            const out = outData.data;
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const i = (y * w + x) * 4;
+                    let r = src[i]     / 255.0;
+                    let g = src[i + 1] / 255.0;
+                    let b = src[i + 2] / 255.0;
+
+                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                    if (lum < BLACK_FLOOR) {
+                        out[i] = 0; out[i+1] = 0; out[i+2] = 0; out[i+3] = 255;
+                        continue;
+                    }
+
+                    r = Math.min(1.0, r * COLOR_BOOST);
+                    g = Math.min(1.0, g * COLOR_BOOST);
+                    b = Math.min(1.0, b * COLOR_BOOST);
+
+                    const threshold = BAYER8[(y & 7) * 8 + (x & 7)] * DITHER_SPREAD;
+                    out[i]     = r > threshold ? 255 : 0;
+                    out[i + 1] = g > threshold ? 255 : 0;
+                    out[i + 2] = b > threshold ? 255 : 0;
+                    out[i + 3] = 255;
+                }
+            }
+            ctx.putImageData(outData, 0, 0);
+        }
+
+        video.playbackRate = SPEED;
+        video.play().then(() => {
+            requestAnimationFrame(frame);
+        }).catch(() => {
+            document.addEventListener('click', () => {
+                video.play();
+                requestAnimationFrame(frame);
+            }, { once: true });
+        });
+    })();
+    </script>
 </body>
 </html>
