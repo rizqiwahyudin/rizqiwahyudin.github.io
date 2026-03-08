@@ -21,6 +21,13 @@
     --glitch-magenta: #ff0050;
     --sidebar-w: 220px;
     --gap: 14px;
+
+    /* Glass tuner defaults */
+    --glass-blur: 10px;
+    --glass-tint: 0.18;
+    --glass-wash: 1;
+    --glass-radius: 10px;
+    --glass-border: 0;
 }
 
 html { font-size: 15px; }
@@ -269,12 +276,12 @@ a { color: inherit; text-decoration: none; }
 }
 
 .card-sim .card-body-inner {
-    background: rgba(5, 5, 5, 0.18);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgb(5 5 5 / var(--glass-tint));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     padding: 8px 12px;
-    border-left: none;
-    border-radius: 10px;
+    border: 1px solid rgb(255 255 255 / var(--glass-border));
+    border-radius: var(--glass-radius);
     position: relative;
     overflow: hidden;
 }
@@ -291,6 +298,7 @@ a { color: inherit; text-decoration: none; }
     mix-blend-mode: screen;
     pointer-events: none;
     z-index: 0;
+    opacity: var(--glass-wash);
     animation: glassFlow 12s ease-in-out infinite alternate;
 }
 
