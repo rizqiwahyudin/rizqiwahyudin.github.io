@@ -154,5 +154,257 @@
         });
     })();
     </script>
+
+    <!-- ===== Glass Tuner ===== -->
+    <style>
+        #glass-tuner-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 10000;
+            font: 11px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            color: var(--text-dim);
+            background: rgba(5, 5, 5, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #glass-tuner-toggle:hover {
+            color: var(--text);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        #glass-tuner {
+            position: fixed;
+            bottom: 52px;
+            right: 16px;
+            z-index: 10000;
+            width: 260px;
+            font-family: 'DotGothic16', monospace;
+            background: rgb(12 12 14 / 0.88);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 16px;
+            display: none;
+        }
+        #glass-tuner.open { display: block; }
+
+        #glass-tuner .gt-title {
+            font-size: 11px;
+            letter-spacing: 3px;
+            text-transform: lowercase;
+            color: var(--text-dim);
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+
+        #glass-tuner .gt-row {
+            margin-bottom: 10px;
+        }
+        #glass-tuner .gt-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: var(--text-mid);
+            margin-bottom: 4px;
+        }
+        #glass-tuner .gt-val {
+            font-variant-numeric: tabular-nums;
+            color: var(--text-dim);
+        }
+
+        #glass-tuner input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 3px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 2px;
+            outline: none;
+        }
+        #glass-tuner input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-light);
+            cursor: pointer;
+            border: none;
+        }
+        #glass-tuner input[type="range"]::-moz-range-thumb {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-light);
+            cursor: pointer;
+            border: none;
+        }
+
+        #glass-tuner .gt-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+        #glass-tuner .gt-btn {
+            flex: 1;
+            font: 9px 'DotGothic16', monospace;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: var(--text-dim);
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 5px;
+            padding: 5px 0;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #glass-tuner .gt-btn:hover {
+            color: var(--text);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #glass-tuner .gt-copied {
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            text-align: center;
+            color: var(--glitch-cyan);
+            margin-top: 6px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #glass-tuner .gt-copied.show { opacity: 1; }
+    </style>
+
+    <button id="glass-tuner-toggle">&#9881; glass tuner</button>
+
+    <div id="glass-tuner">
+        <div class="gt-title">// glass tuner</div>
+
+        <div class="gt-row">
+            <div class="gt-label"><span>frost blur</span><span class="gt-val" id="gt-blur-val">10px</span></div>
+            <input type="range" id="gt-blur" min="0" max="40" step="0.5" value="10">
+        </div>
+        <div class="gt-row">
+            <div class="gt-label"><span>tint opacity</span><span class="gt-val" id="gt-tint-val">0.18</span></div>
+            <input type="range" id="gt-tint" min="0" max="1" step="0.01" value="0.18">
+        </div>
+        <div class="gt-row">
+            <div class="gt-label"><span>color wash</span><span class="gt-val" id="gt-wash-val">1.00</span></div>
+            <input type="range" id="gt-wash" min="0" max="3" step="0.05" value="1">
+        </div>
+        <div class="gt-row">
+            <div class="gt-label"><span>corner radius</span><span class="gt-val" id="gt-radius-val">10px</span></div>
+            <input type="range" id="gt-radius" min="0" max="30" step="1" value="10">
+        </div>
+        <div class="gt-row">
+            <div class="gt-label"><span>border glow</span><span class="gt-val" id="gt-border-val">0.00</span></div>
+            <input type="range" id="gt-border" min="0" max="0.3" step="0.005" value="0">
+        </div>
+
+        <div class="gt-actions">
+            <button class="gt-btn" id="gt-copy">copy css</button>
+            <button class="gt-btn" id="gt-reset">reset</button>
+        </div>
+        <div class="gt-copied" id="gt-copied">copied to clipboard</div>
+    </div>
+
+    <script>
+    (function glassTuner() {
+        const root = document.documentElement.style;
+        const toggle = document.getElementById('glass-tuner-toggle');
+        const panel  = document.getElementById('glass-tuner');
+
+        toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+        const defaults = {
+            blur: 10, tint: 0.18, wash: 1, radius: 10, border: 0
+        };
+
+        const sliders = {
+            blur:   document.getElementById('gt-blur'),
+            tint:   document.getElementById('gt-tint'),
+            wash:   document.getElementById('gt-wash'),
+            radius: document.getElementById('gt-radius'),
+            border: document.getElementById('gt-border')
+        };
+
+        const labels = {
+            blur:   document.getElementById('gt-blur-val'),
+            tint:   document.getElementById('gt-tint-val'),
+            wash:   document.getElementById('gt-wash-val'),
+            radius: document.getElementById('gt-radius-val'),
+            border: document.getElementById('gt-border-val')
+        };
+
+        function update() {
+            const b  = parseFloat(sliders.blur.value);
+            const t  = parseFloat(sliders.tint.value);
+            const w  = parseFloat(sliders.wash.value);
+            const r  = parseFloat(sliders.radius.value);
+            const bd = parseFloat(sliders.border.value);
+
+            root.setProperty('--glass-blur',   b + 'px');
+            root.setProperty('--glass-tint',   t);
+            root.setProperty('--glass-wash',   w);
+            root.setProperty('--glass-radius', r + 'px');
+            root.setProperty('--glass-border', bd);
+
+            labels.blur.textContent   = b.toFixed(1) + 'px';
+            labels.tint.textContent   = t.toFixed(2);
+            labels.wash.textContent   = w.toFixed(2);
+            labels.radius.textContent = r + 'px';
+            labels.border.textContent = bd.toFixed(3);
+        }
+
+        Object.values(sliders).forEach(s => s.addEventListener('input', update));
+
+        document.getElementById('gt-reset').addEventListener('click', () => {
+            sliders.blur.value   = defaults.blur;
+            sliders.tint.value   = defaults.tint;
+            sliders.wash.value   = defaults.wash;
+            sliders.radius.value = defaults.radius;
+            sliders.border.value = defaults.border;
+            update();
+        });
+
+        document.getElementById('gt-copy').addEventListener('click', () => {
+            const b  = parseFloat(sliders.blur.value);
+            const t  = parseFloat(sliders.tint.value);
+            const w  = parseFloat(sliders.wash.value);
+            const r  = parseFloat(sliders.radius.value);
+            const bd = parseFloat(sliders.border.value);
+
+            const css = `.card-sim .card-body-inner {\n`
+                + `    background: rgb(5 5 5 / ${t.toFixed(2)});\n`
+                + `    backdrop-filter: blur(${b.toFixed(1)}px);\n`
+                + `    -webkit-backdrop-filter: blur(${b.toFixed(1)}px);\n`
+                + `    border: 1px solid rgb(255 255 255 / ${bd.toFixed(3)});\n`
+                + `    border-radius: ${r}px;\n`
+                + `}\n\n`
+                + `.card-sim .card-body-inner::before {\n`
+                + `    opacity: ${w.toFixed(2)};\n`
+                + `}`;
+
+            navigator.clipboard.writeText(css).then(() => {
+                const msg = document.getElementById('gt-copied');
+                msg.classList.add('show');
+                setTimeout(() => msg.classList.remove('show'), 1600);
+            });
+        });
+    })();
+    </script>
 </body>
 </html>
