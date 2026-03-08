@@ -26,12 +26,12 @@ const projects = [
     },
     {
         type: "sim",
-        title: "horsehead nebula",
-        subtitle: "ASCII dark nebula absorption simulation",
+        title: "memento mori",
+        subtitle: "don't forget to live :)",
         desc: "",
-        classification: "ascii // sim",
+        classification: "webgl // glsl",
         sim: "nebula.html",
-        tags: ["webgl", "glsl", "volumetric"]
+        tags: ["webgl", "glsl", "raymarching"]
     }
 ];
 

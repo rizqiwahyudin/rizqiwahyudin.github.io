@@ -3,961 +3,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ASCII Horsehead Nebula</title>
+    <title>Memento Mori</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #080808;
+            background: #000;
             overflow: hidden;
-            cursor: grab;
             user-select: none;
             -webkit-user-select: none;
         }
-        body.dragging { cursor: grabbing; }
-        canvas#display {
+        canvas#dither-canvas {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-        }
-        #info {
-            position: fixed;
-            bottom: 14px;
-            width: 100%;
-            text-align: center;
-            color: rgba(255,255,255,0.15);
-            font: 11px 'Courier New', monospace;
-            pointer-events: none;
-            z-index: 1;
-            letter-spacing: 2px;
-            transition: opacity 1s ease;
-        }
-        #zoom-controls {
-            position: fixed;
-            right: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            z-index: 2;
-        }
-        #zoom-controls button {
-            width: 36px;
-            height: 36px;
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 6px;
-            background: rgba(255,255,255,0.05);
-            color: rgba(255,255,255,0.5);
-            font: bold 20px 'Courier New', monospace;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background 0.15s, color 0.15s, border-color 0.15s;
-            line-height: 1;
-            padding: 0;
-        }
-        #zoom-controls button:hover {
-            background: rgba(255,255,255,0.12);
-            color: rgba(255,255,255,0.8);
-            border-color: rgba(255,255,255,0.3);
-        }
-        #zoom-controls button:active {
-            background: rgba(255,255,255,0.2);
-        }
-        #glow-toggle.on {
-            color: rgba(255,220,140,0.9);
-            border-color: rgba(255,220,140,0.3);
-            text-shadow: 0 0 6px rgba(255,200,100,0.4);
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
         }
         #back-btn {
             position: fixed;
-            top: 14px;
-            left: 14px;
-            font: 14px 'DotGothic16', monospace;
-            letter-spacing: 2px;
-            text-transform: lowercase;
+            top: 16px; left: 20px;
+            color: rgba(255,255,255,0.4);
             text-decoration: none;
-            color: rgba(255,255,255,0.35);
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 6px;
-            padding: 6px 14px;
+            font: 14px 'DotGothic16', monospace;
             z-index: 10;
-            transition: color 0.15s, background 0.15s, border-color 0.15s;
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            transition: color 0.2s, border-color 0.2s;
         }
         #back-btn:hover {
-            color: rgba(255,255,255,0.8);
-            background: rgba(255,255,255,0.12);
-            border-color: rgba(255,255,255,0.3);
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        video#source-video {
+            display: none;
         }
     </style>
 </head>
 <body>
-    <canvas id="display"></canvas>
-    <div id="info">drag to rotate &middot; scroll to zoom &middot; double-click to reset</div>
-    <a id="back-btn" href="index.html">&larr; back</a>
-    <script>if (window !== window.top) document.getElementById('back-btn').style.display = 'none';</script>
-    <div id="zoom-controls">
-        <button id="zoom-in">+</button>
-        <button id="zoom-out">&minus;</button>
-        <button id="glow-toggle" title="toggle glow">✦</button>
-    </div>
+<canvas id="dither-canvas"></canvas>
+<video id="source-video" src="skull0000-0720.mp4" loop muted playsinline></video>
+<a id="back-btn" href="index.html">&larr; back</a>
 
-    <script>setTimeout(() => { document.getElementById('info').style.opacity = '0'; }, 1000);</script>
-    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-    <script>
-    (() => {
-        /* ===== Config ===== */
-        const FONT_SIZE = 6;
-        const SS = 2;   // supersampling factor — 2×2 pixels per cell anti-aliases stars
-        const ASCII = '.,:;itf1(lcg08#@';
+<script>
+/* ========== CONFIG — PLAY WITH THESE ========== */
+const PIXEL_SIZE    = 1.2;     // dither pixel size — lower = higher def
+const PLAYBACK_SPEED = 2;  // video speed multiplier (1.0 = normal, 2.0 = double)
+const BLACK_FLOOR   = 0.0035;  // luminance below this → pure black (0.0 = off, 0.1 = aggressive)
+const COLOR_BOOST   = 0.8;   // boost color channels before dither (1.0 = normal, 1.5 = vivid)
+const DITHER_SPREAD = 0.5;   // dither contrast (0.5 = tighter/more solid, 1.5 = more spread)
 
-        /* ===== Display Canvas ===== */
-        const display = document.getElementById('display');
-        const ctx = display.getContext('2d');
-        ctx.font = `${FONT_SIZE}px 'Courier New', monospace`;
-        const charW = Math.ceil(ctx.measureText('M').width);
-        const charH = Math.ceil(FONT_SIZE * 1.2);
+/* ========== Elements ========== */
+const canvas = document.getElementById('dither-canvas');
+const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+const video  = document.getElementById('source-video');
 
-        /* ===== Three.js Setup (offscreen) ===== */
-        const renderer = new THREE.WebGLRenderer({ antialias: false });
-        renderer.setPixelRatio(1);
-        renderer.setSize(1, 1);
+/* Offscreen canvas for sampling video frames */
+const samplerCanvas = document.createElement('canvas');
+const samplerCtx    = samplerCanvas.getContext('2d', { willReadFrequently: true });
 
-        const scene = new THREE.Scene();
-        const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+let ditherW, ditherH, screenW, screenH;
 
-        /* ===== Shader ===== */
-        const vertexShader = `
-            void main() {
-                gl_Position = vec4(position.xy, 0.0, 1.0);
-            }
-        `;
+function resize() {
+    screenW = window.innerWidth;
+    screenH = window.innerHeight;
+    ditherW = Math.floor(screenW / PIXEL_SIZE);
+    ditherH = Math.floor(screenH / PIXEL_SIZE);
 
-        const fragmentShader = `
-            precision highp float;
+    canvas.width  = ditherW;
+    canvas.height = ditherH;
+    canvas.style.width  = screenW + 'px';
+    canvas.style.height = screenH + 'px';
 
-            uniform float uTime;
-            uniform vec2  uResolution;
-            uniform vec3  uCamPos;
-            uniform vec3  uCamUp;
-            uniform float uZoom;
+    samplerCanvas.width  = ditherW;
+    samplerCanvas.height = ditherH;
+}
 
-            #define PI 3.14159265
+window.addEventListener('resize', resize);
+resize();
 
-            /* ---- 2D Hash / Noise ---- */
-            float hash(vec2 p) {
-                return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-            }
-            float noise(vec2 p) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                f = f * f * (3.0 - 2.0 * f);
-                float a = hash(i);
-                float b = hash(i + vec2(1.0, 0.0));
-                float c = hash(i + vec2(0.0, 1.0));
-                float d = hash(i + vec2(1.0, 1.0));
-                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-            }
+/* ========== 8x8 Bayer dither matrix ========== */
+const BAYER8 = new Float32Array([
+     0, 32,  8, 40,  2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44,  4, 36, 14, 46,  6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+     3, 35, 11, 43,  1, 33,  9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47,  7, 39, 13, 45,  5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21
+]);
+for (let i = 0; i < 64; i++) BAYER8[i] /= 64.0;
 
-            /* ---- 3D Hash / Noise ---- */
-            float hash13(vec3 p3) {
-                p3 = fract(p3 * 0.1031);
-                p3 += dot(p3, p3.zyx + 31.32);
-                return fract((p3.x + p3.y) * p3.z);
-            }
-            float noise3(vec3 p) {
-                vec3 i = floor(p);
-                vec3 f = fract(p);
-                f = f * f * (3.0 - 2.0 * f);
-                return mix(
-                    mix(mix(hash13(i + vec3(0.0, 0.0, 0.0)), hash13(i + vec3(1.0, 0.0, 0.0)), f.x),
-                        mix(hash13(i + vec3(0.0, 1.0, 0.0)), hash13(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
-                    mix(mix(hash13(i + vec3(0.0, 0.0, 1.0)), hash13(i + vec3(1.0, 0.0, 1.0)), f.x),
-                        mix(hash13(i + vec3(0.0, 1.0, 1.0)), hash13(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
-                    f.z
-                );
-            }
-            float fbm3(vec3 p) {
-                float v = 0.0, a = 0.5;
-                for (int i = 0; i < 4; i++) {
-                    v += a * noise3(p);
-                    p = p * 2.0 + vec3(1.7, 1.2, 1.5);
-                    a *= 0.5;
-                }
-                return v;
-            }
+/* ========== Video → Dither render loop ========== */
+function frame() {
+    requestAnimationFrame(frame);
 
-            /* ---- Star field (spherical grid — wide points for stable ASCII) ---- */
-            vec3 stars(vec3 dir) {
-                vec3 c = vec3(0.0);
-                dir = normalize(dir);
-                float sTheta = acos(clamp(dir.y, -1.0, 1.0));
-                float sPhi   = atan(dir.z, dir.x);
+    /* Don't render until video is playing */
+    if (video.readyState < 2) return;
 
-                for (int i = 0; i < 4; i++) {
-                    float scale = 16.0 + float(i) * 20.0;
-                    vec2 grid = vec2(sPhi * scale, sTheta * scale);
-                    vec2 id = floor(grid);
-                    vec2 fr = fract(grid) - 0.5;
+    const w = ditherW, h = ditherH;
 
-                    float n1 = hash(id + float(i) * 100.0);
-                    float n2 = hash(id * 1.73 + 37.0 + float(i) * 50.0);
+    /* Draw video frame to sampler canvas (scaled to dither resolution) */
+    /* Center the square video in the viewport */
+    const vidAspect = video.videoWidth / video.videoHeight;
+    const canAspect = w / h;
 
-                    vec2 off = vec2(n1, n2) - 0.5;
-                    float d = length(fr - off * 0.35);
+    let drawW, drawH, drawX, drawY;
+    if (vidAspect > canAspect) {
+        /* Video wider than canvas — fit height, center horizontally */
+        drawH = h;
+        drawW = h * vidAspect;
+        drawX = (w - drawW) / 2;
+        drawY = 0;
+    } else {
+        /* Video taller than canvas — fit width, center vertically */
+        drawW = w;
+        drawH = w / vidAspect;
+        drawX = 0;
+        drawY = (h - drawH) / 2;
+    }
 
-                    float star = smoothstep(0.10, 0.01, d) * n1 * 0.45;
+    samplerCtx.fillStyle = '#000';
+    samplerCtx.fillRect(0, 0, w, h);
+    samplerCtx.drawImage(video, drawX, drawY, drawW, drawH);
 
-                    vec3 sc = mix(vec3(0.5, 0.65, 1.0), vec3(1.0, 0.85, 0.6), n2);
-                    float brightness = (i < 2) ? 1.1 : 0.5;
-                    c += sc * star * brightness;
-                }
-                return c;
+    /* Read video pixels */
+    const srcData = samplerCtx.getImageData(0, 0, w, h);
+    const src = srcData.data;
+
+    /* Create dithered output */
+    const outData = ctx.createImageData(w, h);
+    const out = outData.data;
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+
+            /* Source RGB (0-1) */
+            let r = src[i]     / 255.0;
+            let g = src[i + 1] / 255.0;
+            let b = src[i + 2] / 255.0;
+
+            /* Black floor — crush near-black to pure black */
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (lum < BLACK_FLOOR) {
+                out[i] = 0; out[i+1] = 0; out[i+2] = 0; out[i+3] = 255;
+                continue;
             }
 
-            /* ---- Ray-sphere intersection ---- */
-            bool hitSphere(vec3 ro, vec3 rd, float radius, out float t0, out float t1) {
-                float b = dot(ro, rd);
-                float c = dot(ro, ro) - radius * radius;
-                float disc = b * b - c;
-                if (disc < 0.0) return false;
-                float sq = sqrt(disc);
-                t0 = -b - sq;
-                t1 = -b + sq;
-                return true;
-            }
+            /* Color boost */
+            r = Math.min(1.0, r * COLOR_BOOST);
+            g = Math.min(1.0, g * COLOR_BOOST);
+            b = Math.min(1.0, b * COLOR_BOOST);
 
-            /* ---- Horsehead dark nebula shape ---- */
-            float horseheadShape(vec3 p) {
-                vec3 wind = vec3(uTime * 0.008, uTime * 0.005, uTime * 0.006);
-                float n = fbm3((p + wind) * 0.7);
+            /* Bayer threshold for this pixel */
+            const bx = x & 7;
+            const by = y & 7;
+            const threshold = BAYER8[by * 8 + bx] * DITHER_SPREAD;
 
-                /* Organic edge displacement */
-                vec3 dp = p;
-                dp.x += (n - 0.5) * 0.8;
-                dp.z += (n * n - 0.25) * 0.6;
-
-                /* Base / dark cloud ridge */
-                float baseR = length(dp.xz);
-                float baseW = 3.5 + n * 0.5;
-                float base = 1.0 - smoothstep(baseW * 0.3, baseW, baseR);
-                base *= exp(-(dp.y + 2.5) * (dp.y + 2.5) * 0.3);
-                base *= smoothstep(-5.0, -3.5, dp.y);
-
-                /* Neck / pillar rising from base */
-                float neckR = length(dp.xz);
-                float neckW = mix(2.0, 0.7, smoothstep(-2.0, 2.0, dp.y)) + n * 0.3;
-                float neck = 1.0 - smoothstep(neckW * 0.3, neckW, neckR);
-                neck *= smoothstep(-3.5, -1.5, dp.y) * smoothstep(2.8, 1.8, dp.y);
-
-                /* Head: blob extending left (-x) */
-                vec3 hp = dp - vec3(-1.2, 2.0, 0.0);
-                hp.x *= 0.8;
-                float head = 1.0 - smoothstep(0.4, 1.4, length(hp));
-                head *= smoothstep(0.5, 1.5, dp.y);
-
-                /* Muzzle / snout */
-                vec3 mp = dp - vec3(-2.2, 1.4, 0.0);
-                mp.y *= 1.5;
-                float muzzle = 1.0 - smoothstep(0.15, 0.85, length(mp));
-
-                float shape = max(max(base, neck), max(head, muzzle));
-
-                /* Depth falloff in z */
-                shape *= exp(-dp.z * dp.z * 0.3);
-
-                /* Erosion: noise carves irregular edges */
-                shape *= smoothstep(0.18, 0.5, n);
-
-                return clamp(shape, 0.0, 1.0);
-            }
-
-            /* ---- Nebula volume sample ---- */
-            /* Returns vec4(emission.rgb, density) */
-            vec4 nebulaSample(vec3 p) {
-                float r = length(p);
-                if (r > 8.5) return vec4(0.0);
-
-                /* ---- Horsehead absorption ---- */
-                float dark = horseheadShape(p);
-
-                /* ---- Emission nebula (IC 434 — H-alpha glow) ---- */
-                vec3 wind = vec3(uTime * 0.015, uTime * 0.008, uTime * 0.012);
-                float emN = fbm3((p + wind) * 0.4);
-
-                vec3 emCenter = vec3(1.5, 0.0, -0.5);
-                float emDist = length(p - emCenter);
-                float emBroad = exp(-emDist * emDist * 0.022);
-                float emDiff = exp(-abs(p.x - 0.5) * 0.12) * exp(-p.y * p.y * 0.03);
-                float em = (emBroad * 0.6 + emDiff * 0.4) * (0.25 + 0.75 * emN);
-                em *= smoothstep(8.5, 6.0, r);
-
-                /* Emission color: deep reds → warm pinks with magenta hints */
-                float cN = fbm3((p + wind * 0.5) * 0.55 + 50.0);
-                vec3 emColor = mix(vec3(0.85, 0.08, 0.04), vec3(1.0, 0.28, 0.12), cN);
-                emColor = mix(emColor, vec3(0.95, 0.12, 0.45), cN * cN * 0.3);
-
-                /* Subtle orange at periphery */
-                float edgeT = smoothstep(4.0, 7.0, emDist);
-                emColor = mix(emColor, vec3(0.9, 0.4, 0.1), edgeT * 0.3);
-
-                /* ---- Blue reflection nebula (NGC 2023) ---- */
-                vec3 blueC = vec3(-2.5, -3.0, 0.5);
-                float blueR = length(p - blueC);
-                float blue = 0.0;
-                if (blueR < 3.5) {
-                    blue = exp(-blueR * blueR * 0.35) * (0.3 + 0.7 * emN) * 0.4;
-                }
-
-                /* Second blue patch — violet tint near top */
-                vec3 violetC = vec3(2.0, 3.0, -0.3);
-                float violetR = length(p - violetC);
-                float violet = 0.0;
-                if (violetR < 2.5) {
-                    violet = exp(-violetR * violetR * 0.5) * (0.2 + 0.5 * cN) * 0.25;
-                }
-
-                /* ---- Combine ---- */
-                /* Suppress emission inside horsehead */
-                float emFinal = em * (1.0 - smoothstep(0.1, 0.6, dark));
-
-                /* Subtle edge glow where horsehead meets emission */
-                float edgeGlow = dark * (1.0 - dark) * 4.0;
-
-                vec3 emission = emColor * emFinal * 2.5
-                              + vec3(0.35, 0.05, 0.02) * edgeGlow * 0.4
-                              + vec3(0.1, 0.18, 0.65) * blue * 1.5
-                              + vec3(0.25, 0.1, 0.55) * violet * 1.2;
-
-                float density = em * 0.5 + dark * 3.5 + blue * 0.4 + violet * 0.3;
-
-                return vec4(emission, max(density, 0.0));
-            }
-
-            /* ---- Main ---- */
-            void main() {
-                vec2 uv = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
-
-                /* Camera */
-                vec3 fwd   = normalize(-uCamPos);
-                vec3 right = normalize(cross(fwd, normalize(uCamUp)));
-                vec3 up    = normalize(cross(right, fwd));
-                vec3 rd    = normalize(fwd * 1.0 + right * uv.x + up * uv.y);
-
-                vec3 col = vec3(0.0);
-                float acc = 0.0;
-                float starFlag = 0.0;
-
-                /* Intersect nebula bounding sphere */
-                float tNear, tFar;
-                if (hitSphere(uCamPos, rd, 8.5, tNear, tFar)) {
-                    tNear = max(tNear, 0.0);
-                    float pathLen = tFar - tNear;
-                    float dt = max(pathLen / 120.0, 0.05);
-                    float t = tNear + dt * 0.5;
-
-                    for (int i = 0; i < 120; i++) {
-                        if (acc > 0.99 || t > tFar) break;
-
-                        vec3 p = uCamPos + rd * t;
-                        vec4 s = nebulaSample(p);
-
-                        if (s.a > 0.001) {
-                            float a = s.a * dt * 0.6;
-                            col += s.rgb * a * (1.0 - acc);
-                            acc += a * (1.0 - acc);
-                        }
-
-                        t += dt;
-                    }
-                }
-
-                /* Background stars */
-                if (acc < 0.99) {
-                    col += stars(rd) * (1.0 - acc);
-                    if (acc < 0.08) starFlag = 1.0;
-                }
-
-                /* Saturation boost */
-                float grey = dot(col, vec3(0.299, 0.587, 0.114));
-                col = mix(vec3(grey), col, 1.5);
-                col = max(col, 0.0);
-
-                /* ACES tone mapping + gamma */
-                col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
-                col = pow(clamp(col, 0.0, 1.0), vec3(0.68));
-
-                /* Brightness lift */
-                col *= 1.4;
-
-                gl_FragColor = vec4(col, starFlag);
-            }
-        `;
-
-        const material = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime:       { value: 0.0 },
-                uResolution: { value: new THREE.Vector2() },
-                uCamPos:     { value: new THREE.Vector3() },
-                uCamUp:      { value: new THREE.Vector3(0, 1, 0) },
-                uZoom:       { value: 16.0 }
-            },
-            vertexShader,
-            fragmentShader,
-            depthTest: false,
-            depthWrite: false
-        });
-
-        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
-        scene.add(quad);
-
-        /* ===== Render Target (supersampled) ===== */
-        let cols, rows, renderW, renderH, renderTarget, pixelBuffer;
-
-        function resize() {
-            const dpr = Math.min(window.devicePixelRatio || 1, 2);
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-            display.width  = w * dpr;
-            display.height = h * dpr;
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.font = `${FONT_SIZE}px 'Courier New', monospace`;
-
-            cols = Math.floor(w / charW);
-            rows = Math.floor(h / charH);
-            renderW = cols * SS;
-            renderH = rows * SS;
-
-            if (renderTarget) renderTarget.dispose();
-            renderTarget = new THREE.WebGLRenderTarget(renderW, renderH, {
-                minFilter: THREE.LinearFilter,
-                magFilter: THREE.LinearFilter,
-                format: THREE.RGBAFormat,
-                type: THREE.UnsignedByteType
-            });
-            pixelBuffer = new Uint8Array(renderW * renderH * 4);
-            material.uniforms.uResolution.value.set(renderW, renderH);
-            renderer.setSize(renderW, renderH);
+            /* Dither each channel independently — preserves color */
+            out[i]     = r > threshold ? 255 : 0;
+            out[i + 1] = g > threshold ? 255 : 0;
+            out[i + 2] = b > threshold ? 255 : 0;
+            out[i + 3] = 255;
         }
-        resize();
-        window.addEventListener('resize', resize);
-
-        /* ===== Quaternion Trackball Camera ===== */
-        const camQuat = new THREE.Quaternion();
-        camQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15);
-
-        let zoom = 16.0;
-        let isDragging = false;
-        let lastX = 0, lastY = 0;
-        let inertiaDx = 0, inertiaDy = 0;
-
-        function rotateCamera(dx, dy) {
-            const angle = Math.sqrt(dx * dx + dy * dy);
-            if (angle < 1e-6) return;
-
-            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat).normalize();
-            const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(camQuat).normalize();
-
-            const axis = new THREE.Vector3()
-                .addScaledVector(up,    dx / angle)
-                .addScaledVector(right, -dy / angle)
-                .normalize();
-
-            const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-            camQuat.premultiply(q);
-            camQuat.normalize();
-        }
-
-        const defaultQuat = new THREE.Quaternion();
-        defaultQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15);
-
-        let lastClickTime = 0;
-        window.addEventListener('mousedown', (e) => {
-            if (e.target.closest('#zoom-controls')) return;
-            const now = performance.now();
-            if (now - lastClickTime < 350) {
-                camQuat.copy(defaultQuat);
-                inertiaDx = 0;
-                inertiaDy = 0;
-                zoom = 16.0;
-            }
-            lastClickTime = now;
-        });
-
-        /* ---- Mouse handlers ---- */
-        window.addEventListener('mousedown', (e) => {
-            isDragging = true;
-            lastX = e.clientX;
-            lastY = e.clientY;
-            inertiaDx = 0;
-            inertiaDy = 0;
-            document.body.classList.add('dragging');
-        });
-
-        window.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            const dx = (e.clientX - lastX) * 0.008;
-            const dy = (e.clientY - lastY) * 0.008;
-            inertiaDx = dx;
-            inertiaDy = dy;
-            rotateCamera(dx, dy);
-            lastX = e.clientX;
-            lastY = e.clientY;
-        });
-
-        window.addEventListener('mouseup', () => {
-            isDragging = false;
-            document.body.classList.remove('dragging');
-        });
-
-        window.addEventListener('wheel', (e) => {
-            zoom = Math.max(6, Math.min(35, zoom + e.deltaY * 0.015));
-        }, { passive: true });
-
-        /* ---- Zoom buttons ---- */
-        const ZOOM_STEP = 1.5;
-        document.getElementById('zoom-in').addEventListener('click', (e) => {
-            e.stopPropagation();
-            zoom = Math.max(6, zoom - ZOOM_STEP);
-        });
-        document.getElementById('zoom-out').addEventListener('click', (e) => {
-            e.stopPropagation();
-            zoom = Math.min(35, zoom + ZOOM_STEP);
-        });
-
-        /* ---- Glow toggle ---- */
-        let glowEnabled = true;
-        const glowBtn = document.getElementById('glow-toggle');
-        glowBtn.classList.add('on');
-        glowBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            glowEnabled = !glowEnabled;
-            glowBtn.classList.toggle('on', glowEnabled);
-        });
-
-        /* ===== Explosion System ===== */
-        const explosions = [];
-        const EXPLODE_RADIUS = 3;
-        const DEBRIS_TIME = 1.2;
-        const GONE_TIME = 0.4;
-        const REGEN_TIME = 0.8;
-        const EXPLODE_DURATION = DEBRIS_TIME + GONE_TIME + REGEN_TIME;
-
-        /* ===== Stellar Birth Easter Egg ===== */
-        let novaActive = false;
-        let novaStart = 0;
-        const novaSparks = [];
-        const NOVA_FLASH  = 0.35;
-        const NOVA_PULSE  = 1.8;
-        const NOVA_FADE   = 1.0;
-        const NOVA_TOTAL  = NOVA_FLASH + NOVA_PULSE + NOVA_FADE;
-        const NOVA_CLICK_RADIUS = 60;
-
-        function triggerNova() {
-            if (novaActive) return;
-            novaActive = true;
-            novaStart = performance.now();
-            novaSparks.length = 0;
-        }
-
-        function renderNovaOverlay(now) {
-            const elapsed = (now - novaStart) / 1000;
-            if (elapsed > NOVA_TOTAL) {
-                novaActive = false;
-                return;
-            }
-
-            const cxPx = centerCellX * charW;
-            const cyPx = centerCellY * charH;
-
-            if (elapsed < NOVA_FLASH) {
-                const t = elapsed / NOVA_FLASH;
-                const r = t * 200;
-                const a = (1.0 - t) * 0.7;
-                const grad = ctx.createRadialGradient(cxPx, cyPx, 0, cxPx, cyPx, Math.max(1, r));
-                grad.addColorStop(0, 'rgba(220,200,255,' + a + ')');
-                grad.addColorStop(0.4, 'rgba(180,100,220,' + (a * 0.6) + ')');
-                grad.addColorStop(1, 'rgba(100,40,150,0)');
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, display.width, display.height);
-            } else if (elapsed < NOVA_FLASH + NOVA_PULSE) {
-                const t = (elapsed - NOVA_FLASH) / NOVA_PULSE;
-                const pulse = 0.25 + 0.15 * Math.sin(t * Math.PI * 8);
-                const r = 30 + 20 * Math.sin(t * Math.PI * 4);
-                const grad = ctx.createRadialGradient(cxPx, cyPx, 0, cxPx, cyPx, Math.max(1, r));
-                grad.addColorStop(0, 'rgba(200,180,255,' + pulse + ')');
-                grad.addColorStop(0.5, 'rgba(180,80,200,' + (pulse * 0.4) + ')');
-                grad.addColorStop(1, 'rgba(100,40,150,0)');
-                ctx.fillStyle = grad;
-                ctx.fillRect(cxPx - r, cyPx - r, r * 2, r * 2);
-
-                if (Math.random() < 0.35) {
-                    const count = 2 + Math.floor(Math.random() * 4);
-                    for (let i = 0; i < count; i++) {
-                        novaSparks.push({
-                            angle: Math.random() * Math.PI * 2,
-                            speed: 1.5 + Math.random() * 4,
-                            dist: 0,
-                            char: ASCII[6 + Math.floor(Math.random() * (ASCII.length - 6))],
-                            born: now,
-                            life: 300 + Math.random() * 600,
-                            r: 180 + Math.floor(Math.random() * 75),
-                            g: 100 + Math.floor(Math.random() * 100),
-                            b: 200 + Math.floor(Math.random() * 55)
-                        });
-                    }
-                }
-            }
-
-            ctx.font = `${FONT_SIZE}px 'Courier New', monospace`;
-            for (let i = novaSparks.length - 1; i >= 0; i--) {
-                const sp = novaSparks[i];
-                const age = now - sp.born;
-                if (age > sp.life) { novaSparks.splice(i, 1); continue; }
-
-                const t = age / sp.life;
-                sp.dist += sp.speed * (1 - t * 0.5);
-
-                const px = centerCellX * charW + Math.cos(sp.angle) * sp.dist;
-                const py = centerCellY * charH + Math.sin(sp.angle) * sp.dist;
-
-                if (px < -10 || px > display.width + 10 ||
-                    py < -10 || py > display.height + 10) continue;
-
-                ctx.globalAlpha = (1 - t) * (1 - t);
-                ctx.fillStyle = 'rgb(' + sp.r + ',' + sp.g + ',' + sp.b + ')';
-                ctx.fillText(sp.char, px, py + charH * 0.85);
-            }
-            ctx.globalAlpha = 1;
-        }
-
-        const cellRand = {};
-        function getCellRand(x, y) {
-            const key = x + ',' + y;
-            if (!(key in cellRand)) {
-                cellRand[key] = {
-                    angle: Math.random() * Math.PI * 2,
-                    speed: 0.4 + Math.random() * 1.0,
-                    delay: Math.random() * 0.06
-                };
-            }
-            return cellRand[key];
-        }
-
-        function createExplosion(clientX, clientY) {
-            const worldPos = clickToWorldPos(clientX, clientY);
-            explosions.push({ worldPos, time: performance.now() });
-        }
-
-        let clickDownX = 0, clickDownY = 0, clickDownTime = 0;
-        window.addEventListener('mousedown', (e) => {
-            if (e.target.closest('#zoom-controls')) return;
-            clickDownX = e.clientX;
-            clickDownY = e.clientY;
-            clickDownTime = performance.now();
-        });
-        window.addEventListener('mouseup', (e) => {
-            const dx = Math.abs(e.clientX - clickDownX);
-            const dy = Math.abs(e.clientY - clickDownY);
-            const dt = performance.now() - clickDownTime;
-            if (dx < 6 && dy < 6 && dt < 250) {
-                if (novaActive) return;
-                const ncSx = centerCellX * charW;
-                const ncSy = centerCellY * charH;
-                const dNC = Math.sqrt((e.clientX - ncSx) ** 2 + (e.clientY - ncSy) ** 2);
-                if (dNC < NOVA_CLICK_RADIUS) {
-                    triggerNova();
-                } else {
-                    createExplosion(e.clientX, e.clientY);
-                }
-            }
-        });
-
-        let tapX = 0, tapY = 0, tapTime = 0;
-        window.addEventListener('touchstart', (e) => {
-            tapX = e.touches[0].clientX;
-            tapY = e.touches[0].clientY;
-            tapTime = performance.now();
-        }, { passive: true });
-        window.addEventListener('touchend', (e) => {
-            const dx = Math.abs(e.changedTouches[0].clientX - tapX);
-            const dy = Math.abs(e.changedTouches[0].clientY - tapY);
-            const dt = performance.now() - tapTime;
-            if (dx < 12 && dy < 12 && dt < 300) {
-                if (novaActive) return;
-                const ncSx = centerCellX * charW;
-                const ncSy = centerCellY * charH;
-                const dNC = Math.sqrt((tapX - ncSx) ** 2 + (tapY - ncSy) ** 2);
-                if (dNC < NOVA_CLICK_RADIUS) {
-                    triggerNova();
-                } else {
-                    createExplosion(tapX, tapY);
-                }
-            }
-        });
-
-        let centerCellX = 0, centerCellY = 0;
-
-        function getExplosionEffect(x, y, now) {
-            let ox = 0, oy = 0, alpha = 1;
-            for (let i = explosions.length - 1; i >= 0; i--) {
-                const exp = explosions[i];
-                const elapsed = (now - exp.time) / 1000;
-                if (elapsed > EXPLODE_DURATION) { explosions.splice(i, 1); continue; }
-                if (!exp.visible) continue;
-
-                const dx = x - exp.cx;
-                const dy = y - exp.cy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist > EXPLODE_RADIUS) continue;
-                const rand = getCellRand(x, y);
-                const threshold = EXPLODE_RADIUS * (0.5 + rand.speed * 0.5);
-                if (dist > threshold) continue;
-                const waveDelay = dist * 0.06 + rand.delay;
-                const localT = Math.max(0, elapsed - waveDelay);
-                if (localT < DEBRIS_TIME) {
-                    const t = localT / DEBRIS_TIME;
-                    const speed = rand.speed * 45;
-
-                    const toC_x = centerCellX - x;
-                    const toC_y = centerCellY - y;
-                    const toC_len = Math.sqrt(toC_x * toC_x + toC_y * toC_y) || 1;
-
-                    const expToC = Math.sqrt((exp.cx - centerCellX) ** 2 + (exp.cy - centerCellY) ** 2);
-                    const grav = Math.min(1, 12 / (expToC + 4));
-
-                    const rx = Math.cos(rand.angle);
-                    const ry = Math.sin(rand.angle);
-                    const bx = toC_x / toC_len;
-                    const by = toC_y / toC_len;
-                    const fx = rx * (1 - grav) + bx * grav;
-                    const fy = ry * (1 - grav) + by * grav;
-                    const flen = Math.sqrt(fx * fx + fy * fy) || 1;
-
-                    const normalDrift = t * (1.2 - 0.2 * t);
-                    const gravDrift = t * t * 1.5;
-                    const drift = normalDrift * (1 - grav) + gravDrift * grav;
-
-                    ox += (fx / flen) * speed * drift;
-                    oy += (fy / flen) * speed * drift;
-
-                    const fadeT = Math.max(0, (t - 0.35) / 0.65);
-                    alpha *= 1 - fadeT;
-                } else if (localT < DEBRIS_TIME + GONE_TIME) {
-                    alpha = 0;
-                } else {
-                    const t = (localT - DEBRIS_TIME - GONE_TIME) / REGEN_TIME;
-                    alpha *= t * t * (3 - 2 * t);
-                }
-            }
-            return { ox, oy, alpha: Math.max(0, Math.min(1, alpha)) };
-        }
-
-        /* ---- Touch support ---- */
-        window.addEventListener('touchstart', (e) => {
-            isDragging = true;
-            lastX = e.touches[0].clientX;
-            lastY = e.touches[0].clientY;
-            inertiaDx = 0;
-            inertiaDy = 0;
-        }, { passive: true });
-
-        window.addEventListener('touchmove', (e) => {
-            if (!isDragging) return;
-            const dx = (e.touches[0].clientX - lastX) * 0.008;
-            const dy = (e.touches[0].clientY - lastY) * 0.008;
-            inertiaDx = dx;
-            inertiaDy = dy;
-            rotateCamera(dx, dy);
-            lastX = e.touches[0].clientX;
-            lastY = e.touches[0].clientY;
-        }, { passive: true });
-
-        window.addEventListener('touchend', () => {
-            isDragging = false;
-        });
-
-        /* ===== Camera basis vectors (for 3D explosion tracking) ===== */
-        const _camFwd   = new THREE.Vector3();
-        const _camRight = new THREE.Vector3();
-        const _camUpB   = new THREE.Vector3();
-        const FOCAL = 1.0; // must match shader: fwd * 1.0
-
-        function cellToRayDir(cx, cy) {
-            const uvx = (cx * SS + SS / 2 - renderW * 0.5) / renderH;
-            const uvy = ((renderH - 1 - (cy * SS + SS / 2)) - renderH * 0.5) / renderH;
-            return new THREE.Vector3()
-                .addScaledVector(_camFwd, FOCAL)
-                .addScaledVector(_camRight, uvx)
-                .addScaledVector(_camUpB, uvy)
-                .normalize();
-        }
-
-        function clickToWorldPos(clientX, clientY) {
-            const cx = clientX / charW;
-            const cy = clientY / charH;
-            const rd = cellToRayDir(cx, cy);
-            const cam = _camPos.clone();
-
-            // Try mid-nebula plane y=0
-            if (Math.abs(rd.y) > 0.01) {
-                const t = -cam.y / rd.y;
-                if (t > 0) {
-                    const hit = cam.clone().addScaledVector(rd, t);
-                    const r = Math.sqrt(hit.x * hit.x + hit.z * hit.z);
-                    if (r > 0.3 && r < 20) return hit;
-                }
-            }
-
-            const b = 2 * cam.dot(rd);
-            const c = cam.lengthSq() - 50 * 50;
-            const disc = b * b - 4 * c;
-            if (disc >= 0) {
-                const t = (-b + Math.sqrt(disc)) / 2;
-                return cam.clone().addScaledVector(rd, Math.max(0.1, t));
-            }
-            return rd.clone().multiplyScalar(60);
-        }
-
-        function worldPosToCell(pos) {
-            const toP = new THREE.Vector3().subVectors(pos, _camPos);
-            const f = toP.dot(_camFwd);
-            if (f <= 0.001) return null;
-            const r = toP.dot(_camRight);
-            const u = toP.dot(_camUpB);
-            const uvx = r * FOCAL / f;
-            const uvy = u * FOCAL / f;
-            const rpx = uvx * renderH + renderW * 0.5;
-            const rpy = uvy * renderH + renderH * 0.5;
-            return { cx: rpx / SS, cy: (renderH - 1 - rpy) / SS };
-        }
-
-        /* ===== Animation Loop ===== */
-        const _camDir = new THREE.Vector3();
-        const _camUp2 = new THREE.Vector3();
-        const _camPos = new THREE.Vector3();
-
-        function animate(time) {
-            requestAnimationFrame(animate);
-
-            const t = time * 0.001;
-
-            if (!isDragging) {
-                inertiaDx *= 0.95;
-                inertiaDy *= 0.95;
-                rotateCamera(inertiaDx, inertiaDy);
-                rotateCamera(0.003, 0);  // gentle auto-rotate
-            }
-
-            _camDir.set(0, 0, 1).applyQuaternion(camQuat);
-            _camUp2.set(0, 1, 0).applyQuaternion(camQuat);
-            _camPos.copy(_camDir).multiplyScalar(zoom);
-
-            _camFwd.copy(_camPos).negate().normalize();
-            _camRight.crossVectors(_camFwd, _camUp2).normalize();
-            _camUpB.crossVectors(_camRight, _camFwd).normalize();
-
-            material.uniforms.uTime.value = t;
-            material.uniforms.uCamPos.value.copy(_camPos);
-            material.uniforms.uCamUp.value.copy(_camUp2);
-            material.uniforms.uZoom.value = zoom;
-
-            renderer.setRenderTarget(renderTarget);
-            renderer.render(scene, cam);
-            renderer.setRenderTarget(null);
-            renderer.readRenderTargetPixels(renderTarget, 0, 0, renderW, renderH, pixelBuffer);
-
-            /* ---- Draw ASCII with supersampled colors + background glow ---- */
-            ctx.fillStyle = '#080808';
-            ctx.fillRect(0, 0, display.width, display.height);
-
-            const asciiLen = ASCII.length;
-            const ss2 = SS * SS;
-
-            const now = performance.now();
-            const hasExplosions = explosions.length > 0;
-
-            // Project nebula center to screen
-            const cProj = worldPosToCell(new THREE.Vector3(0, 0, 0));
-            if (cProj) { centerCellX = cProj.cx; centerCellY = cProj.cy; }
-
-            if (hasExplosions) {
-                for (const exp of explosions) {
-                    const proj = worldPosToCell(exp.worldPos);
-                    if (proj) {
-                        exp.cx = proj.cx;
-                        exp.cy = proj.cy;
-                        exp.visible = true;
-                    } else {
-                        exp.visible = false;
-                    }
-                }
-            }
-
-            for (let y = 0; y < rows; y++) {
-                for (let x = 0; x < cols; x++) {
-                    let rSum = 0, gSum = 0, bSum = 0, aSum = 0;
-                    for (let sy = 0; sy < SS; sy++) {
-                        for (let sx = 0; sx < SS; sx++) {
-                            const px = x * SS + sx;
-                            const py = (renderH - 1) - (y * SS + sy);
-                            const idx = (py * renderW + px) * 4;
-                            rSum += pixelBuffer[idx];
-                            gSum += pixelBuffer[idx + 1];
-                            bSum += pixelBuffer[idx + 2];
-                            aSum += pixelBuffer[idx + 3];
-                        }
-                    }
-                    const r = (rSum / ss2) | 0;
-                    const g = (gSum / ss2) | 0;
-                    const b = (bSum / ss2) | 0;
-                    const isStar = aSum > 0;  // alpha > 0 means star pixels present
-
-                    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-                    const ci  = Math.min(asciiLen - 1, Math.floor(lum * asciiLen));
-
-                    let ox = 0, oy = 0, eAlpha = 1;
-                    if (hasExplosions) {
-                        const eff = getExplosionEffect(x, y, now);
-                        ox = eff.ox;
-                        oy = eff.oy;
-                        eAlpha = eff.alpha;
-                    }
-
-                    if (eAlpha < 0.01) continue;
-
-                    const drawX = x * charW + ox;
-                    const drawY = y * charH + oy;
-
-                    // Background glow — stars always, everything else only if toggled on
-                    if ((isStar || glowEnabled) && lum > 0.15) {
-                        const bgAlpha = Math.min(0.35, lum * lum * 1.2) * eAlpha;
-                        ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + bgAlpha + ')';
-                        ctx.fillRect(drawX, drawY, charW, charH);
-                    }
-
-                    if (ci > 0) {
-                        ctx.globalAlpha = eAlpha;
-                        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
-                        ctx.fillText(ASCII[ci], drawX, drawY + charH * 0.85);
-                        ctx.globalAlpha = 1;
-                    }
-                }
-            }
-
-            // Nova overlay
-            if (novaActive) {
-                renderNovaOverlay(now);
-            }
-        }
-
-        requestAnimationFrame(animate);
-    })();
-    </script>
+    }
+
+    ctx.putImageData(outData, 0, 0);
+}
+
+/* ========== Start ========== */
+video.playbackRate = PLAYBACK_SPEED;
+video.play().then(() => {
+    requestAnimationFrame(frame);
+}).catch(() => {
+    /* Autoplay blocked — start on first interaction */
+    document.addEventListener('click', () => {
+        video.play();
+        requestAnimationFrame(frame);
+    }, { once: true });
+    document.addEventListener('touchstart', () => {
+        video.play();
+        requestAnimationFrame(frame);
+    }, { once: true });
+});
+
+/* ========== Hide back button in iframe ========== */
+if (window !== window.top) {
+    const btn = document.getElementById('back-btn');
+    if (btn) btn.style.display = 'none';
+}
+</script>
 </body>
 </html>
