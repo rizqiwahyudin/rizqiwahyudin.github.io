@@ -727,12 +727,20 @@ window.initDitherEngine = function (canvasId, videoId) {
 
     /* ---- Start video ---- */
     video.playbackRate = speed;
-    video.play().then(() => {
+    let frameStarted = false;
+    function startFrame() {
+        if (frameStarted) return;
+        frameStarted = true;
         requestAnimationFrame(frame);
-    }).catch(() => {
-        document.addEventListener('click',      () => { video.play(); requestAnimationFrame(frame); }, { once: true });
-        document.addEventListener('touchstart',  () => { video.play(); requestAnimationFrame(frame); }, { once: true });
-    });
+    }
+    function tryPlay() { video.play().then(startFrame).catch(() => {}); }
+    tryPlay();
+    const retryId = setInterval(() => {
+        if (!video.paused) { startFrame(); clearInterval(retryId); }
+        else tryPlay();
+    }, 500);
+    document.addEventListener('click',     () => tryPlay(), { once: true });
+    document.addEventListener('touchstart', () => tryPlay(), { once: true });
 
     /* ---- Hide UI in iframe ---- */
     if (window !== window.top) {
