@@ -198,6 +198,10 @@
         <div class="dt-label"><span>dither spread</span><span class="dt-val" id="dt-spread-val">0.50</span></div>
         <input type="range" id="dt-spread" min="0.1" max="2" step="0.05" value="0.5">
     </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>color levels</span><span class="dt-val" id="dt-levels-val">2</span></div>
+        <input type="range" id="dt-levels" min="2" max="32" step="1" value="2">
+    </div>
 
     <div class="dt-actions">
         <button class="dt-btn" id="dt-copy">copy config</button>
@@ -213,6 +217,7 @@ let PLAYBACK_SPEED = 2;
 let BLACK_FLOOR    = 0.0035;
 let COLOR_BOOST    = 0.8;
 let DITHER_SPREAD  = 0.5;
+let COLOR_LEVELS   = 2;
 
 /* ========== Elements ========== */
 const canvas = document.getElementById('dither-canvas');
@@ -307,10 +312,14 @@ function frame() {
             g = Math.min(1.0, g * COLOR_BOOST);
             b = Math.min(1.0, b * COLOR_BOOST);
 
-            const threshold = BAYER8[(y & 7) * 8 + (x & 7)] * DITHER_SPREAD;
-            out[i]     = r > threshold ? 255 : 0;
-            out[i + 1] = g > threshold ? 255 : 0;
-            out[i + 2] = b > threshold ? 255 : 0;
+            const bayer = BAYER8[(y & 7) * 8 + (x & 7)];
+            const q = COLOR_LEVELS - 1;
+
+            const sr = r * q, sg = g * q, sb = b * q;
+            const t = bayer * DITHER_SPREAD;
+            out[i]     = Math.round(Math.min(q, Math.max(0, (sr - sr % 1) + ((sr % 1) > t ? 1 : 0))) * 255 / q);
+            out[i + 1] = Math.round(Math.min(q, Math.max(0, (sg - sg % 1) + ((sg % 1) > t ? 1 : 0))) * 255 / q);
+            out[i + 2] = Math.round(Math.min(q, Math.max(0, (sb - sb % 1) + ((sb % 1) > t ? 1 : 0))) * 255 / q);
             out[i + 3] = 255;
         }
     }
@@ -347,7 +356,7 @@ if (window !== window.top) {
     toggle.addEventListener('click', () => panel.classList.toggle('open'));
 
     const defaults = {
-        pixel: 1.2, speed: 2, floor: 0.0035, boost: 0.8, spread: 0.5
+        pixel: 1.2, speed: 2, floor: 0.0035, boost: 0.8, spread: 0.5, levels: 2
     };
 
     const sliders = {
@@ -355,7 +364,8 @@ if (window !== window.top) {
         speed:  document.getElementById('dt-speed'),
         floor:  document.getElementById('dt-floor'),
         boost:  document.getElementById('dt-boost'),
-        spread: document.getElementById('dt-spread')
+        spread: document.getElementById('dt-spread'),
+        levels: document.getElementById('dt-levels')
     };
 
     const labels = {
@@ -363,7 +373,8 @@ if (window !== window.top) {
         speed:  document.getElementById('dt-speed-val'),
         floor:  document.getElementById('dt-floor-val'),
         boost:  document.getElementById('dt-boost-val'),
-        spread: document.getElementById('dt-spread-val')
+        spread: document.getElementById('dt-spread-val'),
+        levels: document.getElementById('dt-levels-val')
     };
 
     function update() {
@@ -372,12 +383,14 @@ if (window !== window.top) {
         const f  = parseFloat(sliders.floor.value);
         const b  = parseFloat(sliders.boost.value);
         const sp = parseFloat(sliders.spread.value);
+        const lv = parseInt(sliders.levels.value);
 
         PIXEL_SIZE     = p;
         PLAYBACK_SPEED = s;
         BLACK_FLOOR    = f;
         COLOR_BOOST    = b;
         DITHER_SPREAD  = sp;
+        COLOR_LEVELS   = lv;
 
         video.playbackRate = s;
         resize();
@@ -387,6 +400,7 @@ if (window !== window.top) {
         labels.floor.textContent  = f.toFixed(4);
         labels.boost.textContent  = b.toFixed(2);
         labels.spread.textContent = sp.toFixed(2);
+        labels.levels.textContent = lv;
     }
 
     Object.values(sliders).forEach(sl => sl.addEventListener('input', update));
@@ -397,6 +411,7 @@ if (window !== window.top) {
         sliders.floor.value  = defaults.floor;
         sliders.boost.value  = defaults.boost;
         sliders.spread.value = defaults.spread;
+        sliders.levels.value = defaults.levels;
         update();
     });
 
@@ -405,7 +420,8 @@ if (window !== window.top) {
             + `const PLAYBACK_SPEED = ${PLAYBACK_SPEED.toFixed(2)};\n`
             + `const BLACK_FLOOR   = ${BLACK_FLOOR.toFixed(4)};\n`
             + `const COLOR_BOOST   = ${COLOR_BOOST.toFixed(2)};\n`
-            + `const DITHER_SPREAD = ${DITHER_SPREAD.toFixed(2)};`;
+            + `const DITHER_SPREAD = ${DITHER_SPREAD.toFixed(2)};\n`
+            + `const COLOR_LEVELS  = ${COLOR_LEVELS};`;
 
         navigator.clipboard.writeText(cfg).then(() => {
             const msg = document.getElementById('dt-copied');
