@@ -461,6 +461,32 @@ window.initDitherEngine = function (canvasId, videoId) {
 
     const engine = { canvas, ctx, video, screenW, screenH, setupCanvas, sampleVideo };
 
+    /* ---- Mix state ---- */
+    const BLEND_NAMES = ['mix', 'add', 'multiply', 'screen', 'overlay'];
+    const BLEND_CSS   = ['source-over', 'lighter', 'multiply', 'screen', 'overlay'];
+    let mixEnabled = false;
+    let mixModeRef = MODES[0];
+    let mixParams  = initParams(mixModeRef);
+    let blendAmount = 0.5;
+    let blendIdx = 0;
+
+    const offA    = document.createElement('canvas');
+    const offACtx = offA.getContext('2d', { willReadFrequently: true });
+    const offB    = document.createElement('canvas');
+    const offBCtx = offB.getContext('2d', { willReadFrequently: true });
+
+    function renderToOff(mode, p, oc, ocCtx) {
+        const tmp = {
+            canvas: oc, ctx: ocCtx, video: video,
+            screenW: screenW, screenH: screenH,
+            setupCanvas: function (w, h) {
+                if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
+            },
+            sampleVideo: sampleVideo
+        };
+        mode.render(tmp, p);
+    }
+
     /* ---- Mode selector ---- */
     const modeSelect = document.getElementById('mode-select');
     MODES.forEach((m, i) => {
@@ -526,6 +552,76 @@ window.initDitherEngine = function (canvasId, videoId) {
     }
     buildTunerSliders();
 
+    /* ---- Mix controls ---- */
+    const mixToggleSlider = document.getElementById('mix-toggle');
+    const mixStatusVal    = document.getElementById('mix-status-val');
+    const mixControlsDiv  = document.getElementById('mix-controls');
+    const mixModeSelect   = document.getElementById('mix-mode-select');
+    const mixAmountSlider = document.getElementById('mix-amount');
+    const mixAmountLabel  = document.getElementById('mix-amount-val');
+    const mixBlendSlider  = document.getElementById('mix-blend');
+    const mixBlendLabel   = document.getElementById('mix-blend-val');
+    const mixParamsSlots  = document.getElementById('mix-mode-params');
+
+    MODES.forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = i; opt.textContent = m.label;
+        mixModeSelect.appendChild(opt);
+    });
+
+    mixToggleSlider.addEventListener('input', () => {
+        mixEnabled = parseInt(mixToggleSlider.value) > 0;
+        mixStatusVal.textContent = mixEnabled ? 'on' : 'off';
+        mixControlsDiv.style.display = mixEnabled ? 'block' : 'none';
+        canvasW = canvasH = 0;
+    });
+
+    mixModeSelect.addEventListener('change', () => {
+        mixModeRef = MODES[parseInt(mixModeSelect.value)];
+        mixParams = initParams(mixModeRef);
+        buildMixSliders();
+    });
+
+    mixAmountSlider.addEventListener('input', () => {
+        blendAmount = parseFloat(mixAmountSlider.value);
+        mixAmountLabel.textContent = blendAmount.toFixed(2);
+    });
+
+    mixBlendSlider.addEventListener('input', () => {
+        blendIdx = parseInt(mixBlendSlider.value);
+        mixBlendLabel.textContent = BLEND_NAMES[blendIdx];
+    });
+
+    function buildMixSliders() {
+        mixParamsSlots.innerHTML = '';
+        mixModeRef.params.forEach(def => {
+            const row = document.createElement('div');
+            row.className = 'dt-row';
+            const label = document.createElement('div');
+            label.className = 'dt-label';
+            const nameEl = document.createElement('span');
+            nameEl.textContent = def.label;
+            const valEl = document.createElement('span');
+            valEl.className = 'dt-val';
+            valEl.textContent = def.fmt(mixParams[def.id]);
+            label.appendChild(nameEl);
+            label.appendChild(valEl);
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = def.min; slider.max = def.max;
+            slider.step = def.step; slider.value = mixParams[def.id];
+            slider.addEventListener('input', () => {
+                mixParams[def.id] = parseFloat(slider.value);
+                if (def.step >= 1 && Number.isInteger(def.step)) mixParams[def.id] = Math.round(mixParams[def.id]);
+                valEl.textContent = def.fmt(mixParams[def.id]);
+            });
+            row.appendChild(label);
+            row.appendChild(slider);
+            mixParamsSlots.appendChild(row);
+        });
+    }
+    buildMixSliders();
+
     /* ---- Reset ---- */
     document.getElementById('dt-reset').addEventListener('click', () => {
         params = initParams(currentMode);
@@ -533,17 +629,43 @@ window.initDitherEngine = function (canvasId, videoId) {
         speedSlider.value = speed;
         speedLabel.textContent = speed.toFixed(2) + 'x';
         buildTunerSliders();
+        mixEnabled = false;
+        mixToggleSlider.value = 0;
+        mixStatusVal.textContent = 'off';
+        mixControlsDiv.style.display = 'none';
+        blendAmount = 0.5; blendIdx = 0;
+        mixAmountSlider.value = 0.5;
+        mixAmountLabel.textContent = '0.50';
+        mixBlendSlider.value = 0;
+        mixBlendLabel.textContent = 'mix';
+        mixModeRef = MODES[0];
+        mixModeSelect.value = 0;
+        mixParams = initParams(mixModeRef);
+        buildMixSliders();
+        canvasW = canvasH = 0;
     });
 
     /* ---- Copy config ---- */
     document.getElementById('dt-copy').addEventListener('click', () => {
-        let cfg = '// Mode: ' + currentMode.label + '\n';
+        let cfg = '// Mode: ' + currentMode.label;
+        if (mixEnabled) cfg += ' + ' + mixModeRef.label + ' (' + BLEND_NAMES[blendIdx] + ' ' + blendAmount.toFixed(2) + ')';
+        cfg += '\n';
         cfg += 'const PLAYBACK_SPEED = ' + speed.toFixed(2) + ';\n';
         currentMode.params.forEach(def => {
             const v = params[def.id];
             const name = def.id.replace(/([A-Z])/g, '_$1').toUpperCase();
             cfg += 'const ' + name + ' = ' + (Number.isInteger(v) ? v : v.toFixed(4)) + ';\n';
         });
+        if (mixEnabled) {
+            cfg += '\n// Layer: ' + mixModeRef.label + '\n';
+            cfg += 'const BLEND_AMOUNT = ' + blendAmount.toFixed(2) + ';\n';
+            cfg += 'const BLEND_MODE = "' + BLEND_NAMES[blendIdx] + '";\n';
+            mixModeRef.params.forEach(def => {
+                const v = mixParams[def.id];
+                const name = 'LAYER_' + def.id.replace(/([A-Z])/g, '_$1').toUpperCase();
+                cfg += 'const ' + name + ' = ' + (Number.isInteger(v) ? v : v.toFixed(4)) + ';\n';
+            });
+        }
         navigator.clipboard.writeText(cfg).then(() => {
             const msg = document.getElementById('dt-copied');
             msg.classList.add('show');
@@ -557,7 +679,29 @@ window.initDitherEngine = function (canvasId, videoId) {
         if (video.readyState < 2) return;
         engine.screenW = screenW;
         engine.screenH = screenH;
-        currentMode.render(engine, params);
+
+        if (!mixEnabled) {
+            currentMode.render(engine, params);
+        } else {
+            renderToOff(currentMode, params, offA, offACtx);
+            renderToOff(mixModeRef, mixParams, offB, offBCtx);
+
+            setupCanvas(screenW, screenH, false);
+            ctx.imageSmoothingEnabled = false;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, screenW, screenH);
+
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.drawImage(offA, 0, 0, screenW, screenH);
+
+            ctx.globalAlpha = blendAmount;
+            ctx.globalCompositeOperation = BLEND_CSS[blendIdx];
+            ctx.drawImage(offB, 0, 0, screenW, screenH);
+
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+        }
     }
 
     /* ---- Resize ---- */
