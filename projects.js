@@ -65,7 +65,7 @@ function renderCards() {
         const num = String(i + 1).padStart(3, '0');
 
         card.innerHTML =
-            '<iframe data-src="' + p.sim + '" loading="lazy" title="' + p.title + '" allow="accelerometer"></iframe>' +
+            '<iframe data-src="' + p.sim + '" loading="lazy" title="' + p.title + '" allow="accelerometer; autoplay"></iframe>' +
             '<a class="sim-fullscreen" href="' + p.sim + '" target="_blank">\u2197 open</a>' +
             (p.classification ? '<span class="card-badge">' + p.classification + '</span>' : '') +
             '<div class="card-body"><div class="card-body-inner">' +
