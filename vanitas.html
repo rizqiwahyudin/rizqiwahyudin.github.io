@@ -20,6 +20,9 @@
             image-rendering: pixelated;
             image-rendering: crisp-edges;
         }
+        video#source-video { display: none; }
+
+        /* Back button */
         #back-btn {
             position: fixed;
             top: 16px; left: 20px;
@@ -37,14 +40,35 @@
             color: rgba(255,255,255,0.7);
             border-color: rgba(255,255,255,0.2);
         }
-        video#source-video {
-            display: none;
+
+        /* Mode selector */
+        #mode-select {
+            position: fixed;
+            top: 16px; left: 120px;
+            z-index: 10;
+            font: 14px 'DotGothic16', monospace;
+            color: rgba(255,255,255,0.4);
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 14px;
+            outline: none;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #mode-select:hover, #mode-select:focus {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #mode-select option {
+            background: #111;
+            color: #ccc;
         }
 
-        #dither-tuner-toggle {
+        /* Tuner toggle */
+        #tuner-toggle {
             position: fixed;
-            bottom: 16px;
-            right: 16px;
+            bottom: 16px; right: 16px;
             z-index: 10000;
             font: 11px 'DotGothic16', monospace;
             letter-spacing: 2px;
@@ -59,15 +83,15 @@
             cursor: pointer;
             transition: color 0.2s, border-color 0.2s;
         }
-        #dither-tuner-toggle:hover {
+        #tuner-toggle:hover {
             color: rgba(255,255,255,0.7);
             border-color: rgba(255,255,255,0.2);
         }
 
-        #dither-tuner {
+        /* Tuner panel */
+        #tuner-panel {
             position: fixed;
-            bottom: 52px;
-            right: 16px;
+            bottom: 52px; right: 16px;
             z-index: 10000;
             width: 260px;
             max-height: calc(100vh - 68px);
@@ -81,9 +105,9 @@
             padding: 16px;
             display: none;
         }
-        #dither-tuner.open { display: block; }
+        #tuner-panel.open { display: block; }
 
-        #dither-tuner .dt-title {
+        #tuner-panel .dt-title {
             font-size: 11px;
             letter-spacing: 3px;
             text-transform: lowercase;
@@ -92,8 +116,8 @@
             padding-bottom: 8px;
             border-bottom: 1px solid rgba(255,255,255,0.06);
         }
-        #dither-tuner .dt-row { margin-bottom: 10px; }
-        #dither-tuner .dt-label {
+        #tuner-panel .dt-row { margin-bottom: 10px; }
+        #tuner-panel .dt-label {
             display: flex;
             justify-content: space-between;
             align-items: baseline;
@@ -103,12 +127,11 @@
             color: rgba(255,255,255,0.45);
             margin-bottom: 4px;
         }
-        #dither-tuner .dt-val {
+        #tuner-panel .dt-val {
             font-variant-numeric: tabular-nums;
             color: rgba(255,255,255,0.25);
         }
-
-        #dither-tuner input[type="range"] {
+        #tuner-panel input[type="range"] {
             -webkit-appearance: none;
             appearance: none;
             width: 100%;
@@ -117,32 +140,29 @@
             border-radius: 2px;
             outline: none;
         }
-        #dither-tuner input[type="range"]::-webkit-slider-thumb {
+        #tuner-panel input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            width: 10px;
-            height: 10px;
+            width: 10px; height: 10px;
             border-radius: 50%;
             background: #c8c8c8;
             cursor: pointer;
             border: none;
         }
-        #dither-tuner input[type="range"]::-moz-range-thumb {
-            width: 10px;
-            height: 10px;
+        #tuner-panel input[type="range"]::-moz-range-thumb {
+            width: 10px; height: 10px;
             border-radius: 50%;
             background: #c8c8c8;
             cursor: pointer;
             border: none;
         }
-
-        #dither-tuner .dt-actions {
+        #tuner-panel .dt-actions {
             display: flex;
             gap: 6px;
             margin-top: 14px;
             padding-top: 10px;
             border-top: 1px solid rgba(255,255,255,0.06);
         }
-        #dither-tuner .dt-btn {
+        #tuner-panel .dt-btn {
             flex: 1;
             font: 9px 'DotGothic16', monospace;
             letter-spacing: 1.5px;
@@ -155,11 +175,11 @@
             cursor: pointer;
             transition: color 0.2s, border-color 0.2s;
         }
-        #dither-tuner .dt-btn:hover {
+        #tuner-panel .dt-btn:hover {
             color: rgba(255,255,255,0.8);
             border-color: rgba(255,255,255,0.2);
         }
-        #dither-tuner .dt-copied {
+        #tuner-panel .dt-copied {
             font-size: 9px;
             letter-spacing: 1.5px;
             text-align: center;
@@ -168,43 +188,23 @@
             opacity: 0;
             transition: opacity 0.3s;
         }
-        #dither-tuner .dt-copied.show { opacity: 1; }
+        #tuner-panel .dt-copied.show { opacity: 1; }
     </style>
 </head>
 <body>
 <canvas id="dither-canvas"></canvas>
 <video id="source-video" src="skull2.mp4" loop muted playsinline></video>
 <a id="back-btn" href="index.html">&larr; back</a>
+<select id="mode-select"></select>
 
-<button id="dither-tuner-toggle">&#9881; dither tuner</button>
-<div id="dither-tuner">
-    <div class="dt-title">// dither tuner</div>
-
+<button id="tuner-toggle">&#9881; tuner</button>
+<div id="tuner-panel">
+    <div class="dt-title">// tuner</div>
     <div class="dt-row">
-        <div class="dt-label"><span>pixel size</span><span class="dt-val" id="dt-pixel-val">1.2</span></div>
-        <input type="range" id="dt-pixel" min="0.5" max="6" step="0.1" value="1.2">
-    </div>
-    <div class="dt-row">
-        <div class="dt-label"><span>playback speed</span><span class="dt-val" id="dt-speed-val">2.0x</span></div>
+        <div class="dt-label"><span>playback speed</span><span class="dt-val" id="dt-speed-val">2.00x</span></div>
         <input type="range" id="dt-speed" min="0.25" max="5" step="0.25" value="2">
     </div>
-    <div class="dt-row">
-        <div class="dt-label"><span>black floor</span><span class="dt-val" id="dt-floor-val">0.0035</span></div>
-        <input type="range" id="dt-floor" min="0" max="0.15" step="0.0005" value="0.0035">
-    </div>
-    <div class="dt-row">
-        <div class="dt-label"><span>color boost</span><span class="dt-val" id="dt-boost-val">0.80</span></div>
-        <input type="range" id="dt-boost" min="0.1" max="3" step="0.05" value="0.8">
-    </div>
-    <div class="dt-row">
-        <div class="dt-label"><span>dither spread</span><span class="dt-val" id="dt-spread-val">0.50</span></div>
-        <input type="range" id="dt-spread" min="0.1" max="2" step="0.05" value="0.5">
-    </div>
-    <div class="dt-row">
-        <div class="dt-label"><span>color levels</span><span class="dt-val" id="dt-levels-val">2</span></div>
-        <input type="range" id="dt-levels" min="2" max="32" step="1" value="2">
-    </div>
-
+    <div id="tuner-mode-params"></div>
     <div class="dt-actions">
         <button class="dt-btn" id="dt-copy">copy config</button>
         <button class="dt-btn" id="dt-reset">reset</button>
@@ -212,226 +212,7 @@
     <div class="dt-copied" id="dt-copied">copied to clipboard</div>
 </div>
 
-<script>
-/* ========== CONFIG ========== */
-let PIXEL_SIZE     = 1.2;
-let PLAYBACK_SPEED = 2;
-let BLACK_FLOOR    = 0.0035;
-let COLOR_BOOST    = 0.8;
-let DITHER_SPREAD  = 0.5;
-let COLOR_LEVELS   = 2;
-
-/* ========== Elements ========== */
-const canvas = document.getElementById('dither-canvas');
-const ctx    = canvas.getContext('2d', { willReadFrequently: true });
-const video  = document.getElementById('source-video');
-
-const samplerCanvas = document.createElement('canvas');
-const samplerCtx    = samplerCanvas.getContext('2d', { willReadFrequently: true });
-
-let ditherW, ditherH, screenW, screenH;
-
-function resize() {
-    screenW = window.innerWidth;
-    screenH = window.innerHeight;
-    ditherW = Math.floor(screenW / PIXEL_SIZE);
-    ditherH = Math.floor(screenH / PIXEL_SIZE);
-
-    canvas.width  = ditherW;
-    canvas.height = ditherH;
-    canvas.style.width  = screenW + 'px';
-    canvas.style.height = screenH + 'px';
-
-    samplerCanvas.width  = ditherW;
-    samplerCanvas.height = ditherH;
-}
-
-window.addEventListener('resize', resize);
-resize();
-
-/* ========== 8x8 Bayer dither matrix ========== */
-const BAYER8 = new Float32Array([
-     0, 32,  8, 40,  2, 34, 10, 42,
-    48, 16, 56, 24, 50, 18, 58, 26,
-    12, 44,  4, 36, 14, 46,  6, 38,
-    60, 28, 52, 20, 62, 30, 54, 22,
-     3, 35, 11, 43,  1, 33,  9, 41,
-    51, 19, 59, 27, 49, 17, 57, 25,
-    15, 47,  7, 39, 13, 45,  5, 37,
-    63, 31, 55, 23, 61, 29, 53, 21
-]);
-for (let i = 0; i < 64; i++) BAYER8[i] /= 64.0;
-
-/* ========== Video → Dither render loop ========== */
-function frame() {
-    requestAnimationFrame(frame);
-
-    if (video.readyState < 2) return;
-
-    const w = ditherW, h = ditherH;
-
-    const vidAspect = video.videoWidth / video.videoHeight;
-    const canAspect = w / h;
-
-    let drawW, drawH, drawX, drawY;
-    if (vidAspect > canAspect) {
-        drawH = h;
-        drawW = h * vidAspect;
-        drawX = (w - drawW) / 2;
-        drawY = 0;
-    } else {
-        drawW = w;
-        drawH = w / vidAspect;
-        drawX = 0;
-        drawY = (h - drawH) / 2;
-    }
-
-    samplerCtx.fillStyle = '#000';
-    samplerCtx.fillRect(0, 0, w, h);
-    samplerCtx.drawImage(video, drawX, drawY, drawW, drawH);
-
-    const srcData = samplerCtx.getImageData(0, 0, w, h);
-    const src = srcData.data;
-
-    const outData = ctx.createImageData(w, h);
-    const out = outData.data;
-
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const i = (y * w + x) * 4;
-
-            let r = src[i]     / 255.0;
-            let g = src[i + 1] / 255.0;
-            let b = src[i + 2] / 255.0;
-
-            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (lum < BLACK_FLOOR) {
-                out[i] = 0; out[i+1] = 0; out[i+2] = 0; out[i+3] = 255;
-                continue;
-            }
-
-            r = Math.min(1.0, r * COLOR_BOOST);
-            g = Math.min(1.0, g * COLOR_BOOST);
-            b = Math.min(1.0, b * COLOR_BOOST);
-
-            const bayer = BAYER8[(y & 7) * 8 + (x & 7)];
-            const q = COLOR_LEVELS - 1;
-
-            const sr = r * q, sg = g * q, sb = b * q;
-            const t = bayer * DITHER_SPREAD;
-            out[i]     = Math.round(Math.min(q, Math.max(0, (sr - sr % 1) + ((sr % 1) > t ? 1 : 0))) * 255 / q);
-            out[i + 1] = Math.round(Math.min(q, Math.max(0, (sg - sg % 1) + ((sg % 1) > t ? 1 : 0))) * 255 / q);
-            out[i + 2] = Math.round(Math.min(q, Math.max(0, (sb - sb % 1) + ((sb % 1) > t ? 1 : 0))) * 255 / q);
-            out[i + 3] = 255;
-        }
-    }
-    ctx.putImageData(outData, 0, 0);
-}
-
-/* ========== Start ========== */
-video.playbackRate = PLAYBACK_SPEED;
-video.play().then(() => {
-    requestAnimationFrame(frame);
-}).catch(() => {
-    document.addEventListener('click', () => {
-        video.play();
-        requestAnimationFrame(frame);
-    }, { once: true });
-    document.addEventListener('touchstart', () => {
-        video.play();
-        requestAnimationFrame(frame);
-    }, { once: true });
-});
-
-/* ========== Hide back button & tuner in iframe ========== */
-if (window !== window.top) {
-    const btn = document.getElementById('back-btn');
-    if (btn) btn.style.display = 'none';
-    document.getElementById('dither-tuner-toggle').style.display = 'none';
-}
-
-/* ========== Dither Tuner ========== */
-(function ditherTuner() {
-    const toggle = document.getElementById('dither-tuner-toggle');
-    const panel  = document.getElementById('dither-tuner');
-
-    toggle.addEventListener('click', () => panel.classList.toggle('open'));
-
-    const defaults = {
-        pixel: 1.2, speed: 2, floor: 0.0035, boost: 0.8, spread: 0.5, levels: 2
-    };
-
-    const sliders = {
-        pixel:  document.getElementById('dt-pixel'),
-        speed:  document.getElementById('dt-speed'),
-        floor:  document.getElementById('dt-floor'),
-        boost:  document.getElementById('dt-boost'),
-        spread: document.getElementById('dt-spread'),
-        levels: document.getElementById('dt-levels')
-    };
-
-    const labels = {
-        pixel:  document.getElementById('dt-pixel-val'),
-        speed:  document.getElementById('dt-speed-val'),
-        floor:  document.getElementById('dt-floor-val'),
-        boost:  document.getElementById('dt-boost-val'),
-        spread: document.getElementById('dt-spread-val'),
-        levels: document.getElementById('dt-levels-val')
-    };
-
-    function update() {
-        const p  = parseFloat(sliders.pixel.value);
-        const s  = parseFloat(sliders.speed.value);
-        const f  = parseFloat(sliders.floor.value);
-        const b  = parseFloat(sliders.boost.value);
-        const sp = parseFloat(sliders.spread.value);
-        const lv = parseInt(sliders.levels.value);
-
-        PIXEL_SIZE     = p;
-        PLAYBACK_SPEED = s;
-        BLACK_FLOOR    = f;
-        COLOR_BOOST    = b;
-        DITHER_SPREAD  = sp;
-        COLOR_LEVELS   = lv;
-
-        video.playbackRate = s;
-        resize();
-
-        labels.pixel.textContent  = p.toFixed(1);
-        labels.speed.textContent  = s.toFixed(2) + 'x';
-        labels.floor.textContent  = f.toFixed(4);
-        labels.boost.textContent  = b.toFixed(2);
-        labels.spread.textContent = sp.toFixed(2);
-        labels.levels.textContent = lv;
-    }
-
-    Object.values(sliders).forEach(sl => sl.addEventListener('input', update));
-
-    document.getElementById('dt-reset').addEventListener('click', () => {
-        sliders.pixel.value  = defaults.pixel;
-        sliders.speed.value  = defaults.speed;
-        sliders.floor.value  = defaults.floor;
-        sliders.boost.value  = defaults.boost;
-        sliders.spread.value = defaults.spread;
-        sliders.levels.value = defaults.levels;
-        update();
-    });
-
-    document.getElementById('dt-copy').addEventListener('click', () => {
-        const cfg = `const PIXEL_SIZE    = ${PIXEL_SIZE.toFixed(1)};\n`
-            + `const PLAYBACK_SPEED = ${PLAYBACK_SPEED.toFixed(2)};\n`
-            + `const BLACK_FLOOR   = ${BLACK_FLOOR.toFixed(4)};\n`
-            + `const COLOR_BOOST   = ${COLOR_BOOST.toFixed(2)};\n`
-            + `const DITHER_SPREAD = ${DITHER_SPREAD.toFixed(2)};\n`
-            + `const COLOR_LEVELS  = ${COLOR_LEVELS};`;
-
-        navigator.clipboard.writeText(cfg).then(() => {
-            const msg = document.getElementById('dt-copied');
-            msg.classList.add('show');
-            setTimeout(() => msg.classList.remove('show'), 1600);
-        });
-    });
-})();
-</script>
+<script src="dither-modes.js"></script>
+<script>initDitherEngine('dither-canvas', 'source-video');</script>
 </body>
 </html>
