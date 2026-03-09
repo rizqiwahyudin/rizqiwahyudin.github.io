@@ -385,15 +385,29 @@ const MODES = [
         const od = e.ctx.createImageData(w, h), out = od.data;
         for (let j = 3; j < out.length; j += 4) out[j] = 255;
         const time = performance.now() / 1000;
+        const t1 = time * p.drift, t2 = time * p.drift * 0.6;
         for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
                 const si = (y * w + x) * 4;
                 const l = lum(src[si], src[si + 1], src[si + 2]) / 255;
                 const excess = Math.max(0, l - p.threshold);
-                const dist = excess * p.strength;
-                const n1 = Math.sin(x * 0.05 + y * 0.03 + time * p.drift);
-                const n2 = Math.cos(x * 0.03 - y * 0.07 + time * p.drift * 0.7);
-                const angle = Math.atan2(n1, n2);
+
+                /* large-scale flow (two octaves for irregular blobs) */
+                const a1 = Math.sin(x * 0.017 + y * 0.013 + t1)
+                         + Math.sin(x * 0.009 - y * 0.021 + t2 * 1.3) * 0.7;
+                const a2 = Math.cos(x * 0.015 - y * 0.025 + t1 * 0.8)
+                         + Math.cos(y * 0.011 + x * 0.019 + t2) * 0.6;
+
+                /* high-freq jitter so edges feel organic, not circular */
+                const jx = Math.sin(x * 0.14 + y * 0.11 + t1 * 2.1) * 0.35;
+                const jy = Math.cos(x * 0.12 - y * 0.16 + t2 * 1.7) * 0.35;
+
+                /* per-pixel hash so nearby pixels scatter unevenly */
+                const h1 = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+                const pxVar = (h1 - Math.floor(h1)) * 0.5 + 0.75;
+
+                const angle = Math.atan2(a1 + jy, a2 + jx);
+                const dist = excess * p.strength * pxVar;
                 const dx = Math.round(x + Math.cos(angle) * dist);
                 const dy = Math.round(y + Math.sin(angle) * dist);
                 if (dx >= 0 && dx < w && dy >= 0 && dy < h) {
