@@ -1,9 +1,5 @@
 /**
  * Project data — edit this array to add/remove/reorder cards.
- * 
- * type: "sim" for live ASCII simulation
- * sim: path to simulation HTML
- * classification: displayed in the badge area
  */
 const projects = [
     {
@@ -44,14 +40,22 @@ const projects = [
     }
 ];
 
-/**
- * Render all project cards into the grid.
- */
-function renderCards() {
-    const grid = document.getElementById('project-grid');
-    if (!grid) return;
+function renderTags(tags) {
+    if (!tags || tags.length === 0) return '';
+    return '<div class="card-tags">' + tags.map(t => '<span class="card-tag">' + t + '</span>').join('') + '</div>';
+}
 
-    grid.innerHTML = '';
+/* ========== Carousel ========== */
+
+let currentIdx = 0;
+
+function renderCards() {
+    const track = document.getElementById('project-grid');
+    const dots  = document.getElementById('carousel-dots');
+    if (!track) return;
+
+    track.innerHTML = '';
+    dots.innerHTML = '';
 
     projects.forEach((p, i) => {
         const card = document.createElement('div');
@@ -60,53 +64,131 @@ function renderCards() {
 
         const num = String(i + 1).padStart(3, '0');
 
-        card.innerHTML = `
-            <iframe src="${p.sim}" loading="lazy" title="${p.title}" allow="accelerometer"></iframe>
-            <a class="sim-fullscreen" href="${p.sim}" target="_blank">↗ open</a>
-            <span class="sim-interact-hint">press, click, drag!</span>
-            ${p.classification ? `<span class="card-badge">${p.classification}</span>` : ''}
-            <div class="card-body">
-                <div class="card-body-inner">
-                    <div class="card-num">${num} //</div>
-                    <div class="card-title">${p.title}</div>
-                    <div class="card-subtitle">${p.subtitle}</div>
-                    ${p.desc ? `<div class="card-desc">${p.desc}</div>` : ''}
-                    ${renderTags(p.tags)}
-                </div>
-            </div>
-        `;
+        card.innerHTML =
+            '<iframe data-src="' + p.sim + '" loading="lazy" title="' + p.title + '" allow="accelerometer"></iframe>' +
+            '<a class="sim-fullscreen" href="' + p.sim + '" target="_blank">\u2197 open</a>' +
+            (p.classification ? '<span class="card-badge">' + p.classification + '</span>' : '') +
+            '<div class="card-body"><div class="card-body-inner">' +
+                '<div class="card-num">' + num + ' //</div>' +
+                '<div class="card-title">' + p.title + '</div>' +
+                '<div class="card-subtitle">' + p.subtitle + '</div>' +
+                (p.desc ? '<div class="card-desc">' + p.desc + '</div>' : '') +
+                renderTags(p.tags) +
+            '</div></div>';
 
-        grid.appendChild(card);
+        track.appendChild(card);
+
+        const dot = document.createElement('button');
+        dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+        dot.addEventListener('click', () => goTo(i));
+        dots.appendChild(dot);
+    });
+
+    updateIframes();
+}
+
+function goTo(idx) {
+    const total = projects.length;
+    currentIdx = Math.max(0, Math.min(total - 1, idx));
+    const track = document.getElementById('project-grid');
+    track.style.transition = 'transform 0.4s ease';
+    track.style.transform = 'translateX(-' + (currentIdx * 100) + '%)';
+    updateDots();
+    updateIframes();
+}
+
+function updateDots() {
+    document.querySelectorAll('.carousel-dot').forEach((d, i) => {
+        d.classList.toggle('active', i === currentIdx);
     });
 }
 
-function renderTags(tags) {
-    if (!tags || tags.length === 0) return '';
-    return `<div class="card-tags">${tags.map(t => `<span class="card-tag">${t}</span>`).join('')}</div>`;
+function updateIframes() {
+    const cards = document.querySelectorAll('#project-grid .card-sim');
+    cards.forEach((card, i) => {
+        const iframe = card.querySelector('iframe');
+        const dist = Math.abs(i - currentIdx);
+        const wantSrc = projects[i].sim;
+        if (dist <= 1) {
+            if (iframe.getAttribute('src') !== wantSrc) {
+                iframe.src = wantSrc;
+            }
+        } else {
+            if (iframe.getAttribute('src') && iframe.getAttribute('src') !== 'about:blank') {
+                iframe.src = 'about:blank';
+            }
+        }
+    });
 }
 
-// ===== Typewriter Footer =====
+/* ---- Nav buttons ---- */
+function initNavButtons() {
+    const prev = document.querySelector('.carousel-prev');
+    const next = document.querySelector('.carousel-next');
+    if (prev) prev.addEventListener('click', () => goTo(currentIdx - 1));
+    if (next) next.addEventListener('click', () => goTo(currentIdx + 1));
+}
+
+/* ---- Touch swipe ---- */
+function initSwipe() {
+    const track = document.getElementById('project-grid');
+    const carousel = track.parentElement;
+    let startX = 0, deltaX = 0, swiping = false;
+
+    track.addEventListener('touchstart', e => {
+        startX = e.touches[0].clientX;
+        deltaX = 0;
+        swiping = true;
+        track.style.transition = 'none';
+    }, { passive: true });
+
+    track.addEventListener('touchmove', e => {
+        if (!swiping) return;
+        deltaX = e.touches[0].clientX - startX;
+        const pct = (deltaX / carousel.offsetWidth) * 100;
+        track.style.transform = 'translateX(' + (-currentIdx * 100 + pct) + '%)';
+    }, { passive: true });
+
+    track.addEventListener('touchend', () => {
+        if (!swiping) return;
+        swiping = false;
+        const threshold = carousel.offsetWidth * 0.15;
+        if (deltaX > threshold && currentIdx > 0) {
+            goTo(currentIdx - 1);
+        } else if (deltaX < -threshold && currentIdx < projects.length - 1) {
+            goTo(currentIdx + 1);
+        } else {
+            goTo(currentIdx);
+        }
+    });
+}
+
+/* ---- Keyboard ---- */
+function initKeyboard() {
+    document.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft')  goTo(currentIdx - 1);
+        if (e.key === 'ArrowRight') goTo(currentIdx + 1);
+    });
+}
+
+/* ========== Typewriter Footer ========== */
+
 function typewriter() {
     const el = document.getElementById('typewriter-text');
     if (!el) return;
 
-    // Segments: type each phrase with a swing, pause between them
     const segments = ['end_of_file', ' // ', 'no_further_data'];
-    const fullText = segments.join('');
 
-    // Swing easing: slow → fast → slow across a segment
     function swingDelay(progress) {
-        // progress 0→1 within a segment
-        // U-shaped speed: fast in middle, slow at edges
-        const speed = 1 - Math.sin(progress * Math.PI); // 0 at middle, 1 at edges
+        const speed = 1 - Math.sin(progress * Math.PI);
         return 35 + speed * 90 + Math.random() * 20;
     }
 
-    let phase = 'typing'; // 'typing' | 'selecting' | 'clearing'
-    let segIdx = 0;       // current segment
-    let charIdx = 0;      // char within current segment
-    let printed = '';      // total printed so far
-    let selCount = 0;      // how many chars are selected (from right)
+    let phase = 'typing';
+    let segIdx = 0;
+    let charIdx = 0;
+    let printed = '';
+    let selCount = 0;
 
     const cursor = document.querySelector('.footer-cursor');
 
@@ -127,25 +209,17 @@ function typewriter() {
     function tick() {
         if (phase === 'typing') {
             const seg = segments[segIdx];
-
             if (charIdx < seg.length) {
                 printed += seg[charIdx];
                 render();
                 charIdx++;
-
-                const progress = charIdx / seg.length;
-                setTimeout(tick, swingDelay(progress));
+                setTimeout(tick, swingDelay(charIdx / seg.length));
             } else {
-                // Segment done — move to next or finish
                 charIdx = 0;
                 segIdx++;
-
                 if (segIdx < segments.length) {
-                    // Pause between segments
-                    const pause = segments[segIdx] === ' // ' ? 300 : 600;
-                    setTimeout(tick, pause);
+                    setTimeout(tick, segments[segIdx] === ' // ' ? 300 : 600);
                 } else {
-                    // All typed — pause then start selecting
                     setTimeout(() => {
                         phase = 'selecting';
                         selCount = 0;
@@ -155,13 +229,11 @@ function typewriter() {
                 }
             }
         } else if (phase === 'selecting') {
-            // Instant select-all, like Ctrl+A
             selCount = printed.length;
             render();
             phase = 'clearing';
             setTimeout(tick, 500);
         } else {
-            // Clearing — delete all at once, reset
             printed = '';
             selCount = 0;
             el.textContent = '';
@@ -173,11 +245,15 @@ function typewriter() {
         }
     }
 
-    setTimeout(tick, 1200); // Initial delay
+    setTimeout(tick, 1200);
 }
 
-// Render on load
+/* ========== Init ========== */
+
 document.addEventListener('DOMContentLoaded', () => {
     renderCards();
+    initNavButtons();
+    initSwipe();
+    initKeyboard();
     typewriter();
 });
