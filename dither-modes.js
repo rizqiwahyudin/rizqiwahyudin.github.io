@@ -725,6 +725,51 @@ window.initDitherEngine = function (canvasId, videoId) {
         canvasW = canvasH = 0;
     });
 
+    /* ---- URL preset (used by index.html iframes) ---- */
+    const urlP = new URLSearchParams(window.location.search);
+    if (urlP.has('mode')) {
+        const mi = MODES.findIndex(m => m.id === urlP.get('mode'));
+        if (mi >= 0) {
+            currentMode = MODES[mi];
+            modeSelect.value = mi;
+            params = initParams(currentMode);
+            currentMode.params.forEach(d => { if (urlP.has(d.id)) params[d.id] = parseFloat(urlP.get(d.id)); });
+            canvasW = canvasH = 0;
+            buildTunerSliders();
+        }
+    }
+    if (urlP.has('speed')) {
+        speed = parseFloat(urlP.get('speed'));
+        speedSlider.value = speed;
+        speedLabel.textContent = speed.toFixed(2) + 'x';
+    }
+    if (urlP.has('mixMode')) {
+        const mi = MODES.findIndex(m => m.id === urlP.get('mixMode'));
+        if (mi >= 0) {
+            mixEnabled = true;
+            mixToggleSlider.value = 1;
+            mixStatusVal.textContent = 'on';
+            mixControlsDiv.style.display = 'block';
+            mixModeRef = MODES[mi];
+            mixModeSelect.value = mi;
+            mixParams = initParams(mixModeRef);
+            mixModeRef.params.forEach(d => {
+                const k = 'mix_' + d.id;
+                if (urlP.has(k)) mixParams[d.id] = parseFloat(urlP.get(k));
+            });
+            if (urlP.has('blendAmount')) blendAmount = parseFloat(urlP.get('blendAmount'));
+            if (urlP.has('blendMode')) {
+                const bi = BLEND_NAMES.indexOf(urlP.get('blendMode'));
+                if (bi >= 0) blendIdx = bi;
+            }
+            mixAmountSlider.value = blendAmount;
+            mixAmountLabel.textContent = blendAmount.toFixed(2);
+            mixBlendSlider.value = blendIdx;
+            mixBlendLabel.textContent = BLEND_NAMES[blendIdx];
+            buildMixSliders();
+        }
+    }
+
     /* ---- Start video ---- */
     video.playbackRate = speed;
     let frameStarted = false;
