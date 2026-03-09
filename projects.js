@@ -29,9 +29,18 @@ const projects = [
         title: "memento mori",
         subtitle: "don't forget to live :)",
         desc: "",
-        classification: "webgl // glsl",
+        classification: "canvas // dither",
         sim: "nebula.html",
-        tags: ["webgl", "glsl", "raymarching"]
+        tags: ["canvas 2d", "bayer dither", "video"]
+    },
+    {
+        type: "sim",
+        title: "vanitas",
+        subtitle: "all is fleeting",
+        desc: "",
+        classification: "canvas // dither",
+        sim: "vanitas.html",
+        tags: ["canvas 2d", "bayer dither", "video"]
     }
 ];
 

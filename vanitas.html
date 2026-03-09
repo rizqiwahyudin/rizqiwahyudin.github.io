@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Memento Mori</title>
+    <title>Vanitas</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -171,7 +171,7 @@
 </head>
 <body>
 <canvas id="dither-canvas"></canvas>
-<video id="source-video" src="skull0000-0720.mp4" loop muted playsinline></video>
+<video id="source-video" src="skull2.mp4" loop muted playsinline></video>
 <a id="back-btn" href="index.html">&larr; back</a>
 
 <button id="dither-tuner-toggle">&#9881; dither tuner</button>
@@ -219,7 +219,6 @@ const canvas = document.getElementById('dither-canvas');
 const ctx    = canvas.getContext('2d', { willReadFrequently: true });
 const video  = document.getElementById('source-video');
 
-/* Offscreen canvas for sampling video frames */
 const samplerCanvas = document.createElement('canvas');
 const samplerCtx    = samplerCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -260,25 +259,20 @@ for (let i = 0; i < 64; i++) BAYER8[i] /= 64.0;
 function frame() {
     requestAnimationFrame(frame);
 
-    /* Don't render until video is playing */
     if (video.readyState < 2) return;
 
     const w = ditherW, h = ditherH;
 
-    /* Draw video frame to sampler canvas (scaled to dither resolution) */
-    /* Center the square video in the viewport */
     const vidAspect = video.videoWidth / video.videoHeight;
     const canAspect = w / h;
 
     let drawW, drawH, drawX, drawY;
     if (vidAspect > canAspect) {
-        /* Video wider than canvas — fit height, center horizontally */
         drawH = h;
         drawW = h * vidAspect;
         drawX = (w - drawW) / 2;
         drawY = 0;
     } else {
-        /* Video taller than canvas — fit width, center vertically */
         drawW = w;
         drawH = w / vidAspect;
         drawX = 0;
@@ -289,11 +283,9 @@ function frame() {
     samplerCtx.fillRect(0, 0, w, h);
     samplerCtx.drawImage(video, drawX, drawY, drawW, drawH);
 
-    /* Read video pixels */
     const srcData = samplerCtx.getImageData(0, 0, w, h);
     const src = srcData.data;
 
-    /* Create dithered output */
     const outData = ctx.createImageData(w, h);
     const out = outData.data;
 
@@ -301,36 +293,27 @@ function frame() {
         for (let x = 0; x < w; x++) {
             const i = (y * w + x) * 4;
 
-            /* Source RGB (0-1) */
             let r = src[i]     / 255.0;
             let g = src[i + 1] / 255.0;
             let b = src[i + 2] / 255.0;
 
-            /* Black floor — crush near-black to pure black */
             const lum = 0.299 * r + 0.587 * g + 0.114 * b;
             if (lum < BLACK_FLOOR) {
                 out[i] = 0; out[i+1] = 0; out[i+2] = 0; out[i+3] = 255;
                 continue;
             }
 
-            /* Color boost */
             r = Math.min(1.0, r * COLOR_BOOST);
             g = Math.min(1.0, g * COLOR_BOOST);
             b = Math.min(1.0, b * COLOR_BOOST);
 
-            /* Bayer threshold for this pixel */
-            const bx = x & 7;
-            const by = y & 7;
-            const threshold = BAYER8[by * 8 + bx] * DITHER_SPREAD;
-
-            /* Dither each channel independently — preserves color */
+            const threshold = BAYER8[(y & 7) * 8 + (x & 7)] * DITHER_SPREAD;
             out[i]     = r > threshold ? 255 : 0;
             out[i + 1] = g > threshold ? 255 : 0;
             out[i + 2] = b > threshold ? 255 : 0;
             out[i + 3] = 255;
         }
     }
-
     ctx.putImageData(outData, 0, 0);
 }
 
@@ -339,7 +322,6 @@ video.playbackRate = PLAYBACK_SPEED;
 video.play().then(() => {
     requestAnimationFrame(frame);
 }).catch(() => {
-    /* Autoplay blocked — start on first interaction */
     document.addEventListener('click', () => {
         video.play();
         requestAnimationFrame(frame);
