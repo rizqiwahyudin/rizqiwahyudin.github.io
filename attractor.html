@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>strange attractor</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #080808;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas#display {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #back-btn {
+            position: fixed;
+            top: 14px; left: 14px;
+            font: 14px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            text-decoration: none;
+            color: rgba(255,255,255,0.35);
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            padding: 6px 14px;
+            z-index: 10;
+            transition: color 0.15s, background 0.15s, border-color 0.15s;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.12);
+            border-color: rgba(255,255,255,0.3);
+        }
+        #info {
+            position: fixed;
+            bottom: 14px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255,255,255,0.12);
+            font: 11px 'Courier New', monospace;
+            pointer-events: none;
+            z-index: 1;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="display"></canvas>
+    <a id="back-btn" href="index.html">&larr; back</a>
+    <div id="info">strange attractor // lorenz system // sigma=10 rho=28 beta=8/3</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // ---- config ----
+    const CELL = 7;           // pixel size of each ASCII cell
+    const TRAIL_LEN = 6000;   // number of points stored in attractor trail
+    const SPAWN   = 120;      // new points injected per frame
+    const FADE    = 0.04;     // fade rate of the brightness field
+    const DT      = 0.005;    // integration timestep
+    const SIGMA   = 10.0;
+    const RHO     = 28.0;
+    const BETA    = 8.0 / 3.0;
+
+    // ASCII brightness ramp, darkest to brightest
+    const CHARS = ' .\'`^",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
+
+    // ---- canvas setup ----
+    const canvas = document.getElementById('display');
+    const ctx    = canvas.getContext('2d');
+
+    let W, H, cols, rows;
+    let field; // brightness field, Float32Array [rows * cols]
+
+    function resize() {
+        W = window.innerWidth;
+        H = window.innerHeight;
+        canvas.width  = W;
+        canvas.height = H;
+        cols = Math.floor(W / CELL);
+        rows = Math.floor(H / CELL);
+        field = new Float32Array(cols * rows);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ---- Lorenz integrator ----
+    // State: one particle walking the attractor
+    let lx = 0.1, ly = 0.0, lz = 0.0;
+
+    function lorenzStep() {
+        const dx = SIGMA * (ly - lx);
+        const dy = lx * (RHO - lz) - ly;
+        const dz = lx * ly - BETA * lz;
+        lx += dx * DT;
+        ly += dy * DT;
+        lz += dz * DT;
+        return { x: lx, y: ly, z: lz };
+    }
+
+    // ---- projection ----
+    // The Lorenz attractor lives in roughly:
+    //   x: -25 .. 25, y: -30 .. 30, z: 0 .. 50
+    // We project (x, z) onto screen.
+    // Optionally rotate slowly around Z axis for visual interest.
+    let angle = 0;
+
+    function project(x, y, z) {
+        // Slow rotation around the attractor's vertical axis (z)
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const rx = x * cos - y * sin;
+        const ry = x * sin + y * cos;
+
+        // Map rx in [-30, 30] -> [0, cols]
+        // Map z  in [0, 50]   -> [rows, 0]  (flip so 0 is at bottom)
+        const px = (rx + 30) / 60 * cols;
+        const py = (1 - (z) / 50) * rows;
+        return { px, py };
+    }
+
+    // ---- main loop ----
+    let lastTime = 0;
+
+    function frame(ts) {
+        requestAnimationFrame(frame);
+
+        const dt = Math.min((ts - lastTime) / 1000, 0.05);
+        lastTime = ts;
+
+        // Advance rotation
+        angle += 0.0004;
+
+        // Fade field
+        for (let i = 0; i < field.length; i++) {
+            field[i] = Math.max(0, field[i] - FADE);
+        }
+
+        // Integrate SPAWN new Lorenz points, deposit brightness
+        for (let s = 0; s < SPAWN; s++) {
+            const { x, y, z } = lorenzStep();
+            const { px, py } = project(x, y, z);
+            const col = Math.floor(px);
+            const row = Math.floor(py);
+            if (col >= 0 && col < cols && row >= 0 && row < rows) {
+                const idx = row * cols + col;
+                field[idx] = Math.min(1.0, field[idx] + 0.06);
+            }
+        }
+
+        // Render ASCII grid
+        // Clear with very dark fill for motion blur effect
+        ctx.fillStyle = '#080808';
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.font = CELL + 'px "Courier New", monospace';
+        ctx.textBaseline = 'top';
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const v = field[r * cols + c];
+                if (v < 0.005) continue;
+
+                const charIdx = Math.floor(v * (CHARS.length - 1));
+                const ch = CHARS[charIdx];
+
+                // Color: dim teal-white, slightly warmer at high brightness
+                const lum = Math.floor(v * 200 + 28);
+                const r2  = Math.floor(lum * 0.85);
+                const g2  = Math.floor(lum * 0.95);
+                const b2  = lum;
+                ctx.fillStyle = 'rgb(' + r2 + ',' + g2 + ',' + b2 + ')';
+                ctx.fillText(ch, c * CELL, r * CELL);
+            }
+        }
+    }
+
+    requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
