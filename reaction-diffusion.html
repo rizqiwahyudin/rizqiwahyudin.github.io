@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reaction Diffusion</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d0d0d;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #back-btn {
+            position: fixed;
+            top: 16px; left: 20px;
+            color: rgba(255,255,255,0.4);
+            text-decoration: none;
+            font: 14px 'DotGothic16', monospace;
+            z-index: 10;
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #preset-btn {
+            position: fixed;
+            top: 16px; right: 20px;
+            color: rgba(255,255,255,0.4);
+            font: 14px 'DotGothic16', monospace;
+            z-index: 10;
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #preset-btn:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #label {
+            position: fixed;
+            bottom: 16px; right: 20px;
+            color: rgba(255,255,255,0.2);
+            font: 11px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<a id="back-btn" href="index.html">&larr; back</a>
+<button id="preset-btn">preset: coral</button>
+<div id="label">canvas // gray-scott</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const SIM_W = 256;
+const SIM_H = 256;
+
+const presets = [
+    { name: 'coral',   Du: 0.2097, Dv: 0.105, f: 0.054,  k: 0.063  },
+    { name: 'spots',   Du: 0.2097, Dv: 0.105, f: 0.035,  k: 0.065  },
+    { name: 'mitosis', Du: 0.2097, Dv: 0.105, f: 0.0367, k: 0.0649 },
+];
+let presetIdx = 0;
+let Du, Dv, f, k;
+
+function applyPreset(idx) {
+    const p = presets[idx];
+    Du = p.Du; Dv = p.Dv; f = p.f; k = p.k;
+    document.getElementById('preset-btn').textContent = 'preset: ' + p.name;
+}
+
+// Two alternating buffers: each cell stores [u, v]
+let bufA = new Float32Array(SIM_W * SIM_H * 2);
+let bufB = new Float32Array(SIM_W * SIM_H * 2);
+
+function idx(x, y) {
+    return (y * SIM_W + x) * 2;
+}
+
+function initBuffers() {
+    for (let i = 0; i < SIM_W * SIM_H; i++) {
+        bufA[i * 2]     = 1.0; // U = 1
+        bufA[i * 2 + 1] = 0.0; // V = 0
+    }
+    // Seed some V in random patches
+    for (let s = 0; s < 40; s++) {
+        const cx = Math.floor(Math.random() * SIM_W);
+        const cy = Math.floor(Math.random() * SIM_H);
+        const r = 4 + Math.floor(Math.random() * 6);
+        for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+                if (dx*dx + dy*dy > r*r) continue;
+                const x = (cx + dx + SIM_W) % SIM_W;
+                const y = (cy + dy + SIM_H) % SIM_H;
+                const i2 = idx(x, y);
+                bufA[i2]     = 0.5 + (Math.random() - 0.5) * 0.1;
+                bufA[i2 + 1] = 0.25 + (Math.random() - 0.5) * 0.1;
+            }
+        }
+    }
+}
+
+// Discrete Laplacian: 5-point stencil with wrap-around
+// lap(U) = 0.25*(U[left]+U[right]+U[up]+U[down]) - U[center]
+function step() {
+    const src = bufA;
+    const dst = bufB;
+
+    for (let y = 0; y < SIM_H; y++) {
+        for (let x = 0; x < SIM_W; x++) {
+            const xL = (x - 1 + SIM_W) % SIM_W;
+            const xR = (x + 1) % SIM_W;
+            const yU = (y - 1 + SIM_H) % SIM_H;
+            const yD = (y + 1) % SIM_H;
+
+            const c  = idx(x,  y);
+            const l  = idx(xL, y);
+            const r  = idx(xR, y);
+            const u  = idx(x,  yU);
+            const d  = idx(x,  yD);
+
+            const U = src[c];
+            const V = src[c + 1];
+
+            const lapU = 0.25 * (src[l] + src[r] + src[u] + src[d]) - U;
+            const lapV = 0.25 * (src[l+1] + src[r+1] + src[u+1] + src[d+1]) - V;
+
+            const UVV = U * V * V;
+
+            dst[c]     = Math.max(0, Math.min(1, U + Du * lapU - UVV + f * (1 - U)));
+            dst[c + 1] = Math.max(0, Math.min(1, V + Dv * lapV + UVV - (f + k) * V));
+        }
+    }
+
+    // Swap buffers
+    const tmp = bufA;
+    bufA = bufB;
+    bufB = tmp;
+}
+
+// Render U values to imageData
+const imgData = ctx.createImageData(SIM_W, SIM_H);
+const pixels  = imgData.data;
+
+function render() {
+    for (let i = 0; i < SIM_W * SIM_H; i++) {
+        const u = bufA[i * 2];
+        // Map U [0,1] to dark palette: black -> deep teal -> white
+        // U near 1 = mostly chemical A = dark (unreacted)
+        // U near 0 = mostly reacted = bright (where V is high)
+        const t = 1 - u; // invert: low U (pattern) = bright
+
+        let r, g, b;
+        if (t < 0.5) {
+            // black to teal
+            const s = t / 0.5;
+            r = Math.floor(0   * s);
+            g = Math.floor(120 * s);
+            b = Math.floor(100 * s);
+        } else {
+            // teal to white
+            const s = (t - 0.5) / 0.5;
+            r = Math.floor(0   + 255 * s);
+            g = Math.floor(120 + 135 * s);
+            b = Math.floor(100 + 155 * s);
+        }
+
+        const p = i * 4;
+        pixels[p]     = r;
+        pixels[p + 1] = g;
+        pixels[p + 2] = b;
+        pixels[p + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+function resizeCanvas() {
+    canvas.width  = SIM_W;
+    canvas.height = SIM_H;
+    canvas.style.width  = '100vw';
+    canvas.style.height = '100vh';
+}
+
+let running = true;
+let stepsPerFrame = 8;
+
+function loop() {
+    if (!running) return;
+    for (let i = 0; i < stepsPerFrame; i++) step();
+    render();
+    requestAnimationFrame(loop);
+}
+
+// Keyboard: ESC to go back
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') window.location.href = 'index.html';
+});
+
+// Preset cycling
+document.getElementById('preset-btn').addEventListener('click', () => {
+    presetIdx = (presetIdx + 1) % presets.length;
+    applyPreset(presetIdx);
+    initBuffers();
+});
+
+// Click to seed V
+canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = Math.floor((e.clientX - rect.left) / rect.width  * SIM_W);
+    const cy = Math.floor((e.clientY - rect.top)  / rect.height * SIM_H);
+    const r = 8;
+    for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+            if (dx*dx + dy*dy > r*r) continue;
+            const x = (cx + dx + SIM_W) % SIM_W;
+            const y = (cy + dy + SIM_H) % SIM_H;
+            const i2 = idx(x, y);
+            bufA[i2]     = 0.5;
+            bufA[i2 + 1] = 0.25;
+        }
+    }
+});
+
+resizeCanvas();
+applyPreset(0);
+initBuffers();
+loop();
+</script>
+</body>
+</html>

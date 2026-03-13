@@ -46,6 +46,33 @@ const projects = [
         classification: "canvas // ascii",
         sim: "attractor.html",
         tags: ["canvas 2d", "lorenz system", "dynamical systems"]
+    },
+    {
+        type: "sim",
+        title: "reaction diffusion",
+        subtitle: "patterns from noise",
+        desc: "",
+        classification: "canvas // gray-scott",
+        sim: "reaction-diffusion.html",
+        tags: ["canvas 2d", "gray-scott", "turing patterns"]
+    },
+    {
+        type: "sim",
+        title: "n-body",
+        subtitle: "gravity at scale",
+        desc: "",
+        classification: "canvas // physics",
+        sim: "n-body.html",
+        tags: ["canvas 2d", "gravity", "orbital mechanics"]
+    },
+    {
+        type: "sim",
+        title: "fourier",
+        subtitle: "circles all the way down",
+        desc: "",
+        classification: "canvas // mathematics",
+        sim: "fourier.html",
+        tags: ["canvas 2d", "fourier series", "epicycles"]
     }
 ];
 

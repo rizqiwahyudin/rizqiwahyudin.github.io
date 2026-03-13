@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N-Body</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d0d0d;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+        }
+        #back-btn {
+            position: fixed;
+            top: 16px; left: 20px;
+            color: rgba(255,255,255,0.4);
+            text-decoration: none;
+            font: 14px 'DotGothic16', monospace;
+            z-index: 10;
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #reset-btn {
+            position: fixed;
+            top: 16px; right: 20px;
+            color: rgba(255,255,255,0.4);
+            font: 14px 'DotGothic16', monospace;
+            z-index: 10;
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #reset-btn:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #label {
+            position: fixed;
+            bottom: 16px; right: 20px;
+            color: rgba(255,255,255,0.2);
+            font: 11px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<a id="back-btn" href="index.html">&larr; back</a>
+<button id="reset-btn">reset</button>
+<div id="label">canvas // physics</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const G   = 500;    // gravitational constant (scaled for visual interest)
+const EPS = 8;      // softening parameter
+const DT  = 0.15;   // time step
+const TRAIL_LEN = 300;
+
+// Body colors: dim but distinct
+const COLORS = [
+    'rgba(200, 80,  80,',   // dim red
+    'rgba(80,  140, 220,',  // dim blue
+    'rgba(220, 200, 160,',  // dim gold
+    'rgba(180, 180, 200,',  // dim white
+    'rgba(80,  200, 160,',  // dim teal
+    'rgba(200, 120, 200,',  // dim purple
+    'rgba(200, 160, 80,',   // dim amber
+];
+
+let bodies = [];
+
+function makeBodies() {
+    bodies = [];
+
+    // Setup: one large central body + 5 orbiting bodies with roughly circular initial velocities
+    // Plus one wild card body for chaos
+
+    const cx = canvas.width  / 2;
+    const cy = canvas.height / 2;
+
+    // Central massive body
+    const M = 1200;
+    bodies.push({
+        x: cx, y: cy,
+        vx: 0, vy: 0,
+        mass: M,
+        color: COLORS[3],
+        trail: []
+    });
+
+    // Orbiting bodies: circular orbit velocity = sqrt(G*M/r)
+    const orbitData = [
+        { r: 110, angle: 0,            mass: 60,  ci: 0 },
+        { r: 170, angle: Math.PI/3,    mass: 30,  ci: 1 },
+        { r: 220, angle: 2*Math.PI/3,  mass: 80,  ci: 2 },
+        { r: 140, angle: Math.PI,      mass: 20,  ci: 4 },
+        { r: 260, angle: 4*Math.PI/3,  mass: 45,  ci: 5 },
+        { r: 80,  angle: 5*Math.PI/3,  mass: 15,  ci: 6 },
+    ];
+
+    for (const o of orbitData) {
+        const bx  = cx + Math.cos(o.angle) * o.r;
+        const by  = cy + Math.sin(o.angle) * o.r;
+        const vc  = Math.sqrt(G * M / o.r);
+        // Perpendicular to radius vector: (-sin, cos)
+        const vx  = -Math.sin(o.angle) * vc;
+        const vy  =  Math.cos(o.angle) * vc;
+        bodies.push({
+            x: bx, y: by,
+            vx, vy,
+            mass: o.mass,
+            color: COLORS[o.ci],
+            trail: []
+        });
+    }
+}
+
+function computeForces() {
+    // Clear accelerations
+    const ax = new Float64Array(bodies.length);
+    const ay = new Float64Array(bodies.length);
+
+    for (let i = 0; i < bodies.length; i++) {
+        for (let j = i + 1; j < bodies.length; j++) {
+            const dx = bodies[j].x - bodies[i].x;
+            const dy = bodies[j].y - bodies[i].y;
+            const r2 = dx*dx + dy*dy + EPS*EPS;
+            const r  = Math.sqrt(r2);
+            const F  = G / r2; // G*mi*mj / r2, we divide by mass below
+            const fx = F * dx / r;
+            const fy = F * dy / r;
+
+            ax[i] += fx * bodies[j].mass;
+            ay[i] += fy * bodies[j].mass;
+            ax[j] -= fx * bodies[i].mass;
+            ay[j] -= fy * bodies[i].mass;
+        }
+    }
+
+    return { ax, ay };
+}
+
+function step() {
+    const { ax, ay } = computeForces();
+
+    for (let i = 0; i < bodies.length; i++) {
+        bodies[i].vx += ax[i] * DT;
+        bodies[i].vy += ay[i] * DT;
+        bodies[i].x  += bodies[i].vx * DT;
+        bodies[i].y  += bodies[i].vy * DT;
+
+        bodies[i].trail.push({ x: bodies[i].x, y: bodies[i].y });
+        if (bodies[i].trail.length > TRAIL_LEN) {
+            bodies[i].trail.shift();
+        }
+    }
+}
+
+function centerOfMass() {
+    let totalM = 0, cx = 0, cy = 0;
+    for (const b of bodies) {
+        totalM += b.mass;
+        cx += b.x * b.mass;
+        cy += b.y * b.mass;
+    }
+    return { x: cx / totalM, y: cy / totalM };
+}
+
+function draw() {
+    ctx.fillStyle = 'rgba(13, 13, 13, 0.18)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const com = centerOfMass();
+    const offX = canvas.width  / 2 - com.x;
+    const offY = canvas.height / 2 - com.y;
+
+    ctx.save();
+    ctx.translate(offX, offY);
+
+    for (const b of bodies) {
+        // Draw trail
+        if (b.trail.length > 1) {
+            const n = b.trail.length;
+            for (let i = 1; i < n; i++) {
+                const alpha = (i / n) * 0.6;
+                ctx.beginPath();
+                ctx.strokeStyle = b.color + alpha + ')';
+                ctx.lineWidth = 1;
+                ctx.moveTo(b.trail[i-1].x, b.trail[i-1].y);
+                ctx.lineTo(b.trail[i].x,   b.trail[i].y);
+                ctx.stroke();
+            }
+        }
+
+        // Draw body
+        const radius = Math.max(2, Math.sqrt(b.mass) * 0.5);
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = b.color + '1)';
+        ctx.fill();
+
+        // Glow
+        const grd = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, radius * 3);
+        grd.addColorStop(0, b.color + '0.3)');
+        grd.addColorStop(1, b.color + '0)');
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, radius * 3, 0, Math.PI * 2);
+        ctx.fillStyle = grd;
+        ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    makeBodies();
+}
+
+let running = true;
+
+function loop() {
+    if (!running) return;
+    for (let i = 0; i < 3; i++) step();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') window.location.href = 'index.html';
+    if (e.key === 'r' || e.key === 'R') {
+        makeBodies();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+});
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+    makeBodies();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+});
+
+window.addEventListener('resize', resize);
+resize();
+loop();
+</script>
+</body>
+</html>
