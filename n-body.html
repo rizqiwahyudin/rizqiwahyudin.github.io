@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #0d0d0d;
+            background: #000;
             overflow: hidden;
             user-select: none;
             -webkit-user-select: none;
@@ -17,6 +17,8 @@
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
         }
         #back-btn {
             position: fixed;
@@ -66,204 +68,221 @@
 <canvas id="c"></canvas>
 <a id="back-btn" href="index.html">&larr; back</a>
 <button id="reset-btn">reset</button>
-<div id="label">canvas // physics</div>
+<div id="label">canvas // physics // bayer dither</div>
 
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+(function() {
+    'use strict';
 
-const G   = 500;    // gravitational constant (scaled for visual interest)
-const EPS = 8;      // softening parameter
-const DT  = 0.15;   // time step
-const TRAIL_LEN = 300;
-
-// Body colors: dim but distinct
-const COLORS = [
-    'rgba(200, 80,  80,',   // dim red
-    'rgba(80,  140, 220,',  // dim blue
-    'rgba(220, 200, 160,',  // dim gold
-    'rgba(180, 180, 200,',  // dim white
-    'rgba(80,  200, 160,',  // dim teal
-    'rgba(200, 120, 200,',  // dim purple
-    'rgba(200, 160, 80,',   // dim amber
-];
-
-let bodies = [];
-
-function makeBodies() {
-    bodies = [];
-
-    // Setup: one large central body + 5 orbiting bodies with roughly circular initial velocities
-    // Plus one wild card body for chaos
-
-    const cx = canvas.width  / 2;
-    const cy = canvas.height / 2;
-
-    // Central massive body
-    const M = 1200;
-    bodies.push({
-        x: cx, y: cy,
-        vx: 0, vy: 0,
-        mass: M,
-        color: COLORS[3],
-        trail: []
-    });
-
-    // Orbiting bodies: circular orbit velocity = sqrt(G*M/r)
-    const orbitData = [
-        { r: 110, angle: 0,            mass: 60,  ci: 0 },
-        { r: 170, angle: Math.PI/3,    mass: 30,  ci: 1 },
-        { r: 220, angle: 2*Math.PI/3,  mass: 80,  ci: 2 },
-        { r: 140, angle: Math.PI,      mass: 20,  ci: 4 },
-        { r: 260, angle: 4*Math.PI/3,  mass: 45,  ci: 5 },
-        { r: 80,  angle: 5*Math.PI/3,  mass: 15,  ci: 6 },
+    // Bayer 4x4 matrix, normalized to [0, 1)
+    const BAYER4 = [
+         0/16,  8/16,  2/16, 10/16,
+        12/16,  4/16, 14/16,  6/16,
+         3/16, 11/16,  1/16,  9/16,
+        15/16,  7/16, 13/16,  5/16
     ];
 
-    for (const o of orbitData) {
-        const bx  = cx + Math.cos(o.angle) * o.r;
-        const by  = cy + Math.sin(o.angle) * o.r;
-        const vc  = Math.sqrt(G * M / o.r);
-        // Perpendicular to radius vector: (-sin, cos)
-        const vx  = -Math.sin(o.angle) * vc;
-        const vy  =  Math.cos(o.angle) * vc;
-        bodies.push({
-            x: bx, y: by,
-            vx, vy,
-            mass: o.mass,
-            color: COLORS[o.ci],
-            trail: []
-        });
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+
+    const G         = 500;
+    const EPS       = 8;
+    const DT        = 0.15;
+    const TRAIL_LEN = 300;
+    const FADE      = 0.94;   // brightness buffer fade per frame
+    const PIX       = 4;      // logical pixel size
+
+    // Each body gets R, G, B channel weights (summed into luminance buffer)
+    // Using distinct tints; kept subtle so dither blends them naturally.
+    const BODY_TINTS = [
+        [1.00, 0.40, 0.40],  // red
+        [0.40, 0.60, 1.00],  // blue
+        [1.00, 0.90, 0.50],  // gold
+        [0.90, 0.90, 0.95],  // near white
+        [0.40, 1.00, 0.75],  // teal
+        [0.90, 0.55, 0.90],  // purple
+        [1.00, 0.70, 0.35],  // amber
+    ];
+
+    // Separate R/G/B float buffers so each body's tint accumulates per channel
+    let simW, simH;
+    let bufR, bufG, bufB;
+    let imgData;
+
+    function initBuffers() {
+        simW   = Math.floor(window.innerWidth  / PIX);
+        simH   = Math.floor(window.innerHeight / PIX);
+        canvas.width  = simW;
+        canvas.height = simH;
+        bufR   = new Float32Array(simW * simH);
+        bufG   = new Float32Array(simW * simH);
+        bufB   = new Float32Array(simW * simH);
+        imgData = ctx.createImageData(simW, simH);
     }
-}
 
-function computeForces() {
-    // Clear accelerations
-    const ax = new Float64Array(bodies.length);
-    const ay = new Float64Array(bodies.length);
+    // Deposit brightness into RGB buffers at a given sim-space coordinate
+    function deposit(sx, sy, tint, amount) {
+        const col = Math.floor(sx);
+        const row = Math.floor(sy);
+        if (col < 0 || col >= simW || row < 0 || row >= simH) return;
+        const i = row * simW + col;
+        bufR[i] = Math.min(1.0, bufR[i] + tint[0] * amount);
+        bufG[i] = Math.min(1.0, bufG[i] + tint[1] * amount);
+        bufB[i] = Math.min(1.0, bufB[i] + tint[2] * amount);
+    }
 
-    for (let i = 0; i < bodies.length; i++) {
-        for (let j = i + 1; j < bodies.length; j++) {
-            const dx = bodies[j].x - bodies[i].x;
-            const dy = bodies[j].y - bodies[i].y;
-            const r2 = dx*dx + dy*dy + EPS*EPS;
-            const r  = Math.sqrt(r2);
-            const F  = G / r2; // G*mi*mj / r2, we divide by mass below
-            const fx = F * dx / r;
-            const fy = F * dy / r;
+    let bodies = [];
 
-            ax[i] += fx * bodies[j].mass;
-            ay[i] += fy * bodies[j].mass;
-            ax[j] -= fx * bodies[i].mass;
-            ay[j] -= fy * bodies[i].mass;
+    function makeBodies() {
+        bodies = [];
+
+        // Sim space coordinates (will map to buffer after centering on CoM)
+        const cx = simW / 2;
+        const cy = simH / 2;
+
+        const M = 1200;
+        bodies.push({ x: cx, y: cy, vx: 0, vy: 0, mass: M, tint: BODY_TINTS[3], trail: [] });
+
+        const orbitData = [
+            { r: 80,  angle: 0,            mass: 60,  ti: 0 },
+            { r: 120, angle: Math.PI/3,    mass: 30,  ti: 1 },
+            { r: 155, angle: 2*Math.PI/3,  mass: 80,  ti: 2 },
+            { r: 100, angle: Math.PI,      mass: 20,  ti: 4 },
+            { r: 185, angle: 4*Math.PI/3,  mass: 45,  ti: 5 },
+            { r: 60,  angle: 5*Math.PI/3,  mass: 15,  ti: 6 },
+        ];
+
+        for (const o of orbitData) {
+            const bx = cx + Math.cos(o.angle) * o.r;
+            const by = cy + Math.sin(o.angle) * o.r;
+            const vc = Math.sqrt(G * M / o.r);
+            bodies.push({
+                x: bx, y: by,
+                vx: -Math.sin(o.angle) * vc,
+                vy:  Math.cos(o.angle) * vc,
+                mass: o.mass,
+                tint: BODY_TINTS[o.ti],
+                trail: []
+            });
         }
     }
 
-    return { ax, ay };
-}
+    function computeForces() {
+        const ax = new Float64Array(bodies.length);
+        const ay = new Float64Array(bodies.length);
+        for (let i = 0; i < bodies.length; i++) {
+            for (let j = i + 1; j < bodies.length; j++) {
+                const dx = bodies[j].x - bodies[i].x;
+                const dy = bodies[j].y - bodies[i].y;
+                const r2 = dx*dx + dy*dy + EPS*EPS;
+                const r  = Math.sqrt(r2);
+                const F  = G / r2;
+                const fx = F * dx / r;
+                const fy = F * dy / r;
+                ax[i] += fx * bodies[j].mass;
+                ay[i] += fy * bodies[j].mass;
+                ax[j] -= fx * bodies[i].mass;
+                ay[j] -= fy * bodies[i].mass;
+            }
+        }
+        return { ax, ay };
+    }
 
-function step() {
-    const { ax, ay } = computeForces();
-
-    for (let i = 0; i < bodies.length; i++) {
-        bodies[i].vx += ax[i] * DT;
-        bodies[i].vy += ay[i] * DT;
-        bodies[i].x  += bodies[i].vx * DT;
-        bodies[i].y  += bodies[i].vy * DT;
-
-        bodies[i].trail.push({ x: bodies[i].x, y: bodies[i].y });
-        if (bodies[i].trail.length > TRAIL_LEN) {
-            bodies[i].trail.shift();
+    function step() {
+        const { ax, ay } = computeForces();
+        for (let i = 0; i < bodies.length; i++) {
+            bodies[i].vx += ax[i] * DT;
+            bodies[i].vy += ay[i] * DT;
+            bodies[i].x  += bodies[i].vx * DT;
+            bodies[i].y  += bodies[i].vy * DT;
+            bodies[i].trail.push({ x: bodies[i].x, y: bodies[i].y });
+            if (bodies[i].trail.length > TRAIL_LEN) bodies[i].trail.shift();
         }
     }
-}
 
-function centerOfMass() {
-    let totalM = 0, cx = 0, cy = 0;
-    for (const b of bodies) {
-        totalM += b.mass;
-        cx += b.x * b.mass;
-        cy += b.y * b.mass;
+    function centerOfMass() {
+        let totalM = 0, cx = 0, cy = 0;
+        for (const b of bodies) {
+            totalM += b.mass;
+            cx += b.x * b.mass;
+            cy += b.y * b.mass;
+        }
+        return { x: cx / totalM, y: cy / totalM };
     }
-    return { x: cx / totalM, y: cy / totalM };
-}
 
-function draw() {
-    ctx.fillStyle = 'rgba(13, 13, 13, 0.18)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    function render() {
+        // Fade buffers
+        for (let i = 0; i < bufR.length; i++) {
+            bufR[i] *= FADE;
+            bufG[i] *= FADE;
+            bufB[i] *= FADE;
+        }
 
-    const com = centerOfMass();
-    const offX = canvas.width  / 2 - com.x;
-    const offY = canvas.height / 2 - com.y;
+        const com  = centerOfMass();
+        const offX = simW / 2 - com.x;
+        const offY = simH / 2 - com.y;
 
-    ctx.save();
-    ctx.translate(offX, offY);
-
-    for (const b of bodies) {
-        // Draw trail
-        if (b.trail.length > 1) {
+        for (const b of bodies) {
             const n = b.trail.length;
-            for (let i = 1; i < n; i++) {
-                const alpha = (i / n) * 0.6;
-                ctx.beginPath();
-                ctx.strokeStyle = b.color + alpha + ')';
-                ctx.lineWidth = 1;
-                ctx.moveTo(b.trail[i-1].x, b.trail[i-1].y);
-                ctx.lineTo(b.trail[i].x,   b.trail[i].y);
-                ctx.stroke();
+            // Deposit trail with recency-weighted brightness
+            for (let i = 0; i < n; i++) {
+                const bri = (i / n) * 0.22;
+                deposit(b.trail[i].x + offX, b.trail[i].y + offY, b.tint, bri);
+            }
+            // Deposit body itself at full brightness
+            deposit(b.x + offX, b.y + offY, b.tint, 0.9);
+        }
+
+        // Bayer dither per channel, composite to final pixel
+        const d = imgData.data;
+        for (let y = 0; y < simH; y++) {
+            for (let x = 0; x < simW; x++) {
+                const i   = y * simW + x;
+                const thr = BAYER4[(y % 4) * 4 + (x % 4)];
+                const rOn = bufR[i] > thr ? 255 : 0;
+                const gOn = bufG[i] > thr ? 255 : 0;
+                const bOn = bufB[i] > thr ? 255 : 0;
+                const p   = i * 4;
+                d[p]     = rOn;
+                d[p + 1] = gOn;
+                d[p + 2] = bOn;
+                d[p + 3] = 255;
             }
         }
 
-        // Draw body
-        const radius = Math.max(2, Math.sqrt(b.mass) * 0.5);
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = b.color + '1)';
-        ctx.fill();
-
-        // Glow
-        const grd = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, radius * 3);
-        grd.addColorStop(0, b.color + '0.3)');
-        grd.addColorStop(1, b.color + '0)');
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, radius * 3, 0, Math.PI * 2);
-        ctx.fillStyle = grd;
-        ctx.fill();
+        ctx.imageSmoothingEnabled = false;
+        ctx.putImageData(imgData, 0, 0);
     }
 
-    ctx.restore();
-}
+    function loop() {
+        for (let i = 0; i < 3; i++) step();
+        render();
+        requestAnimationFrame(loop);
+    }
 
-function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    makeBodies();
-}
-
-let running = true;
-
-function loop() {
-    if (!running) return;
-    for (let i = 0; i < 3; i++) step();
-    draw();
-    requestAnimationFrame(loop);
-}
-
-document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') window.location.href = 'index.html';
-    if (e.key === 'r' || e.key === 'R') {
+    function reset() {
+        bufR.fill(0);
+        bufG.fill(0);
+        bufB.fill(0);
         makeBodies();
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
-});
 
-document.getElementById('reset-btn').addEventListener('click', () => {
-    makeBodies();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-});
+    function resize() {
+        initBuffers();
+        makeBodies();
+    }
 
-window.addEventListener('resize', resize);
-resize();
-loop();
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') window.location.href = 'index.html';
+        if (e.key === 'r' || e.key === 'R') reset();
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', reset);
+    window.addEventListener('resize', resize);
+
+    resize();
+    loop();
+})();
 </script>
 </body>
 </html>

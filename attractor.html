@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #080808;
+            background: #000;
             overflow: hidden;
             user-select: none;
             -webkit-user-select: none;
@@ -28,16 +28,15 @@
             text-transform: lowercase;
             text-decoration: none;
             color: rgba(255,255,255,0.35);
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.12);
             border-radius: 6px;
             padding: 6px 14px;
             z-index: 10;
-            transition: color 0.15s, background 0.15s, border-color 0.15s;
+            transition: color 0.15s, border-color 0.15s;
         }
         #back-btn:hover {
             color: rgba(255,255,255,0.8);
-            background: rgba(255,255,255,0.12);
             border-color: rgba(255,255,255,0.3);
         }
         #info {
@@ -46,7 +45,7 @@
             width: 100%;
             text-align: center;
             color: rgba(255,255,255,0.12);
-            font: 11px 'Courier New', monospace;
+            font: 11px 'DotGothic16', monospace;
             pointer-events: none;
             z-index: 1;
             letter-spacing: 2px;
@@ -56,47 +55,59 @@
 <body>
     <canvas id="display"></canvas>
     <a id="back-btn" href="index.html">&larr; back</a>
-    <div id="info">strange attractor // lorenz system // sigma=10 rho=28 beta=8/3</div>
+    <div id="info">strange attractor // lorenz system // bayer dither</div>
 
 <script>
 (function() {
     'use strict';
 
-    // ---- config ----
-    const CELL = 7;           // pixel size of each ASCII cell
-    const TRAIL_LEN = 6000;   // number of points stored in attractor trail
-    const SPAWN   = 120;      // new points injected per frame
-    const FADE    = 0.04;     // fade rate of the brightness field
-    const DT      = 0.005;    // integration timestep
-    const SIGMA   = 10.0;
-    const RHO     = 28.0;
-    const BETA    = 8.0 / 3.0;
+    // Bayer 4x4 matrix, normalized to [0, 1)
+    const BAYER4 = [
+         0/16,  8/16,  2/16, 10/16,
+        12/16,  4/16, 14/16,  6/16,
+         3/16, 11/16,  1/16,  9/16,
+        15/16,  7/16, 13/16,  5/16
+    ];
 
-    // ASCII brightness ramp, darkest to brightest
-    const CHARS = ' .\'`^",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
+    // Sim grid resolution
+    const PIX = 5;           // logical pixel size when scaled to canvas
 
-    // ---- canvas setup ----
+    // Lorenz params
+    const DT    = 0.005;
+    const SIGMA = 10.0;
+    const RHO   = 28.0;
+    const BETA  = 8.0 / 3.0;
+    const SPAWN = 100;       // points injected per frame
+    const FADE  = 0.97;      // brightness buffer multiplied by this each frame
+    const DEPOSIT = 0.06;    // brightness added per Lorenz point
+
+    // Teal color for ON pixels
+    const R_ON = 0;
+    const G_ON = 255;
+    const B_ON = 200;
+
     const canvas = document.getElementById('display');
     const ctx    = canvas.getContext('2d');
 
-    let W, H, cols, rows;
-    let field; // brightness field, Float32Array [rows * cols]
+    let simW, simH;
+    let bright;    // Float32Array brightness buffer
+    let imgData;   // ImageData for the sim grid
 
     function resize() {
-        W = window.innerWidth;
-        H = window.innerHeight;
-        canvas.width  = W;
-        canvas.height = H;
-        cols = Math.floor(W / CELL);
-        rows = Math.floor(H / CELL);
-        field = new Float32Array(cols * rows);
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        canvas.width  = Math.floor(W / PIX);
+        canvas.height = Math.floor(H / PIX);
+        simW = canvas.width;
+        simH = canvas.height;
+        bright = new Float32Array(simW * simH);
+        imgData = ctx.createImageData(simW, simH);
     }
 
     window.addEventListener('resize', resize);
     resize();
 
-    // ---- Lorenz integrator ----
-    // State: one particle walking the attractor
+    // Lorenz state
     let lx = 0.1, ly = 0.0, lz = 0.0;
 
     function lorenzStep() {
@@ -106,84 +117,65 @@
         lx += dx * DT;
         ly += dy * DT;
         lz += dz * DT;
-        return { x: lx, y: ly, z: lz };
     }
 
-    // ---- projection ----
-    // The Lorenz attractor lives in roughly:
-    //   x: -25 .. 25, y: -30 .. 30, z: 0 .. 50
-    // We project (x, z) onto screen.
-    // Optionally rotate slowly around Z axis for visual interest.
-    let angle = 0;
+    // Slow rotation around Y axis for visual interest
+    let rotY = 0;
 
     function project(x, y, z) {
-        // Slow rotation around the attractor's vertical axis (z)
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
-        const rx = x * cos - y * sin;
-        const ry = x * sin + y * cos;
+        // Rotate around Y axis
+        const cosY = Math.cos(rotY);
+        const sinY = Math.sin(rotY);
+        const rx = x * cosY + z * sinY;
+        const rz = -x * sinY + z * cosY;
 
-        // Map rx in [-30, 30] -> [0, cols]
-        // Map z  in [0, 50]   -> [rows, 0]  (flip so 0 is at bottom)
-        const px = (rx + 30) / 60 * cols;
-        const py = (1 - (z) / 50) * rows;
+        // Lorenz lives roughly in x: -25..25, y: -30..30, z: 0..50
+        // Map rx [-30, 30] -> [0, simW], rz [0, 50] -> [simH, 0]
+        const px = (rx + 30) / 60 * simW;
+        const py = (1.0 - rz / 50.0) * simH;
         return { px, py };
     }
 
-    // ---- main loop ----
-    let lastTime = 0;
-
-    function frame(ts) {
+    function frame() {
         requestAnimationFrame(frame);
 
-        const dt = Math.min((ts - lastTime) / 1000, 0.05);
-        lastTime = ts;
+        rotY += 0.0004;
 
-        // Advance rotation
-        angle += 0.0004;
-
-        // Fade field
-        for (let i = 0; i < field.length; i++) {
-            field[i] = Math.max(0, field[i] - FADE);
+        // Fade brightness buffer
+        for (let i = 0; i < bright.length; i++) {
+            bright[i] *= FADE;
         }
 
-        // Integrate SPAWN new Lorenz points, deposit brightness
+        // Integrate Lorenz points and deposit brightness
         for (let s = 0; s < SPAWN; s++) {
-            const { x, y, z } = lorenzStep();
-            const { px, py } = project(x, y, z);
+            lorenzStep();
+            const { px, py } = project(lx, ly, lz);
             const col = Math.floor(px);
             const row = Math.floor(py);
-            if (col >= 0 && col < cols && row >= 0 && row < rows) {
-                const idx = row * cols + col;
-                field[idx] = Math.min(1.0, field[idx] + 0.06);
+            if (col >= 0 && col < simW && row >= 0 && row < simH) {
+                const idx = row * simW + col;
+                bright[idx] = Math.min(1.0, bright[idx] + DEPOSIT);
             }
         }
 
-        // Render ASCII grid
-        // Clear with very dark fill for motion blur effect
-        ctx.fillStyle = '#080808';
-        ctx.fillRect(0, 0, W, H);
-
-        ctx.font = CELL + 'px "Courier New", monospace';
-        ctx.textBaseline = 'top';
-
-        for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-                const v = field[r * cols + c];
-                if (v < 0.005) continue;
-
-                const charIdx = Math.floor(v * (CHARS.length - 1));
-                const ch = CHARS[charIdx];
-
-                // Color: dim teal-white, slightly warmer at high brightness
-                const lum = Math.floor(v * 200 + 28);
-                const r2  = Math.floor(lum * 0.85);
-                const g2  = Math.floor(lum * 0.95);
-                const b2  = lum;
-                ctx.fillStyle = 'rgb(' + r2 + ',' + g2 + ',' + b2 + ')';
-                ctx.fillText(ch, c * CELL, r * CELL);
+        // Apply Bayer dither and write to imgData
+        const d = imgData.data;
+        for (let y = 0; y < simH; y++) {
+            for (let x = 0; x < simW; x++) {
+                const i   = y * simW + x;
+                const b   = bright[i];
+                const thr = BAYER4[(y % 4) * 4 + (x % 4)];
+                const on  = b > thr;
+                const p   = i * 4;
+                d[p]     = on ? R_ON : 0;
+                d[p + 1] = on ? G_ON : 0;
+                d[p + 2] = on ? B_ON : 0;
+                d[p + 3] = 255;
             }
         }
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.putImageData(imgData, 0, 0);
     }
 
     requestAnimationFrame(frame);

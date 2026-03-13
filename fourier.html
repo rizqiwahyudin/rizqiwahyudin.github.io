@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #0d0d0d;
+            background: #000;
             overflow: hidden;
             user-select: none;
             -webkit-user-select: none;
@@ -17,6 +17,8 @@
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
         }
         #back-btn {
             position: fixed;
@@ -66,246 +68,262 @@
 <canvas id="c"></canvas>
 <a id="back-btn" href="index.html">&larr; back</a>
 <button id="shape-btn">shape: star</button>
-<div id="label">canvas // mathematics</div>
+<div id="label">canvas // mathematics // bayer dither</div>
 
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+(function() {
+    'use strict';
 
-const TWO_PI = Math.PI * 2;
+    // Bayer 4x4 matrix, normalized to [0, 1)
+    const BAYER4 = [
+         0/16,  8/16,  2/16, 10/16,
+        12/16,  4/16, 14/16,  6/16,
+         3/16, 11/16,  1/16,  9/16,
+        15/16,  7/16, 13/16,  5/16
+    ];
 
-// ---- Shape generators ----
-// Each returns an array of {x, y} points centered at origin, sampled uniformly.
+    // Teal for ON pixels
+    const R_ON = 0;
+    const G_ON = 255;
+    const B_ON = 200;
 
-function makeStar(N, outerR, innerR, points) {
-    const pts = [];
-    for (let i = 0; i < N; i++) {
-        const t = i / N;
-        const angle = t * TWO_PI - Math.PI / 2;
-        const spikes = points * 2;
-        const spikeAngle = (i % (N / points)) / (N / points);
-        // Alternate between outer and inner radius smoothly
-        const r = innerR + (outerR - innerR) * Math.pow(Math.cos(spikeAngle * Math.PI), 2);
-        pts.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
-    }
-    return pts;
-}
+    const TWO_PI = Math.PI * 2;
+    const PIX    = 4;   // logical pixel size
+    const FADE   = 0.985; // buffer fade per frame
 
-function makeTrefoil(N, R) {
-    const pts = [];
-    for (let i = 0; i < N; i++) {
-        const t = (i / N) * TWO_PI;
-        // Trefoil parametric
-        const x = R * Math.sin(t) + R * 0.5 * Math.sin(2 * t);
-        const y = R * Math.cos(t) - R * 0.5 * Math.cos(2 * t);
-        pts.push({ x, y });
-    }
-    return pts;
-}
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
 
-function makeHeart(N, R) {
-    const pts = [];
-    for (let i = 0; i < N; i++) {
-        const t = (i / N) * TWO_PI;
-        const x =  R * 0.95 * Math.sin(t) * Math.sin(t) * Math.sin(t);
-        const y = -R * (0.8125*Math.cos(t) - 0.3125*Math.cos(2*t) - 0.125*Math.cos(3*t) - 0.0625*Math.cos(4*t));
-        pts.push({ x, y });
-    }
-    return pts;
-}
+    let simW, simH;
+    let bright;
+    let imgData;
 
-function makeFigure8(N, R) {
-    const pts = [];
-    for (let i = 0; i < N; i++) {
-        const t = (i / N) * TWO_PI;
-        const x = R * Math.sin(t);
-        const y = R * 0.6 * Math.sin(2 * t);
-        pts.push({ x, y });
-    }
-    return pts;
-}
-
-// ---- DFT ----
-// Returns array of {freq, amp, phase} sorted by amplitude descending.
-// Input: array of complex numbers as {re, im}.
-// We treat the path as complex: z[n] = x[n] + i*y[n].
-
-function dft(signal) {
-    const N = signal.length;
-    const result = [];
-    for (let k = 0; k < N; k++) {
-        let re = 0, im = 0;
-        for (let n = 0; n < N; n++) {
-            const angle = (TWO_PI * k * n) / N;
-            re += signal[n].re * Math.cos(angle) + signal[n].im * Math.sin(angle);
-            im += signal[n].im * Math.cos(angle) - signal[n].re * Math.sin(angle);
-        }
-        re /= N;
-        im /= N;
-        const amp   = Math.sqrt(re*re + im*im);
-        const phase = Math.atan2(im, re);
-        // Map k to signed frequency: k <= N/2 -> k, k > N/2 -> k - N
-        const freq  = k <= N / 2 ? k : k - N;
-        result.push({ freq, amp, phase, re, im });
-    }
-    // Sort by amplitude descending so largest circles draw first
-    result.sort((a, b) => b.amp - a.amp);
-    return result;
-}
-
-// ---- Shapes ----
-const N_SAMPLES = 128; // number of DFT components
-
-const shapes = [
-    {
-        name: 'star',
-        make: () => {
-            const R = Math.min(canvas.width, canvas.height) * 0.28;
-            return makeStar(N_SAMPLES, R, R * 0.45, 5);
-        }
-    },
-    {
-        name: 'trefoil',
-        make: () => {
-            const R = Math.min(canvas.width, canvas.height) * 0.26;
-            return makeTrefoil(N_SAMPLES, R);
-        }
-    },
-    {
-        name: 'heart',
-        make: () => {
-            const R = Math.min(canvas.width, canvas.height) * 0.26;
-            return makeHeart(N_SAMPLES, R);
-        }
-    },
-    {
-        name: 'figure-8',
-        make: () => {
-            const R = Math.min(canvas.width, canvas.height) * 0.3;
-            return makeFigure8(N_SAMPLES, R);
-        }
-    }
-];
-
-let shapeIdx  = 0;
-let components = [];
-let trail     = [];
-let angle     = 0;
-let period    = 0; // full cycle in radians = TWO_PI
-
-function buildDFT() {
-    const pts = shapes[shapeIdx].make();
-    const signal = pts.map(p => ({ re: p.x, im: p.y }));
-    components = dft(signal);
-    trail = [];
-    angle = 0;
-    document.getElementById('shape-btn').textContent = 'shape: ' + shapes[shapeIdx].name;
-}
-
-// Speed: complete one full revolution every ~8 seconds at 60fps = 480 frames
-// angular step per frame: TWO_PI / 480
-const SPEED = TWO_PI / 480;
-
-function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#0d0d0d';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const cx = canvas.width  / 2;
-    const cy = canvas.height / 2;
-
-    // Draw epicycle chain
-    let x = cx;
-    let y = cy;
-
-    // Only draw the top N_DRAW components for performance and clarity
-    const N_DRAW = Math.min(components.length, 64);
-
-    for (let i = 0; i < N_DRAW; i++) {
-        const c   = components[i];
-        const nx  = x + c.amp * Math.cos(c.freq * angle + c.phase);
-        const ny  = y + c.amp * Math.sin(c.freq * angle + c.phase);
-
-        // Draw circle
-        ctx.beginPath();
-        ctx.arc(x, y, c.amp, 0, TWO_PI);
-        ctx.strokeStyle = 'rgba(200, 200, 200, 0.08)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Draw arm
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(nx, ny);
-        ctx.strokeStyle = 'rgba(200, 200, 200, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        x = nx;
-        y = ny;
+    function initBuffers() {
+        simW    = Math.floor(window.innerWidth  / PIX);
+        simH    = Math.floor(window.innerHeight / PIX);
+        canvas.width  = simW;
+        canvas.height = simH;
+        bright  = new Float32Array(simW * simH);
+        imgData = ctx.createImageData(simW, simH);
     }
 
-    // Accumulate tip position
-    trail.push({ x, y });
-
-    // Keep trail length to one full cycle worth of points
-    const maxTrail = Math.floor(TWO_PI / SPEED) + 2;
-    if (trail.length > maxTrail) {
-        trail.shift();
-    }
-
-    // Draw trail
-    if (trail.length > 1) {
-        for (let i = 1; i < trail.length; i++) {
-            const alpha = i / trail.length;
-            ctx.beginPath();
-            ctx.moveTo(trail[i-1].x, trail[i-1].y);
-            ctx.lineTo(trail[i].x,   trail[i].y);
-            ctx.strokeStyle = `rgba(0, 220, 200, ${alpha * 0.9})`;
-            ctx.lineWidth   = 1.5;
-            ctx.stroke();
+    // Draw a circle outline into the brightness buffer at sim coords.
+    function drawCircleBuffer(cx, cy, rad, bri) {
+        if (rad < 0.5) return;
+        // Sample the circumference proportional to radius for even coverage
+        const steps = Math.max(16, Math.floor(rad * 2.5));
+        for (let s = 0; s < steps; s++) {
+            const a   = (s / steps) * TWO_PI;
+            const px  = Math.floor(cx + Math.cos(a) * rad);
+            const py  = Math.floor(cy + Math.sin(a) * rad);
+            if (px >= 0 && px < simW && py >= 0 && py < simH) {
+                const i = py * simW + px;
+                bright[i] = Math.min(1.0, bright[i] + bri);
+            }
         }
     }
 
-    // Draw tip dot
-    ctx.beginPath();
-    ctx.arc(x, y, 3, 0, TWO_PI);
-    ctx.fillStyle = 'rgba(0, 230, 210, 1)';
-    ctx.fill();
-
-    // Advance angle
-    angle += SPEED;
-    if (angle >= TWO_PI) {
-        angle -= TWO_PI;
+    // Draw a filled square (radius ~1 sim pixel) as a bright point
+    function drawPoint(px, py, bri) {
+        const x = Math.floor(px);
+        const y = Math.floor(py);
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < simW && ny >= 0 && ny < simH) {
+                    const i = ny * simW + nx;
+                    bright[i] = Math.min(1.0, bright[i] + bri);
+                }
+            }
+        }
     }
-}
 
-let running = true;
+    // Shape generators
+    function makeStar(N, outerR, innerR, points) {
+        const pts = [];
+        for (let i = 0; i < N; i++) {
+            const t          = i / N;
+            const angle      = t * TWO_PI - Math.PI / 2;
+            const spikeAngle = (i % (N / points)) / (N / points);
+            const r          = innerR + (outerR - innerR) * Math.pow(Math.cos(spikeAngle * Math.PI), 2);
+            pts.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+        }
+        return pts;
+    }
 
-function loop() {
-    if (!running) return;
-    draw();
-    requestAnimationFrame(loop);
-}
+    function makeTrefoil(N, R) {
+        const pts = [];
+        for (let i = 0; i < N; i++) {
+            const t = (i / N) * TWO_PI;
+            pts.push({
+                x: R * Math.sin(t) + R * 0.5 * Math.sin(2 * t),
+                y: R * Math.cos(t) - R * 0.5 * Math.cos(2 * t)
+            });
+        }
+        return pts;
+    }
 
-document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') window.location.href = 'index.html';
-});
+    function makeHeart(N, R) {
+        const pts = [];
+        for (let i = 0; i < N; i++) {
+            const t = (i / N) * TWO_PI;
+            pts.push({
+                x:  R * 0.95 * Math.sin(t) * Math.sin(t) * Math.sin(t),
+                y: -R * (0.8125*Math.cos(t) - 0.3125*Math.cos(2*t) - 0.125*Math.cos(3*t) - 0.0625*Math.cos(4*t))
+            });
+        }
+        return pts;
+    }
 
-document.getElementById('shape-btn').addEventListener('click', () => {
-    shapeIdx = (shapeIdx + 1) % shapes.length;
-    buildDFT();
-});
+    function makeFigure8(N, R) {
+        const pts = [];
+        for (let i = 0; i < N; i++) {
+            const t = (i / N) * TWO_PI;
+            pts.push({ x: R * Math.sin(t), y: R * 0.6 * Math.sin(2 * t) });
+        }
+        return pts;
+    }
 
-function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    buildDFT();
-}
+    function dft(signal) {
+        const N = signal.length;
+        const result = [];
+        for (let kk = 0; kk < N; kk++) {
+            let re = 0, im = 0;
+            for (let n = 0; n < N; n++) {
+                const angle = (TWO_PI * kk * n) / N;
+                re += signal[n].re * Math.cos(angle) + signal[n].im * Math.sin(angle);
+                im += signal[n].im * Math.cos(angle) - signal[n].re * Math.sin(angle);
+            }
+            re /= N;
+            im /= N;
+            const amp   = Math.sqrt(re*re + im*im);
+            const phase = Math.atan2(im, re);
+            const freq  = kk <= N / 2 ? kk : kk - N;
+            result.push({ freq, amp, phase });
+        }
+        result.sort((a, b) => b.amp - a.amp);
+        return result;
+    }
 
-window.addEventListener('resize', resize);
-resize();
-loop();
+    const N_SAMPLES = 128;
+    const SPEED     = TWO_PI / 480;
+
+    const shapes = [
+        {
+            name: 'star',
+            make: () => {
+                const R = Math.min(simW, simH) * 0.28;
+                return makeStar(N_SAMPLES, R, R * 0.45, 5);
+            }
+        },
+        {
+            name: 'trefoil',
+            make: () => {
+                const R = Math.min(simW, simH) * 0.26;
+                return makeTrefoil(N_SAMPLES, R);
+            }
+        },
+        {
+            name: 'heart',
+            make: () => {
+                const R = Math.min(simW, simH) * 0.26;
+                return makeHeart(N_SAMPLES, R);
+            }
+        },
+        {
+            name: 'figure-8',
+            make: () => {
+                const R = Math.min(simW, simH) * 0.3;
+                return makeFigure8(N_SAMPLES, R);
+            }
+        }
+    ];
+
+    let shapeIdx   = 0;
+    let components = [];
+    let angle      = 0;
+
+    function buildDFT() {
+        const pts    = shapes[shapeIdx].make();
+        const signal = pts.map(p => ({ re: p.x, im: p.y }));
+        components   = dft(signal);
+        bright.fill(0);
+        angle = 0;
+        document.getElementById('shape-btn').textContent = 'shape: ' + shapes[shapeIdx].name;
+    }
+
+    function frame() {
+        requestAnimationFrame(frame);
+
+        // Fade brightness buffer
+        for (let i = 0; i < bright.length; i++) {
+            bright[i] *= FADE;
+        }
+
+        // Walk the epicycle chain in sim space
+        const cx = simW / 2;
+        const cy = simH / 2;
+        let x = cx;
+        let y = cy;
+
+        const N_DRAW = Math.min(components.length, 64);
+
+        for (let i = 0; i < N_DRAW; i++) {
+            const c  = components[i];
+            const nx = x + c.amp * Math.cos(c.freq * angle + c.phase);
+            const ny = y + c.amp * Math.sin(c.freq * angle + c.phase);
+
+            // Draw circle outline into buffer (dim)
+            drawCircleBuffer(x, y, c.amp, 0.04);
+
+            x = nx;
+            y = ny;
+        }
+
+        // Bright point at tip
+        drawPoint(x, y, 1.0);
+
+        // Apply Bayer dither and render
+        const d = imgData.data;
+        for (let py = 0; py < simH; py++) {
+            for (let px = 0; px < simW; px++) {
+                const i   = py * simW + px;
+                const thr = BAYER4[(py % 4) * 4 + (px % 4)];
+                const on  = bright[i] > thr;
+                const p   = i * 4;
+                d[p]     = on ? R_ON : 0;
+                d[p + 1] = on ? G_ON : 0;
+                d[p + 2] = on ? B_ON : 0;
+                d[p + 3] = 255;
+            }
+        }
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.putImageData(imgData, 0, 0);
+
+        angle += SPEED;
+        if (angle >= TWO_PI) angle -= TWO_PI;
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') window.location.href = 'index.html';
+    });
+
+    document.getElementById('shape-btn').addEventListener('click', () => {
+        shapeIdx = (shapeIdx + 1) % shapes.length;
+        buildDFT();
+    });
+
+    function resize() {
+        initBuffers();
+        buildDFT();
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(frame);
+})();
 </script>
 </body>
 </html>

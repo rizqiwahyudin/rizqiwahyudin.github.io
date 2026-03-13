@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #0d0d0d;
+            background: #000;
             overflow: hidden;
             user-select: none;
             -webkit-user-select: none;
@@ -68,11 +68,24 @@
 <canvas id="c"></canvas>
 <a id="back-btn" href="index.html">&larr; back</a>
 <button id="preset-btn">preset: coral</button>
-<div id="label">canvas // gray-scott</div>
+<div id="label">canvas // gray-scott // bayer dither</div>
 
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
+
+// Bayer 4x4 matrix, normalized to [0, 1)
+const BAYER4 = [
+     0/16,  8/16,  2/16, 10/16,
+    12/16,  4/16, 14/16,  6/16,
+     3/16, 11/16,  1/16,  9/16,
+    15/16,  7/16, 13/16,  5/16
+];
+
+// Teal color for ON pixels
+const R_ON = 0;
+const G_ON = 255;
+const B_ON = 200;
 
 const SIM_W = 256;
 const SIM_H = 256;
@@ -91,30 +104,28 @@ function applyPreset(idx) {
     document.getElementById('preset-btn').textContent = 'preset: ' + p.name;
 }
 
-// Two alternating buffers: each cell stores [u, v]
 let bufA = new Float32Array(SIM_W * SIM_H * 2);
 let bufB = new Float32Array(SIM_W * SIM_H * 2);
 
-function idx(x, y) {
+function cellIdx(x, y) {
     return (y * SIM_W + x) * 2;
 }
 
 function initBuffers() {
     for (let i = 0; i < SIM_W * SIM_H; i++) {
-        bufA[i * 2]     = 1.0; // U = 1
-        bufA[i * 2 + 1] = 0.0; // V = 0
+        bufA[i * 2]     = 1.0;
+        bufA[i * 2 + 1] = 0.0;
     }
-    // Seed some V in random patches
     for (let s = 0; s < 40; s++) {
         const cx = Math.floor(Math.random() * SIM_W);
         const cy = Math.floor(Math.random() * SIM_H);
-        const r = 4 + Math.floor(Math.random() * 6);
+        const r  = 4 + Math.floor(Math.random() * 6);
         for (let dy = -r; dy <= r; dy++) {
             for (let dx = -r; dx <= r; dx++) {
                 if (dx*dx + dy*dy > r*r) continue;
-                const x = (cx + dx + SIM_W) % SIM_W;
-                const y = (cy + dy + SIM_H) % SIM_H;
-                const i2 = idx(x, y);
+                const x  = (cx + dx + SIM_W) % SIM_W;
+                const y  = (cy + dy + SIM_H) % SIM_H;
+                const i2 = cellIdx(x, y);
                 bufA[i2]     = 0.5 + (Math.random() - 0.5) * 0.1;
                 bufA[i2 + 1] = 0.25 + (Math.random() - 0.5) * 0.1;
             }
@@ -122,8 +133,6 @@ function initBuffers() {
     }
 }
 
-// Discrete Laplacian: 5-point stencil with wrap-around
-// lap(U) = 0.25*(U[left]+U[right]+U[up]+U[down]) - U[center]
 function step() {
     const src = bufA;
     const dst = bufB;
@@ -135,11 +144,11 @@ function step() {
             const yU = (y - 1 + SIM_H) % SIM_H;
             const yD = (y + 1) % SIM_H;
 
-            const c  = idx(x,  y);
-            const l  = idx(xL, y);
-            const r  = idx(xR, y);
-            const u  = idx(x,  yU);
-            const d  = idx(x,  yD);
+            const c = cellIdx(x,  y);
+            const l = cellIdx(xL, y);
+            const r = cellIdx(xR, y);
+            const u = cellIdx(x,  yU);
+            const d = cellIdx(x,  yD);
 
             const U = src[c];
             const V = src[c + 1];
@@ -154,45 +163,31 @@ function step() {
         }
     }
 
-    // Swap buffers
     const tmp = bufA;
     bufA = bufB;
     bufB = tmp;
 }
 
-// Render U values to imageData
 const imgData = ctx.createImageData(SIM_W, SIM_H);
 const pixels  = imgData.data;
 
 function render() {
-    for (let i = 0; i < SIM_W * SIM_H; i++) {
-        const u = bufA[i * 2];
-        // Map U [0,1] to dark palette: black -> deep teal -> white
-        // U near 1 = mostly chemical A = dark (unreacted)
-        // U near 0 = mostly reacted = bright (where V is high)
-        const t = 1 - u; // invert: low U (pattern) = bright
-
-        let r, g, b;
-        if (t < 0.5) {
-            // black to teal
-            const s = t / 0.5;
-            r = Math.floor(0   * s);
-            g = Math.floor(120 * s);
-            b = Math.floor(100 * s);
-        } else {
-            // teal to white
-            const s = (t - 0.5) / 0.5;
-            r = Math.floor(0   + 255 * s);
-            g = Math.floor(120 + 135 * s);
-            b = Math.floor(100 + 155 * s);
+    for (let y = 0; y < SIM_H; y++) {
+        for (let x = 0; x < SIM_W; x++) {
+            const i   = y * SIM_W + x;
+            const U   = bufA[i * 2];
+            // Invert: low U (reacted area, high V) = bright
+            const bri = 1.0 - U;
+            const thr = BAYER4[(y % 4) * 4 + (x % 4)];
+            const on  = bri > thr;
+            const p   = i * 4;
+            pixels[p]     = on ? R_ON : 0;
+            pixels[p + 1] = on ? G_ON : 0;
+            pixels[p + 2] = on ? B_ON : 0;
+            pixels[p + 3] = 255;
         }
-
-        const p = i * 4;
-        pixels[p]     = r;
-        pixels[p + 1] = g;
-        pixels[p + 2] = b;
-        pixels[p + 3] = 255;
     }
+    ctx.imageSmoothingEnabled = false;
     ctx.putImageData(imgData, 0, 0);
 }
 
@@ -203,40 +198,33 @@ function resizeCanvas() {
     canvas.style.height = '100vh';
 }
 
-let running = true;
-let stepsPerFrame = 8;
-
 function loop() {
-    if (!running) return;
-    for (let i = 0; i < stepsPerFrame; i++) step();
+    for (let i = 0; i < 8; i++) step();
     render();
     requestAnimationFrame(loop);
 }
 
-// Keyboard: ESC to go back
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') window.location.href = 'index.html';
 });
 
-// Preset cycling
 document.getElementById('preset-btn').addEventListener('click', () => {
     presetIdx = (presetIdx + 1) % presets.length;
     applyPreset(presetIdx);
     initBuffers();
 });
 
-// Click to seed V
 canvas.addEventListener('click', e => {
     const rect = canvas.getBoundingClientRect();
     const cx = Math.floor((e.clientX - rect.left) / rect.width  * SIM_W);
     const cy = Math.floor((e.clientY - rect.top)  / rect.height * SIM_H);
-    const r = 8;
+    const r  = 8;
     for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
             if (dx*dx + dy*dy > r*r) continue;
-            const x = (cx + dx + SIM_W) % SIM_W;
-            const y = (cy + dy + SIM_H) % SIM_H;
-            const i2 = idx(x, y);
+            const x  = (cx + dx + SIM_W) % SIM_W;
+            const y  = (cy + dy + SIM_H) % SIM_H;
+            const i2 = cellIdx(x, y);
             bufA[i2]     = 0.5;
             bufA[i2 + 1] = 0.25;
         }
