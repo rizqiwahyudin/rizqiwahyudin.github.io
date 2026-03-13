@@ -37,38 +37,202 @@
             color: rgba(255,255,255,0.7);
             border-color: rgba(255,255,255,0.2);
         }
-        #shape-btn {
+        #shape-bar {
             position: fixed;
             top: 16px; right: 20px;
-            color: rgba(255,255,255,0.4);
-            font: 14px 'DotGothic16', monospace;
+            display: flex;
+            gap: 8px;
             z-index: 10;
-            padding: 6px 14px;
+        }
+        .shape-btn {
+            color: rgba(255,255,255,0.4);
+            font: 13px 'DotGothic16', monospace;
+            padding: 6px 12px;
             border: 1px solid rgba(255,255,255,0.08);
             border-radius: 6px;
             background: rgba(0,0,0,0.4);
             cursor: pointer;
             transition: color 0.2s, border-color 0.2s;
         }
-        #shape-btn:hover {
+        .shape-btn:hover, .shape-btn.active {
             color: rgba(255,255,255,0.7);
             border-color: rgba(255,255,255,0.2);
         }
         #label {
             position: fixed;
-            bottom: 16px; right: 20px;
+            bottom: 16px; left: 20px;
             color: rgba(255,255,255,0.2);
             font: 11px 'DotGothic16', monospace;
             letter-spacing: 2px;
             z-index: 10;
         }
+
+        /* Tuner toggle */
+        #tuner-toggle {
+            position: fixed;
+            bottom: 16px; right: 16px;
+            z-index: 10000;
+            font: 11px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #tuner-toggle:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        /* Tuner panel */
+        #tuner-panel {
+            position: fixed;
+            bottom: 52px; right: 16px;
+            z-index: 10000;
+            width: 260px;
+            max-height: calc(100vh - 68px);
+            overflow-y: auto;
+            font-family: 'DotGothic16', monospace;
+            background: rgb(8 8 10 / 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 16px;
+            display: none;
+        }
+        #tuner-panel.open { display: block; }
+
+        #tuner-panel .dt-title {
+            font-size: 11px;
+            letter-spacing: 3px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        #tuner-panel .dt-row { margin-bottom: 10px; }
+        #tuner-panel .dt-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.45);
+            margin-bottom: 4px;
+        }
+        #tuner-panel .dt-val {
+            font-variant-numeric: tabular-nums;
+            color: rgba(255,255,255,0.25);
+        }
+        #tuner-panel input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 3px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 2px;
+            outline: none;
+        }
+        #tuner-panel input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #c8c8c8;
+            cursor: pointer;
+            border: none;
+        }
+        #tuner-panel input[type="range"]::-moz-range-thumb {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #c8c8c8;
+            cursor: pointer;
+            border: none;
+        }
+        #tuner-panel .dt-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+        #tuner-panel .dt-btn {
+            flex: 1;
+            font: 9px 'DotGothic16', monospace;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 5px;
+            padding: 5px 0;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #tuner-panel .dt-btn:hover {
+            color: rgba(255,255,255,0.8);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #tuner-panel .dt-copied {
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            text-align: center;
+            color: #00e5ff;
+            margin-top: 6px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #tuner-panel .dt-copied.show { opacity: 1; }
     </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <a id="back-btn" href="index.html">&larr; back</a>
-<button id="shape-btn">shape: star</button>
+<div id="shape-bar">
+    <button class="shape-btn active" data-shape="0">star</button>
+    <button class="shape-btn" data-shape="1">trefoil</button>
+    <button class="shape-btn" data-shape="2">heart</button>
+    <button class="shape-btn" data-shape="3">figure-8</button>
+</div>
 <div id="label">canvas // mathematics // bayer dither</div>
+
+<button id="tuner-toggle">&#9881; tuner</button>
+<div id="tuner-panel">
+    <div class="dt-title">// tuner</div>
+    <div class="dt-row">
+        <div class="dt-label"><span>pixel size</span><span class="dt-val" id="dt-pix-val">3</span></div>
+        <input type="range" id="dt-pix" min="2" max="8" step="1" value="3">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>trail fade</span><span class="dt-val" id="dt-fade-val">0.985</span></div>
+        <input type="range" id="dt-fade" min="0.97" max="0.999" step="0.001" value="0.985">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>circle brightness</span><span class="dt-val" id="dt-circbri-val">0.040</span></div>
+        <input type="range" id="dt-circbri" min="0.01" max="0.15" step="0.005" value="0.04">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>tip brightness</span><span class="dt-val" id="dt-tipbri-val">1.0</span></div>
+        <input type="range" id="dt-tipbri" min="0.5" max="2.0" step="0.1" value="1.0">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>speed</span><span class="dt-val" id="dt-speed-val">0.015</span></div>
+        <input type="range" id="dt-speed" min="0.005" max="0.05" step="0.005" value="0.015">
+    </div>
+    <div class="dt-actions">
+        <button class="dt-btn" id="dt-copy">copy config</button>
+        <button class="dt-btn" id="dt-reset">reset</button>
+    </div>
+    <div class="dt-copied" id="dt-copied">copied to clipboard</div>
+</div>
 
 <script>
 (function() {
@@ -87,9 +251,24 @@
     const G_ON = 255;
     const B_ON = 200;
 
-    const TWO_PI = Math.PI * 2;
-    const PIX    = 4;   // logical pixel size
-    const FADE   = 0.985; // buffer fade per frame
+    const TWO_PI   = Math.PI * 2;
+    const N_SAMPLES = 128;
+
+    // Tuner defaults
+    const DEFAULTS = {
+        pix:     3,
+        fade:    0.985,
+        circbri: 0.04,
+        tipbri:  1.0,
+        speed:   0.015
+    };
+
+    // Live tuner vars
+    let tPix     = DEFAULTS.pix;
+    let tFade    = DEFAULTS.fade;
+    let tCircbri = DEFAULTS.circbri;
+    let tTipbri  = DEFAULTS.tipbri;
+    let tSpeed   = DEFAULTS.speed;
 
     const canvas = document.getElementById('c');
     const ctx    = canvas.getContext('2d');
@@ -99,18 +278,16 @@
     let imgData;
 
     function initBuffers() {
-        simW    = Math.floor(window.innerWidth  / PIX);
-        simH    = Math.floor(window.innerHeight / PIX);
+        simW    = Math.floor(window.innerWidth  / tPix);
+        simH    = Math.floor(window.innerHeight / tPix);
         canvas.width  = simW;
         canvas.height = simH;
         bright  = new Float32Array(simW * simH);
         imgData = ctx.createImageData(simW, simH);
     }
 
-    // Draw a circle outline into the brightness buffer at sim coords.
     function drawCircleBuffer(cx, cy, rad, bri) {
         if (rad < 0.5) return;
-        // Sample the circumference proportional to radius for even coverage
         const steps = Math.max(16, Math.floor(rad * 2.5));
         for (let s = 0; s < steps; s++) {
             const a   = (s / steps) * TWO_PI;
@@ -123,7 +300,6 @@
         }
     }
 
-    // Draw a filled square (radius ~1 sim pixel) as a bright point
     function drawPoint(px, py, bri) {
         const x = Math.floor(px);
         const y = Math.floor(py);
@@ -206,9 +382,6 @@
         return result;
     }
 
-    const N_SAMPLES = 128;
-    const SPEED     = TWO_PI / 480;
-
     const shapes = [
         {
             name: 'star',
@@ -250,7 +423,10 @@
         components   = dft(signal);
         bright.fill(0);
         angle = 0;
-        document.getElementById('shape-btn').textContent = 'shape: ' + shapes[shapeIdx].name;
+
+        document.querySelectorAll('.shape-btn').forEach((btn, i) => {
+            btn.classList.toggle('active', i === shapeIdx);
+        });
     }
 
     function frame() {
@@ -258,10 +434,10 @@
 
         // Fade brightness buffer
         for (let i = 0; i < bright.length; i++) {
-            bright[i] *= FADE;
+            bright[i] *= tFade;
         }
 
-        // Walk the epicycle chain in sim space
+        // Walk the epicycle chain
         const cx = simW / 2;
         const cy = simH / 2;
         let x = cx;
@@ -274,15 +450,14 @@
             const nx = x + c.amp * Math.cos(c.freq * angle + c.phase);
             const ny = y + c.amp * Math.sin(c.freq * angle + c.phase);
 
-            // Draw circle outline into buffer (dim)
-            drawCircleBuffer(x, y, c.amp, 0.04);
+            drawCircleBuffer(x, y, c.amp, tCircbri);
 
             x = nx;
             y = ny;
         }
 
         // Bright point at tip
-        drawPoint(x, y, 1.0);
+        drawPoint(x, y, tTipbri);
 
         // Apply Bayer dither and render
         const d = imgData.data;
@@ -302,7 +477,7 @@
         ctx.imageSmoothingEnabled = false;
         ctx.putImageData(imgData, 0, 0);
 
-        angle += SPEED;
+        angle += tSpeed;
         if (angle >= TWO_PI) angle -= TWO_PI;
     }
 
@@ -310,9 +485,11 @@
         if (e.key === 'Escape') window.location.href = 'index.html';
     });
 
-    document.getElementById('shape-btn').addEventListener('click', () => {
-        shapeIdx = (shapeIdx + 1) % shapes.length;
-        buildDFT();
+    document.querySelectorAll('.shape-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            shapeIdx = parseInt(btn.dataset.shape);
+            buildDFT();
+        });
     });
 
     function resize() {
@@ -321,6 +498,78 @@
     }
 
     window.addEventListener('resize', resize);
+
+    // --- Tuner wiring ---
+
+    document.getElementById('tuner-toggle').addEventListener('click', () => {
+        document.getElementById('tuner-panel').classList.toggle('open');
+    });
+
+    document.getElementById('dt-pix').addEventListener('input', function() {
+        tPix = parseInt(this.value);
+        document.getElementById('dt-pix-val').textContent = tPix.toString();
+        initBuffers();
+        buildDFT();
+    });
+
+    document.getElementById('dt-fade').addEventListener('input', function() {
+        tFade = parseFloat(this.value);
+        document.getElementById('dt-fade-val').textContent = tFade.toFixed(3);
+    });
+
+    document.getElementById('dt-circbri').addEventListener('input', function() {
+        tCircbri = parseFloat(this.value);
+        document.getElementById('dt-circbri-val').textContent = tCircbri.toFixed(3);
+    });
+
+    document.getElementById('dt-tipbri').addEventListener('input', function() {
+        tTipbri = parseFloat(this.value);
+        document.getElementById('dt-tipbri-val').textContent = tTipbri.toFixed(1);
+    });
+
+    document.getElementById('dt-speed').addEventListener('input', function() {
+        tSpeed = parseFloat(this.value);
+        document.getElementById('dt-speed-val').textContent = tSpeed.toFixed(3);
+    });
+
+    document.getElementById('dt-reset').addEventListener('click', () => {
+        tPix     = DEFAULTS.pix;
+        tFade    = DEFAULTS.fade;
+        tCircbri = DEFAULTS.circbri;
+        tTipbri  = DEFAULTS.tipbri;
+        tSpeed   = DEFAULTS.speed;
+
+        document.getElementById('dt-pix').value     = tPix;
+        document.getElementById('dt-fade').value    = tFade;
+        document.getElementById('dt-circbri').value = tCircbri;
+        document.getElementById('dt-tipbri').value  = tTipbri;
+        document.getElementById('dt-speed').value   = tSpeed;
+
+        document.getElementById('dt-pix-val').textContent     = tPix.toString();
+        document.getElementById('dt-fade-val').textContent    = tFade.toFixed(3);
+        document.getElementById('dt-circbri-val').textContent = tCircbri.toFixed(3);
+        document.getElementById('dt-tipbri-val').textContent  = tTipbri.toFixed(1);
+        document.getElementById('dt-speed-val').textContent   = tSpeed.toFixed(3);
+
+        initBuffers();
+        buildDFT();
+    });
+
+    document.getElementById('dt-copy').addEventListener('click', () => {
+        const cfg = {
+            pixelSize:        tPix,
+            trailFade:        tFade,
+            circleBrightness: tCircbri,
+            tipBrightness:    tTipbri,
+            speed:            tSpeed
+        };
+        navigator.clipboard.writeText(JSON.stringify(cfg, null, 2)).then(() => {
+            const el = document.getElementById('dt-copied');
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 1800);
+        });
+    });
+
     resize();
     requestAnimationFrame(frame);
 })();

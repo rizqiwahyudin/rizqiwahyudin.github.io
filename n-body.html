@@ -56,12 +56,137 @@
         }
         #label {
             position: fixed;
-            bottom: 16px; right: 20px;
+            bottom: 16px; left: 20px;
             color: rgba(255,255,255,0.2);
             font: 11px 'DotGothic16', monospace;
             letter-spacing: 2px;
             z-index: 10;
         }
+
+        /* Tuner toggle */
+        #tuner-toggle {
+            position: fixed;
+            bottom: 16px; right: 16px;
+            z-index: 10000;
+            font: 11px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #tuner-toggle:hover {
+            color: rgba(255,255,255,0.7);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        /* Tuner panel */
+        #tuner-panel {
+            position: fixed;
+            bottom: 52px; right: 16px;
+            z-index: 10000;
+            width: 260px;
+            max-height: calc(100vh - 68px);
+            overflow-y: auto;
+            font-family: 'DotGothic16', monospace;
+            background: rgb(8 8 10 / 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 16px;
+            display: none;
+        }
+        #tuner-panel.open { display: block; }
+
+        #tuner-panel .dt-title {
+            font-size: 11px;
+            letter-spacing: 3px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        #tuner-panel .dt-row { margin-bottom: 10px; }
+        #tuner-panel .dt-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.45);
+            margin-bottom: 4px;
+        }
+        #tuner-panel .dt-val {
+            font-variant-numeric: tabular-nums;
+            color: rgba(255,255,255,0.25);
+        }
+        #tuner-panel input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 3px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 2px;
+            outline: none;
+        }
+        #tuner-panel input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #c8c8c8;
+            cursor: pointer;
+            border: none;
+        }
+        #tuner-panel input[type="range"]::-moz-range-thumb {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #c8c8c8;
+            cursor: pointer;
+            border: none;
+        }
+        #tuner-panel .dt-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+        #tuner-panel .dt-btn {
+            flex: 1;
+            font: 9px 'DotGothic16', monospace;
+            letter-spacing: 1.5px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 5px;
+            padding: 5px 0;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        #tuner-panel .dt-btn:hover {
+            color: rgba(255,255,255,0.8);
+            border-color: rgba(255,255,255,0.2);
+        }
+        #tuner-panel .dt-copied {
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            text-align: center;
+            color: #00e5ff;
+            margin-top: 6px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #tuner-panel .dt-copied.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -69,6 +194,36 @@
 <a id="back-btn" href="index.html">&larr; back</a>
 <button id="reset-btn">reset</button>
 <div id="label">canvas // physics // bayer dither</div>
+
+<button id="tuner-toggle">&#9881; tuner</button>
+<div id="tuner-panel">
+    <div class="dt-title">// tuner</div>
+    <div class="dt-row">
+        <div class="dt-label"><span>pixel size</span><span class="dt-val" id="dt-pix-val">4</span></div>
+        <input type="range" id="dt-pix" min="2" max="8" step="1" value="4">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>trail fade</span><span class="dt-val" id="dt-fade-val">0.940</span></div>
+        <input type="range" id="dt-fade" min="0.90" max="0.99" step="0.005" value="0.94">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>gravity G</span><span class="dt-val" id="dt-g-val">200</span></div>
+        <input type="range" id="dt-g" min="50" max="500" step="10" value="200">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>softening</span><span class="dt-val" id="dt-eps-val">8</span></div>
+        <input type="range" id="dt-eps" min="1" max="20" step="1" value="8">
+    </div>
+    <div class="dt-row">
+        <div class="dt-label"><span>steps / frame</span><span class="dt-val" id="dt-steps-val">3</span></div>
+        <input type="range" id="dt-steps" min="1" max="10" step="1" value="3">
+    </div>
+    <div class="dt-actions">
+        <button class="dt-btn" id="dt-copy">copy config</button>
+        <button class="dt-btn" id="dt-reset">reset</button>
+    </div>
+    <div class="dt-copied" id="dt-copied">copied to clipboard</div>
+</div>
 
 <script>
 (function() {
@@ -85,42 +240,51 @@
     const canvas = document.getElementById('c');
     const ctx    = canvas.getContext('2d');
 
-    const G         = 500;
-    const EPS       = 8;
     const DT        = 0.15;
     const TRAIL_LEN = 300;
-    const FADE      = 0.94;   // brightness buffer fade per frame
-    const PIX       = 4;      // logical pixel size
 
-    // Each body gets R, G, B channel weights (summed into luminance buffer)
-    // Using distinct tints; kept subtle so dither blends them naturally.
+    // Tuner defaults
+    const DEFAULTS = {
+        pix:   4,
+        fade:  0.94,
+        g:     200,
+        eps:   8,
+        steps: 3
+    };
+
+    // Live tuner vars
+    let tPix   = DEFAULTS.pix;
+    let tFade  = DEFAULTS.fade;
+    let tG     = DEFAULTS.g;
+    let tEps   = DEFAULTS.eps;
+    let tSteps = DEFAULTS.steps;
+
+    // Each body gets R, G, B channel weights
     const BODY_TINTS = [
-        [1.00, 0.40, 0.40],  // red
-        [0.40, 0.60, 1.00],  // blue
-        [1.00, 0.90, 0.50],  // gold
-        [0.90, 0.90, 0.95],  // near white
-        [0.40, 1.00, 0.75],  // teal
-        [0.90, 0.55, 0.90],  // purple
-        [1.00, 0.70, 0.35],  // amber
+        [1.00, 0.40, 0.40],
+        [0.40, 0.60, 1.00],
+        [1.00, 0.90, 0.50],
+        [0.90, 0.90, 0.95],
+        [0.40, 1.00, 0.75],
+        [0.90, 0.55, 0.90],
+        [1.00, 0.70, 0.35],
     ];
 
-    // Separate R/G/B float buffers so each body's tint accumulates per channel
     let simW, simH;
     let bufR, bufG, bufB;
     let imgData;
 
     function initBuffers() {
-        simW   = Math.floor(window.innerWidth  / PIX);
-        simH   = Math.floor(window.innerHeight / PIX);
+        simW    = Math.floor(window.innerWidth  / tPix);
+        simH    = Math.floor(window.innerHeight / tPix);
         canvas.width  = simW;
         canvas.height = simH;
-        bufR   = new Float32Array(simW * simH);
-        bufG   = new Float32Array(simW * simH);
-        bufB   = new Float32Array(simW * simH);
+        bufR    = new Float32Array(simW * simH);
+        bufG    = new Float32Array(simW * simH);
+        bufB    = new Float32Array(simW * simH);
         imgData = ctx.createImageData(simW, simH);
     }
 
-    // Deposit brightness into RGB buffers at a given sim-space coordinate
     function deposit(sx, sy, tint, amount) {
         const col = Math.floor(sx);
         const row = Math.floor(sy);
@@ -135,12 +299,9 @@
 
     function makeBodies() {
         bodies = [];
-
-        // Sim space coordinates (will map to buffer after centering on CoM)
         const cx = simW / 2;
         const cy = simH / 2;
-
-        const M = 1200;
+        const M  = 1200;
         bodies.push({ x: cx, y: cy, vx: 0, vy: 0, mass: M, tint: BODY_TINTS[3], trail: [] });
 
         const orbitData = [
@@ -155,7 +316,7 @@
         for (const o of orbitData) {
             const bx = cx + Math.cos(o.angle) * o.r;
             const by = cy + Math.sin(o.angle) * o.r;
-            const vc = Math.sqrt(G * M / o.r);
+            const vc = Math.sqrt(tG * M / o.r);
             bodies.push({
                 x: bx, y: by,
                 vx: -Math.sin(o.angle) * vc,
@@ -174,9 +335,9 @@
             for (let j = i + 1; j < bodies.length; j++) {
                 const dx = bodies[j].x - bodies[i].x;
                 const dy = bodies[j].y - bodies[i].y;
-                const r2 = dx*dx + dy*dy + EPS*EPS;
+                const r2 = dx*dx + dy*dy + tEps*tEps;
                 const r  = Math.sqrt(r2);
-                const F  = G / r2;
+                const F  = tG / r2;
                 const fx = F * dx / r;
                 const fy = F * dy / r;
                 ax[i] += fx * bodies[j].mass;
@@ -211,11 +372,10 @@
     }
 
     function render() {
-        // Fade buffers
         for (let i = 0; i < bufR.length; i++) {
-            bufR[i] *= FADE;
-            bufG[i] *= FADE;
-            bufB[i] *= FADE;
+            bufR[i] *= tFade;
+            bufG[i] *= tFade;
+            bufB[i] *= tFade;
         }
 
         const com  = centerOfMass();
@@ -224,16 +384,13 @@
 
         for (const b of bodies) {
             const n = b.trail.length;
-            // Deposit trail with recency-weighted brightness
             for (let i = 0; i < n; i++) {
                 const bri = (i / n) * 0.22;
                 deposit(b.trail[i].x + offX, b.trail[i].y + offY, b.tint, bri);
             }
-            // Deposit body itself at full brightness
             deposit(b.x + offX, b.y + offY, b.tint, 0.9);
         }
 
-        // Bayer dither per channel, composite to final pixel
         const d = imgData.data;
         for (let y = 0; y < simH; y++) {
             for (let x = 0; x < simW; x++) {
@@ -255,7 +412,7 @@
     }
 
     function loop() {
-        for (let i = 0; i < 3; i++) step();
+        for (let i = 0; i < tSteps; i++) step();
         render();
         requestAnimationFrame(loop);
     }
@@ -279,6 +436,77 @@
 
     document.getElementById('reset-btn').addEventListener('click', reset);
     window.addEventListener('resize', resize);
+
+    // --- Tuner wiring ---
+
+    document.getElementById('tuner-toggle').addEventListener('click', () => {
+        document.getElementById('tuner-panel').classList.toggle('open');
+    });
+
+    document.getElementById('dt-pix').addEventListener('input', function() {
+        tPix = parseInt(this.value);
+        document.getElementById('dt-pix-val').textContent = tPix.toString();
+        initBuffers();
+        makeBodies();
+    });
+
+    document.getElementById('dt-fade').addEventListener('input', function() {
+        tFade = parseFloat(this.value);
+        document.getElementById('dt-fade-val').textContent = tFade.toFixed(3);
+    });
+
+    document.getElementById('dt-g').addEventListener('input', function() {
+        tG = parseInt(this.value);
+        document.getElementById('dt-g-val').textContent = tG.toString();
+    });
+
+    document.getElementById('dt-eps').addEventListener('input', function() {
+        tEps = parseInt(this.value);
+        document.getElementById('dt-eps-val').textContent = tEps.toString();
+    });
+
+    document.getElementById('dt-steps').addEventListener('input', function() {
+        tSteps = parseInt(this.value);
+        document.getElementById('dt-steps-val').textContent = tSteps.toString();
+    });
+
+    document.getElementById('dt-reset').addEventListener('click', () => {
+        tPix   = DEFAULTS.pix;
+        tFade  = DEFAULTS.fade;
+        tG     = DEFAULTS.g;
+        tEps   = DEFAULTS.eps;
+        tSteps = DEFAULTS.steps;
+
+        document.getElementById('dt-pix').value   = tPix;
+        document.getElementById('dt-fade').value  = tFade;
+        document.getElementById('dt-g').value     = tG;
+        document.getElementById('dt-eps').value   = tEps;
+        document.getElementById('dt-steps').value = tSteps;
+
+        document.getElementById('dt-pix-val').textContent   = tPix.toString();
+        document.getElementById('dt-fade-val').textContent  = tFade.toFixed(3);
+        document.getElementById('dt-g-val').textContent     = tG.toString();
+        document.getElementById('dt-eps-val').textContent   = tEps.toString();
+        document.getElementById('dt-steps-val').textContent = tSteps.toString();
+
+        initBuffers();
+        makeBodies();
+    });
+
+    document.getElementById('dt-copy').addEventListener('click', () => {
+        const cfg = {
+            pixelSize:    tPix,
+            trailFade:    tFade,
+            gravityG:     tG,
+            softening:    tEps,
+            stepsPerFrame: tSteps
+        };
+        navigator.clipboard.writeText(JSON.stringify(cfg, null, 2)).then(() => {
+            const el = document.getElementById('dt-copied');
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 1800);
+        });
+    });
 
     resize();
     loop();
