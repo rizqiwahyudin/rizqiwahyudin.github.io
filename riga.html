@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Riga Plan -- Saturday March 14</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d0d; font-family: 'Courier New', monospace; display: flex; height: 100vh; }
+  #map { flex: 1; height: 100vh; }
+  #sidebar {
+    width: 280px;
+    height: 100vh;
+    overflow-y: auto;
+    background: #111;
+    border-left: 1px solid #222;
+    padding: 16px 12px;
+  }
+  #sidebar h2 {
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #00ffc8;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #222;
+  }
+  .stop {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .stop:last-child { border-bottom: none; }
+  .num {
+    min-width: 24px;
+    height: 24px;
+    background: #00ffc8;
+    color: #000;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .stop-info {}
+  .stop-name {
+    font-size: 12px;
+    color: #e0e0e0;
+    font-weight: bold;
+    line-height: 1.3;
+  }
+  .stop-time {
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    margin: 2px 0 4px;
+  }
+  .stop-desc {
+    font-size: 10px;
+    color: #777;
+    line-height: 1.5;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+  .tag-photo { background: #1a2a1a; color: #4caf50; border: 1px solid #2a4a2a; }
+  .tag-food { background: #2a1a1a; color: #ff7043; border: 1px solid #4a2a1a; }
+  .tag-arch { background: #1a1a2a; color: #7986cb; border: 1px solid #2a2a4a; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="sidebar">
+  <h2>// riga -- sat 14 mar</h2>
+
+  <div class="stop">
+    <div class="num">1</div>
+    <div class="stop-info">
+      <div class="stop-name">Kalve Coffee</div>
+      <div class="stop-time">08:00</div>
+      <div class="tag tag-food">food</div>
+      <div class="stop-desc">Best coffee in Riga. Nordic pastries baked in-house. Quiet at this hour.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">2</div>
+    <div class="stop-info">
+      <div class="stop-name">Alberta iela -- Art Nouveau</div>
+      <div class="stop-time">08:30 -- 10:00</div>
+      <div class="tag tag-photo">photo</div>
+      <div class="tag tag-arch">arch</div>
+      <div class="stop-desc">Eisenstein facades. Best morning light. Shoot low for dramatic perspective. No tour groups yet.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">3</div>
+    <div class="stop-info">
+      <div class="stop-name">Sony Center (filter)</div>
+      <div class="stop-time">10:00 -- 10:30</div>
+      <div class="stop-desc">Brivibas 40. Sat hours 11:00-16:00. Buy 67mm mist filter. Plan around opening time.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">4</div>
+    <div class="stop-info">
+      <div class="stop-name">Kalnciema Quarter Market</div>
+      <div class="stop-time">11:00 -- 12:00</div>
+      <div class="tag tag-photo">photo</div>
+      <div class="stop-desc">Saturday only. Local crafts, produce, live music. Wooden architecture, very photogenic. Actually local.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">5</div>
+    <div class="stop-info">
+      <div class="stop-name">Masa (lunch)</div>
+      <div class="stop-time">12:30</div>
+      <div class="tag tag-food">food</div>
+      <div class="stop-desc">Michelin Bib Gourmand. Modern Latvian. Sprats on rye, seasonal mains. Not a tourist restaurant.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">6</div>
+    <div class="stop-info">
+      <div class="stop-name">Central Market + Spikeri</div>
+      <div class="stop-time">14:00 -- 15:30</div>
+      <div class="tag tag-photo">photo</div>
+      <div class="stop-desc">Zeppelin hangars. Shoot vaulted ceilings. Smoked fish, rye bread, chaos. Adjacent Spikeri has galleries.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">7</div>
+    <div class="stop-info">
+      <div class="stop-name">Miera iela</div>
+      <div class="stop-time">15:30 -- 16:30</div>
+      <div class="tag tag-photo">photo</div>
+      <div class="stop-desc">Bohemian street. Laima chocolate factory. Art studios, indie cafes. Good street photography.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">8</div>
+    <div class="stop-info">
+      <div class="stop-name">Daugava -- Akmens Bridge</div>
+      <div class="stop-time">17:00 -- 18:30</div>
+      <div class="tag tag-photo">photo</div>
+      <div class="stop-desc">Golden hour. Old Town skyline from eastern bank. The money shot. Use mist filter here.</div>
+    </div>
+  </div>
+
+  <div class="stop">
+    <div class="num">9</div>
+    <div class="stop-info">
+      <div class="stop-name">3 Pavaru (dinner)</div>
+      <div class="stop-time">18:30</div>
+      <div class="tag tag-food">food</div>
+      <div class="stop-desc">Three chef restaurant. Modern Latvian. Ostrich tartare, fjord trout, local sirloin. Book ahead.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const map = L.map('map').setView([56.948, 24.108], 14);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+const stops = [
+  { n: 1, name: "Kalve Coffee",          latlng: [56.9491, 24.1050], time: "08:00" },
+  { n: 2, name: "Alberta iela",          latlng: [56.9593, 24.1137], time: "08:30" },
+  { n: 3, name: "Sony Center (filter)",  latlng: [56.9525, 24.1107], time: "10:00" },
+  { n: 4, name: "Kalnciema Quarter",     latlng: [56.9368, 24.0818], time: "11:00" },
+  { n: 5, name: "Masa (lunch)",          latlng: [56.9541, 24.1115], time: "12:30" },
+  { n: 6, name: "Central Market",        latlng: [56.9401, 24.1191], time: "14:00" },
+  { n: 7, name: "Miera iela",            latlng: [56.9648, 24.1200], time: "15:30" },
+  { n: 8, name: "Akmens Bridge",         latlng: [56.9462, 24.1028], time: "17:00" },
+  { n: 9, name: "3 Pavaru (dinner)",     latlng: [56.9512, 24.1068], time: "18:30" },
+];
+
+L.polyline(stops.map(s => s.latlng), {
+  color: '#00ffc8', weight: 2, opacity: 0.4, dashArray: '6, 10'
+}).addTo(map);
+
+stops.forEach(stop => {
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="background:#00ffc8;color:#000;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-family:'Courier New',monospace;font-weight:bold;font-size:12px;box-shadow:0 0 8px rgba(0,255,200,0.4);">${stop.n}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+    popupAnchor: [0, -16],
+  });
+
+  L.marker(stop.latlng, { icon }).addTo(map)
+    .bindPopup(`<div style="font-family:'Courier New',monospace;font-size:12px;min-width:140px;">
+      <strong style="color:#00ffc8;">${stop.n}. ${stop.name}</strong><br>
+      <span style="color:#888;font-size:10px;">${stop.time}</span>
+    </div>`);
+});
+</script>
+</body>
+</html>
