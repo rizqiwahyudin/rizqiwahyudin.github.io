@@ -145,17 +145,7 @@
             font-size: 13px;
         }
 
-        /* Overlay Canvas for connecting line and circle */
-        #overlay-canvas {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw;
-            height: 100vh;
-            pointer-events: none;
-            z-index: 20;
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
-        }
+
     </style>
 </head>
 <body>
@@ -176,7 +166,7 @@
         <div id="tracking-label">cam_01 // tracking</div>
     </div>
     
-    <canvas id="overlay-canvas"></canvas>
+
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -229,7 +219,7 @@
     // ─── Scene setup ─────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x000000, 0.005); /* Increased fog density a bit */
+    scene.fog = new THREE.FogExp2(0x050810, 0.005); /* Desaturated dark blue-grey fog */
 
     /* Main camera */
     const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
@@ -514,18 +504,6 @@
     const carsPoints = new THREE.Points(carsGeometry, carsMaterial);
     scene.add(carsPoints);
 
-    // ─── Overlay Canvas for 2D graphics (target circle/line) ──────────────────
-    const overlayCanvas = document.getElementById('overlay-canvas');
-    const overlayCtx = overlayCanvas.getContext('2d');
-    function updateOverlayCanvasSize() {
-        overlayCanvas.width = window.innerWidth;
-        overlayCanvas.height = window.innerHeight;
-    }
-    window.addEventListener('resize', updateOverlayCanvasSize);
-    updateOverlayCanvasSize(); // Initial set
-
-    const projectVector = new THREE.Vector3();
-
     // ─── Target Identification System ─────────────────────────────────────────
     let targetCar = null;
     let targetAcquireTime = 0;
@@ -553,7 +531,8 @@
         updateTargetPanel();
         
         updateCarColorInGeometry(targetCar, CAR_COLOR_TARGET);
-        flashTargetCarColor(targetCar); 
+        flashTargetCarColor(targetCar);
+        showTargetIndicator(targetCar);
     }
 
     function flashTargetCarColor(car) {
@@ -579,6 +558,7 @@
 
         targetCar.targeted = false;
         updateCarColorInGeometry(targetCar, CAR_COLOR_NORMAL);
+        hideTargetIndicator();
         targetCar = null;
         targetReleaseTime = new Date().getTime();
 
@@ -650,6 +630,79 @@
     sysMonitor.classList.add('visible');
     netScan.classList.add('visible');
 
+
+    // ─── 3D Target Indicator ──────────────────────────────────────────────────
+    // A ring + vertical beacon + 4 corner brackets around the targeted car.
+    // Uses bright white so UnrealBloomPass picks them up and glows them naturally.
+    const TARGET_COLOR = 0xffffff;
+    const targetLineMat = new THREE.LineBasicMaterial({ color: TARGET_COLOR, transparent: true, opacity: 0.85 });
+
+    // Ring: 32-point circle in XZ plane
+    const RING_RADIUS = 3.0;
+    const RING_STEPS = 32;
+    const ringGeo = new THREE.BufferGeometry();
+    const ringPts = [];
+    for (let i = 0; i <= RING_STEPS; i++) {
+        const a = (i / RING_STEPS) * Math.PI * 2;
+        ringPts.push(Math.cos(a) * RING_RADIUS, 0, Math.sin(a) * RING_RADIUS);
+    }
+    ringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ringPts), 3));
+    const ringLine = new THREE.Line(ringGeo, targetLineMat);
+    ringLine.visible = false;
+    scene.add(ringLine);
+
+    // Vertical beacon: line from ground to 6 units up
+    const beaconGeo = new THREE.BufferGeometry();
+    beaconGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 0, 6, 0]), 3));
+    const beaconLine = new THREE.Line(beaconGeo, targetLineMat);
+    beaconLine.visible = false;
+    scene.add(beaconLine);
+
+    // Corner brackets: 4 L-shapes at car bounding box corners, floating 1 unit above
+    // Each L = 2 line segments sharing a corner. Car is ~2.5 long, ~1.2 wide.
+    const BRAK_W = 1.8, BRAK_D = 3.2, BRAK_Y = 1.2, BRAK_LEN = 0.8;
+    const bracketCorners = [
+        // [corner x, corner z, arm-x-sign, arm-z-sign]
+        [-BRAK_W, -BRAK_D / 2,  1,  1],
+        [ BRAK_W, -BRAK_D / 2, -1,  1],
+        [ BRAK_W,  BRAK_D / 2, -1, -1],
+        [-BRAK_W,  BRAK_D / 2,  1, -1],
+    ];
+    const bracketLines = bracketCorners.map(([cx, cz, sx, sz]) => {
+        const geo = new THREE.BufferGeometry();
+        // Two arms of the L
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+            cx + sx * BRAK_LEN, BRAK_Y, cz,          // arm along Z
+            cx,                 BRAK_Y, cz,           // corner
+            cx,                 BRAK_Y, cz + sz * BRAK_LEN, // arm along X
+        ]), 3));
+        const line = new THREE.Line(geo, targetLineMat);
+        line.visible = false;
+        scene.add(line);
+        return line;
+    });
+
+    let ringRotation = 0; // slowly spin the ring each frame
+
+    function showTargetIndicator(car) {
+        ringLine.visible = true;
+        beaconLine.visible = true;
+        bracketLines.forEach(l => { l.visible = true; });
+        updateTargetIndicatorPosition(car);
+    }
+
+    function hideTargetIndicator() {
+        ringLine.visible = false;
+        beaconLine.visible = false;
+        bracketLines.forEach(l => { l.visible = false; });
+    }
+
+    function updateTargetIndicatorPosition(car) {
+        const x = car.x, y = car.y, z = car.z;
+        ringLine.position.set(x, y + 0.3, z);
+        beaconLine.position.set(x, y, z);
+        bracketLines.forEach((line, i) => { line.position.set(x, y, z); });
+    }
 
     // ─── Animation loop ───────────────────────────────────────────────────────
     const cityPositionAttr = cityGeometry.attributes.position;
@@ -724,6 +777,12 @@
         }
         carPositionAttr.needsUpdate = true;
 
+        /* Update 3D target indicator to follow the car */
+        if (targetCar) {
+            updateTargetIndicatorPosition(targetCar);
+            ringRotation += 0.008;
+            ringLine.rotation.y = ringRotation;
+        }
 
         /* Target logic */
         if (targetCar && targetAcquireTime && (currentTime - targetAcquireTime > 5000)) { // Release after 5s
@@ -771,53 +830,8 @@
             renderer.render(scene, trackCam);
             scene.fog = originalFog; // Restore fog
 
-            renderer.setScissorTest(false); // Disable scissor after PiP render
-            renderer.autoClear = true; // Restore autoClear for next frame (important if composer doesn't handle it)
-
-            /* 2D Overlay: circle around target + line to PiP */
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-            // Pixelated rendering: disable smoothing
-            overlayCtx.imageSmoothingEnabled = false;
-
-            // Project target car's 3D position to 2D screen
-            projectVector.set(targetCar.x, targetCar.y + 1.0, targetCar.z);
-            projectVector.project(camera);
-
-            const x = Math.round((projectVector.x * 0.5 + 0.5) * window.innerWidth);
-            const y = Math.round((-projectVector.y * 0.5 + 0.5) * window.innerHeight);
-
-            // Pixelated circle: draw as a stepped polygon approximation
-            const radius = 20;
-            const steps = 16; // low step count = blocky/pixelated look
-            overlayCtx.beginPath();
-            for (let s = 0; s <= steps; s++) {
-                const angle = (s / steps) * Math.PI * 2;
-                const cx = Math.round(x + Math.cos(angle) * radius);
-                const cy = Math.round(y + Math.sin(angle) * radius);
-                if (s === 0) overlayCtx.moveTo(cx, cy);
-                else overlayCtx.lineTo(cx, cy);
-            }
-            overlayCtx.closePath();
-            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-            overlayCtx.lineWidth = 1;
-            overlayCtx.setLineDash([3, 3]);
-            overlayCtx.stroke();
-
-            // Line from circle to PiP viewport top-left corner area
-            const pipX = window.innerWidth - viewWidth - padding;
-            const pipY = padding;
-            overlayCtx.beginPath();
-            overlayCtx.moveTo(x, y);
-            overlayCtx.lineTo(Math.round(pipX + 20), Math.round(pipY + 20));
-            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-            overlayCtx.lineWidth = 1;
-            overlayCtx.setLineDash([4, 4]);
-            overlayCtx.stroke();
-            overlayCtx.setLineDash([]);
-        } else {
-            // No target -- clear any lingering overlay
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            renderer.setScissorTest(false);
+            renderer.autoClear = true;
         }
     }
 
@@ -830,9 +844,8 @@
         renderer.setSize(innerWidth, innerHeight);
         composer.setSize(innerWidth, innerHeight);
 
-        trackCam.aspect = 240 / 180; // keep fixed aspect for PiP
+        trackCam.aspect = 240 / 180;
         trackCam.updateProjectionMatrix();
-        updateOverlayCanvasSize();
     });
 
     </script>
