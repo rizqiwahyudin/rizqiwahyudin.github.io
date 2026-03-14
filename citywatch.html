@@ -275,6 +275,25 @@
         }
 
         /* ── Surveillance mode UI ── */
+        #regen-btn {
+            position: fixed;
+            bottom: 14px;
+            right: 190px;
+            z-index: 25;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(51,204,255,0.3);
+            color: rgba(51,204,255,0.6);
+            padding: 6px 12px;
+            cursor: pointer;
+            pointer-events: all;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        #regen-btn:hover { color: #33ccff; border-color: rgba(51,204,255,0.7); }
+        #regen-btn:disabled { color: rgba(51,204,255,0.25); border-color: rgba(51,204,255,0.1); cursor: default; }
         #surveillance-btn {
             position: fixed;
             bottom: 82px;
@@ -416,6 +435,7 @@
         <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
     </div>
     <button id="surveillance-btn">surveillance // off</button>
+    <button id="regen-btn" title="regenerate city">regen</button>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -1481,16 +1501,22 @@
             // (GPS may have moved to different tiles while we were loading)
             if (currentTileKeys.has(key)) {
                 scene.add(points);
+                // Store original Y values for regen animation
+                const origY = new Float32Array(actualCount);
+                for (let i = 0; i < actualCount; i++) origY[i] = positions[i * 3 + 1];
+
                 tileCache.set(key, {
                     points,
                     loading: false,
                     error: false,
                     pointCount: actualCount,
                     origColors,       // full-brightness colors (base, before focus dim)
+                    origY,            // original Y positions for regen animation
                     streamPoints: tileStreamPoints, // rising stream particles for this tile
                     streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
                     loadStartTime: performance.now(), // for fade-in animation
                     fadeComplete: false,
+                    regenStartTime: null, // set when regen animation is active
                 });
                 // If a route is active, apply focus mode to this new tile immediately
                 if (routeState.active && routeState.waypoints.length > 0) {
@@ -1829,6 +1855,70 @@
     const layerPanel       = document.getElementById('layer-panel');
     const zoomIndicator    = document.getElementById('zoom-indicator');
     const zoomLevelLabel   = document.getElementById('zoom-level-label');
+
+    // ─── Regen animation ─────────────────────────────────────────────────────
+    const REGEN_DURATION = 2200; // ms per tile
+    const regenBtn = document.getElementById('regen-btn');
+    let regenActive = false;
+
+    function triggerRegen() {
+        if (regenActive) return;
+        regenActive = true;
+        regenBtn.disabled = true;
+
+        const readyEntries = [...tileCache.entries()].filter(([, e]) => e.points && e.fadeComplete && e.origY);
+        if (readyEntries.length === 0) { regenActive = false; regenBtn.disabled = false; return; }
+
+        // Stagger tile start times slightly so they don't all pop at once
+        readyEntries.forEach(([, entry], i) => {
+            entry.regenStartTime = performance.now() + i * 120; // 120ms per tile stagger
+        });
+
+        // Re-enable button after longest animation completes
+        setTimeout(() => {
+            regenActive = false;
+            regenBtn.disabled = false;
+        }, REGEN_DURATION + readyEntries.length * 120 + 200);
+    }
+
+    function updateRegenAnimation() {
+        const now = performance.now();
+        for (const entry of tileCache.values()) {
+            if (!entry.regenStartTime || !entry.points || !entry.origY) continue;
+            const elapsed = now - entry.regenStartTime;
+            if (elapsed < 0) continue; // stagger delay not reached yet
+
+            const posAttr = entry.points.geometry.getAttribute('position');
+            const posArr = posAttr.array;
+            const count = entry.pointCount;
+
+            if (elapsed >= REGEN_DURATION) {
+                // Animation done -- restore exact original Y for all non-stream points
+                for (let i = 0; i < count; i++) {
+                    if (entry.streamIndices && entry.streamIndices.has(i)) continue;
+                    posArr[i * 3 + 1] = entry.origY[i];
+                }
+                posAttr.needsUpdate = true;
+                entry.regenStartTime = null;
+                continue;
+            }
+
+            // Eased progress: ease-out cubic
+            const raw = elapsed / REGEN_DURATION;
+            const t = 1 - Math.pow(1 - raw, 3);
+
+            for (let i = 0; i < count; i++) {
+                if (entry.streamIndices && entry.streamIndices.has(i)) continue;
+                const targetY = entry.origY[i];
+                // Ground points stay at ground, building points rise from -0.5
+                const fromY = targetY > 0.5 ? -0.5 : entry.origY[i];
+                posArr[i * 3 + 1] = fromY + t * (targetY - fromY);
+            }
+            posAttr.needsUpdate = true;
+        }
+    }
+
+    regenBtn.addEventListener('click', triggerRegen);
     const cbAircraft       = document.getElementById('layer-aircraft');
     const cbTransit        = document.getElementById('layer-transit');
     const cbWeather        = document.getElementById('layer-weather');
@@ -2450,14 +2540,14 @@
         }
         if (errors > 0) {
             const errorEntries = [...tileCache.values()].filter(e => e.error);
-            const retrying = errorEntries.filter(e => Date.now() < e.retryAt).length;
-            const waitSec = retrying > 0 ? Math.ceil((Math.max(...errorEntries.filter(e => Date.now() < e.retryAt).map(e => e.retryAt)) - Date.now()) / 1000) : 0;
-            if (retrying > 0) {
+            const pendingRetry = errorEntries.filter(e => e.retryAt && Date.now() < e.retryAt);
+            if (pendingRetry.length > 0) {
+                const nextRetry = pendingRetry.reduce((a, b) => a.retryAt < b.retryAt ? a : b);
+                const waitSec = Math.max(1, Math.ceil((nextRetry.retryAt - Date.now()) / 1000));
                 html += `\n<span class="warn">retry in ${waitSec}s...</span>`;
-            } else {
-                // Show the actual error reason for the worst tile
-                const worstMsg = errorEntries[0] && errorEntries[0].msg ? errorEntries[0].msg : 'unknown';
-                html += `\n<span class="err">${errors} err: ${worstMsg.slice(0, 24)}</span>`;
+            } else if (errors > 0) {
+                const worstMsg = errorEntries[0] ? (errorEntries[0].msg || 'unknown').slice(0, 28) : 'unknown';
+                html += `\n<span class="err">${errors} err: ${worstMsg}</span>`;
             }
         }
         html += `\naircraft  <span>${aircraftCount}</span>`;
@@ -2504,24 +2594,21 @@
         }
     }
 
+    let _gpsDeniedTimer = null;
     function onGPSError(err) {
         console.warn('GPS error:', err.message);
-        // Show briefly then hide -- fallback tiles load regardless
-        const gpsDeniedEl = document.getElementById('gps-denied');
-        gpsDeniedEl.style.display = 'block';
-        setTimeout(() => { gpsDeniedEl.style.display = 'none'; }, 4000);
-        gpsError = 'no_gps // using riga';
-
-        // Fall back to Riga
+        // Only act on first error -- browser may fire this repeatedly
+        if (_gpsDeniedTimer !== null) return;
+        _gpsDeniedTimer = setTimeout(() => { _gpsDeniedTimer = null; }, 60000); // 1min cooldown
+        // Fall back to Riga silently if we already have a position
         if (smoothLat === null) {
             smoothLat = FALLBACK_LAT;
             smoothLon = FALLBACK_LON;
             if (worldOriginLat === null) worldOriginFromFallback = true;
             updateCoordsHUD();
             updateTileManager(smoothLat, smoothLon);
-        } else {
-            updateCoordsHUD();
         }
+        // gpsError stays null -- don't clutter HUD when fallback works fine
     }
 
     if ('geolocation' in navigator) {
@@ -2938,6 +3025,9 @@
 
         // ── Wind particles ─────────────────────────────────────────────────────
         updateWindParticles(delta);
+
+        // ── Regen animation ───────────────────────────────────────────────────
+        if (regenActive) updateRegenAnimation();
 
         // ── Ground wave (shader time uniform) ─────────────────────────────────
         if (window._groundUniforms) window._groundUniforms.uTime.value = t;
