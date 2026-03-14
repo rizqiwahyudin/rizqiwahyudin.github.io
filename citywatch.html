@@ -1221,15 +1221,22 @@
     // Strategy: determine which quadrant of the current tile the user is in,
     // then pick the 4 tiles that surround that quadrant corner.
     function get2x2Tiles(lat, lon) {
-        // Center tile + immediate east/south/southeast neighbors.
-        // Aligned with get5x5Tiles center so toggling surveillance hits the same tiles.
+        // Pick the 4 tiles that surround your position based on which
+        // quadrant of the center tile you're standing in.
         const center = latLonToTile(lat, lon, ZOOM);
-        return [
-            { x: center.x,     y: center.y     },
-            { x: center.x + 1, y: center.y     },
-            { x: center.x,     y: center.y + 1 },
-            { x: center.x + 1, y: center.y + 1 },
-        ];
+        const bbox = tileToBbox(ZOOM, center.x, center.y);
+        const midLat = (bbox.south + bbox.north) / 2;
+        const midLon = (bbox.west + bbox.east) / 2;
+        // Offset toward the side you're closest to
+        const dx = lon >= midLon ? 0 : -1;
+        const dy = lat < midLat ? 0 : -1; // y increases southward in slippy tiles
+        const tiles = [];
+        for (let oy = 0; oy <= 1; oy++) {
+            for (let ox = 0; ox <= 1; ox++) {
+                tiles.push({ x: center.x + dx + ox, y: center.y + dy + oy });
+            }
+        }
+        return tiles;
     }
 
     // Returns a 5x5 grid of tile coords centered on the tile containing lat/lon.
