@@ -432,6 +432,7 @@
     <div id="layer-panel">
         <label class="layer-toggle"><input type="checkbox" id="layer-aircraft" checked> aircraft</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-transit"> transit</label>
+        <label class="layer-toggle"><input type="checkbox" id="layer-traffic"> traffic</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
     </div>
     <button id="surveillance-btn">surveillance // off</button>
@@ -454,6 +455,8 @@
     const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
     const FALLBACK_LAT = 56.9496;
     const FALLBACK_LON = 24.1052;
+    // VPS backend -- tile server + authenticated proxy endpoints
+    const VPS_URL = 'http://95.217.18.164';
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
 
     // ─── Time-of-day color temperature ───────────────────────────────────────
@@ -1849,6 +1852,7 @@
     let currentLOD = 'street'; // 'street' | 'district' | 'city' | 'overview'
     let layerAircraft = true;
     let layerTransit = false;
+    let layerTraffic = false;
     let layerWeather = true;
 
     const surveillanceBtn  = document.getElementById('surveillance-btn');
@@ -1921,6 +1925,7 @@
     regenBtn.addEventListener('click', triggerRegen);
     const cbAircraft       = document.getElementById('layer-aircraft');
     const cbTransit        = document.getElementById('layer-transit');
+    const cbTraffic        = document.getElementById('layer-traffic');
     const cbWeather        = document.getElementById('layer-weather');
 
     // Compute effective view radius in meters for LOD determination
@@ -2008,8 +2013,9 @@
         // Airport: visible at district+ LOD
         if (airportPoints) airportPoints.visible = (newLOD !== 'street');
 
-        // Transit: street only
+        // Transit: vehicles + route corridors (street LOD only)
         if (transitPoints) transitPoints.visible = layerTransit && (newLOD === 'street');
+        for (const line of transitRouteLines) line.visible = layerTransit && (newLOD === 'street');
     }
 
     function updateSurveillanceLayers() {
@@ -2027,6 +2033,7 @@
         aircraftTrailLines.visible = layerAircraft && (currentLOD !== 'street');
         if (airportPoints) airportPoints.visible = (currentLOD !== 'street');
         if (transitPoints) transitPoints.visible = layerTransit && (currentLOD === 'street');
+        for (const line of transitRouteLines) line.visible = layerTransit && (currentLOD === 'street');
     }
 
     surveillanceBtn.addEventListener('click', () => {
@@ -2062,6 +2069,11 @@
     cbTransit.addEventListener('change', () => {
         layerTransit = cbTransit.checked;
         updateSurveillanceLayers();
+    });
+    cbTraffic.addEventListener('change', () => {
+        layerTraffic = cbTraffic.checked;
+        if (trafficMarkers) trafficMarkers.visible = layerTraffic;
+        if (layerTraffic && trafficMarkers === null) fetchTraffic();
     });
     cbWeather.addEventListener('change', () => {
         layerWeather = cbWeather.checked;
@@ -2171,10 +2183,56 @@
 
     fetchAirportData();
 
-    // ─── Transit simulation (Riga) ────────────────────────────────────────────
-    // 20 simulated transit vehicles moving along fixed routes (major Riga stops)
+    // ─── Transit: route corridors from VPS + simulated vehicles ──────────────
+    // Rigas Satiksme publishes only static GTFS (no real-time feed).
+    // VPS /proxy/transit returns 5 key route GeoJSON LineStrings.
+    // We draw those as dotted corridors and simulate vehicle positions on them.
+    let transitRouteLines = []; // THREE.Line objects for route corridors
     let transitPoints = null;
     const transitVehicles = [];
+
+    async function fetchTransitRoutes() {
+        try {
+            const res = await fetch(`${VPS_URL}/proxy/transit`, { signal: AbortSignal.timeout(8000) });
+            if (!res.ok) return;
+            const geojson = await res.json();
+
+            // Wait for world origin
+            if (worldOriginLat === null) return;
+
+            for (const feature of geojson.features || []) {
+                const coords = feature.geometry && feature.geometry.coordinates;
+                if (!coords || coords.length < 2) continue;
+
+                const pts = [];
+                for (const [lon, lat] of coords) {
+                    const w = latLonToWorld(lat, lon);
+                    pts.push(new THREE.Vector3(w.x, 0.5, w.z));
+                }
+
+                // Color from feature properties
+                const hex = feature.properties.color || '#00ffff';
+                const color = new THREE.Color(hex);
+
+                const geo = new THREE.BufferGeometry().setFromPoints(pts);
+                const mat = new THREE.LineDashedMaterial({
+                    color,
+                    dashSize: 8,
+                    gapSize: 4,
+                    linewidth: 1,
+                    opacity: 0.55,
+                    transparent: true,
+                });
+                const line = new THREE.Line(geo, mat);
+                line.computeLineDistances();
+                line.visible = layerTransit;
+                scene.add(line);
+                transitRouteLines.push(line);
+            }
+        } catch (e) {
+            // Transit route corridors are cosmetic -- ignore failures
+        }
+    }
 
     const TRANSIT_STOPS = [
         // [lat, lon] -- major Riga stops from OSM
@@ -2273,6 +2331,8 @@
     }
 
     initTransit();
+    // Load Riga transit route corridors from VPS (after world origin is ready)
+    setTimeout(fetchTransitRoutes, 2000);
 
     async function fetchAircraft() {
         // Use GPS if available, fallback to Riga center
@@ -2281,9 +2341,10 @@
         // latLonToWorld needs worldOriginLat set -- skip if not ready
         if (worldOriginLat === null) return;
         const D = 1.5; // ~150km radius -- catches all aircraft in the region
-        const url = `https://opensky-network.org/api/states/all?lamin=${lat - D}&lomin=${lon - D}&lamax=${lat + D}&lomax=${lon + D}`;
+        // Route through VPS proxy (OAuth2 authenticated, higher rate limits)
+        const url = `${VPS_URL}/proxy/aircraft?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&r=${D}`;
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+            const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
             if (res.status === 429) return; // rate limited, skip silently
             if (!res.ok) return;
             const data = await res.json();
@@ -2495,6 +2556,101 @@
 
     fetchWind();
     setInterval(fetchWind, 5 * 60 * 1000); // every 5 minutes
+
+    // ─── HERE Traffic Incidents ────────────────────────────────────────────────
+    // Fetched via VPS proxy (HERE API key kept server-side).
+    // Incidents rendered as red/orange/yellow points sized by severity.
+    let trafficMarkers = null;
+    let trafficIncidentCount = 0;
+
+    async function fetchTraffic() {
+        if (!layerTraffic) return; // skip if layer is off
+
+        try {
+            const res = await fetch(`${VPS_URL}/proxy/traffic`, { signal: AbortSignal.timeout(10000) });
+            if (!res.ok) return;
+            const data = await res.json();
+
+            // data.results (HERE v7) is an array of incident features
+            const incidents = data.results || [];
+            if (incidents.length === 0 && data._note) {
+                // HERE key not configured -- skip silently
+                return;
+            }
+
+            // Build point geometry from incident locations
+            const positions = [];
+            const colors    = [];
+
+            for (const incident of incidents) {
+                const props = incident.incidentDetails || incident.properties || {};
+                // Severity: 3=major (red), 2=moderate (orange), 1=minor (yellow), 0=unknown (grey)
+                const severity = props.criticality || props.severity?.code || 0;
+                let r, g, b;
+                if      (severity >= 3) { r = 1.0; g = 0.1; b = 0.1; }
+                else if (severity === 2) { r = 1.0; g = 0.5; b = 0.0; }
+                else if (severity === 1) { r = 1.0; g = 0.9; b = 0.0; }
+                else                    { r = 0.6; g = 0.6; b = 0.6; }
+
+                // Location: try shape (linestring) or point
+                const loc = incident.location;
+                if (!loc) continue;
+
+                let pts = [];
+                if (loc.shape && loc.shape.links) {
+                    for (const link of loc.shape.links) {
+                        if (link.points) pts = pts.concat(link.points);
+                    }
+                } else if (loc.geoCoord) {
+                    pts = [{ lat: loc.geoCoord.lat, lng: loc.geoCoord.lng }];
+                } else if (incident.geometry && incident.geometry.coordinates) {
+                    const gc = incident.geometry.coordinates;
+                    if (Array.isArray(gc[0])) {
+                        pts = gc.map(c => ({ lat: c[1], lng: c[0] }));
+                    } else {
+                        pts = [{ lat: gc[1], lng: gc[0] }];
+                    }
+                }
+
+                for (const pt of pts) {
+                    if (pt.lat == null || pt.lng == null) continue;
+                    const wx = latLonToWorld(pt.lat, pt.lng);
+                    positions.push(wx.x, 4, wx.z); // y=4 = just above road level
+                    colors.push(r, g, b);
+                }
+            }
+
+            trafficIncidentCount = incidents.length;
+
+            if (positions.length === 0) return;
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+
+            const mat = new THREE.PointsMaterial({
+                size: 3.5,
+                vertexColors: true,
+                sizeAttenuation: true,
+                depthWrite: false,
+            });
+
+            if (trafficMarkers) {
+                scene.remove(trafficMarkers);
+                trafficMarkers.geometry.dispose();
+                trafficMarkers.material.dispose();
+            }
+            trafficMarkers = new THREE.Points(geo, mat);
+            trafficMarkers.visible = layerTraffic;
+            scene.add(trafficMarkers);
+
+        } catch (e) {
+            // Silently ignore traffic fetch failures
+        }
+    }
+
+    // Traffic updates every 5 minutes (incidents don't change fast)
+    setInterval(() => { if (layerTraffic) fetchTraffic(); }, 5 * 60 * 1000);
 
     // ─── HUD updates ──────────────────────────────────────────────────────────
     const coordsPanel = document.getElementById('coords-panel');
