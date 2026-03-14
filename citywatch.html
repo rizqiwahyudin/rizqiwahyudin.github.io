@@ -694,6 +694,11 @@
         const lon = smoothLon.toFixed(6);
         const acc = gpsAccuracy !== null ? gpsAccuracy.toFixed(0) + 'm' : '--';
         let html = `lat  <span>${lat}</span>\nlon  <span>${lon}</span>\nacc  <span>${acc}</span>`;
+        if (routeState.active) {
+            const distKm = (routeState.distanceM / 1000).toFixed(1);
+            const etaMin = Math.ceil(routeState.distanceM / 1000 / 5 * 60);
+            html += `\ndist <span>${distKm}km</span>\neta  <span>${etaMin}min</span>`;
+        }
         if (gpsError) {
             html += `\n<span class="warn">${gpsError}</span>`;
         }
@@ -796,6 +801,318 @@
         onGPSError(new Error('Geolocation not available'));
     }
 
+    // ─── Routing state ────────────────────────────────────────────────────────
+    const routeState = {
+        active: false,
+        destLat: null,
+        destLon: null,
+        distanceM: 0,
+        // Array of {lat, lon} route waypoints (from OSRM geometry)
+        waypoints: [],
+        // OSRM steps for turn-by-turn: [{instruction, distanceM, lat, lon}]
+        steps: [],
+    };
+
+    // Three.js objects for route rendering (null when no route)
+    let routeLine = null;
+    let destDot = null;
+    let destRing = null;
+    let destBeacon = null;
+
+    // DOM refs for routing UI
+    const routeInput = document.getElementById('route-input');
+    const routeBtn = document.getElementById('route-btn');
+    const routeClearBtn = document.getElementById('route-clear-btn');
+    const routeStatus = document.getElementById('route-status');
+    const turnPanel = document.getElementById('turn-panel');
+
+    // ─── Routing helpers ──────────────────────────────────────────────────────
+
+    // Great-circle distance in meters between two lat/lon points
+    function haversineM(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+            * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // Map OSRM maneuver type + modifier to simple text
+    function maneuverText(type, modifier) {
+        if (type === 'arrive') return 'arrive';
+        if (type === 'depart') return 'continue';
+        if (type === 'roundabout' || type === 'rotary') {
+            return modifier ? `roundabout ${modifier}` : 'roundabout';
+        }
+        if (type === 'fork' || type === 'merge' || type === 'on ramp' || type === 'off ramp') {
+            return modifier ? `${type} ${modifier}` : type;
+        }
+        // turn, new name, notification, etc.
+        if (modifier) {
+            // modifier: straight, slight left/right, left, right, sharp left/right, uturn
+            if (modifier === 'straight') return 'continue';
+            if (modifier === 'uturn') return 'u-turn';
+            return modifier; // "turn left", "turn right", etc.
+        }
+        return 'continue';
+    }
+
+    // Clear all route scene objects and reset state
+    function clearRoute() {
+        if (routeLine) {
+            routeLine.geometry.dispose();
+            routeLine.material.dispose();
+            scene.remove(routeLine);
+            routeLine = null;
+        }
+        if (destDot) {
+            destDot.geometry.dispose();
+            destDot.material.dispose();
+            scene.remove(destDot);
+            destDot = null;
+        }
+        if (destRing) {
+            destRing.geometry.dispose();
+            destRing.material.dispose();
+            scene.remove(destRing);
+            destRing = null;
+        }
+        if (destBeacon) {
+            destBeacon.geometry.dispose();
+            destBeacon.material.dispose();
+            scene.remove(destBeacon);
+            destBeacon = null;
+        }
+
+        routeState.active = false;
+        routeState.destLat = null;
+        routeState.destLon = null;
+        routeState.distanceM = 0;
+        routeState.waypoints = [];
+        routeState.steps = [];
+
+        turnPanel.style.display = 'none';
+        turnPanel.textContent = '';
+        turnPanel.classList.remove('pulse');
+        routeClearBtn.style.display = 'none';
+        routeStatus.textContent = '';
+        updateCoordsHUD();
+    }
+
+    // Draw route in Three.js scene (requires worldOriginLat to be set)
+    function drawRoute(waypoints, destLat, destLon) {
+        // Remove existing route objects first
+        if (routeLine) { routeLine.geometry.dispose(); routeLine.material.dispose(); scene.remove(routeLine); routeLine = null; }
+        if (destDot) { destDot.geometry.dispose(); destDot.material.dispose(); scene.remove(destDot); destDot = null; }
+        if (destRing) { destRing.geometry.dispose(); destRing.material.dispose(); scene.remove(destRing); destRing = null; }
+        if (destBeacon) { destBeacon.geometry.dispose(); destBeacon.material.dispose(); scene.remove(destBeacon); destBeacon = null; }
+
+        if (waypoints.length < 2) return;
+
+        // Route line
+        const pts = [];
+        for (const wp of waypoints) {
+            const wc = latLonToWorld(wp.lat, wp.lon);
+            pts.push(new THREE.Vector3(wc.x, 0.5, wc.z));
+        }
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 });
+        routeLine = new THREE.Line(lineGeo, lineMat);
+        scene.add(routeLine);
+
+        // Destination dot (cyan)
+        const dw = latLonToWorld(destLat, destLon);
+        const dotGeo = new THREE.BufferGeometry();
+        dotGeo.setAttribute('position', new THREE.Float32BufferAttribute([dw.x, 1, dw.z], 3));
+        const dotMat = new THREE.PointsMaterial({ color: 0x00ffff, size: 10, sizeAttenuation: false });
+        destDot = new THREE.Points(dotGeo, dotMat);
+        scene.add(destDot);
+
+        // Destination ring (cyan, pulsing)
+        const rSegs = 32;
+        const rPts = [];
+        for (let i = 0; i <= rSegs; i++) {
+            const a = (i / rSegs) * Math.PI * 2;
+            rPts.push(Math.cos(a) * 2, 1, Math.sin(a) * 2);
+        }
+        const ringGeoD = new THREE.BufferGeometry();
+        ringGeoD.setAttribute('position', new THREE.Float32BufferAttribute(rPts, 3));
+        const ringMatD = new THREE.LineBasicMaterial({ color: 0x00ffff });
+        destRing = new THREE.Line(ringGeoD, ringMatD);
+        destRing.position.set(dw.x, 1, dw.z);
+        scene.add(destRing);
+
+        // Vertical beacon line above destination
+        const beaconPts = [new THREE.Vector3(dw.x, 1, dw.z), new THREE.Vector3(dw.x, 30, dw.z)];
+        const beaconGeo = new THREE.BufferGeometry().setFromPoints(beaconPts);
+        const beaconMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 });
+        destBeacon = new THREE.Line(beaconGeo, beaconMat);
+        scene.add(destBeacon);
+    }
+
+    // Geocode via Nominatim, then fetch OSRM route
+    async function geocodeAndRoute(query) {
+        if (!query.trim()) return;
+
+        // Require world origin to be established before drawing
+        if (worldOriginLat === null) {
+            routeStatus.textContent = 'gps not ready';
+            return;
+        }
+
+        // Use current GPS position as origin
+        const originLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const originLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+
+        routeStatus.textContent = 'geocoding...';
+        routeBtn.disabled = true;
+
+        try {
+            // Step 1: Nominatim geocode
+            const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+            const geoRes = await fetch(geocodeUrl, {
+                headers: { 'Accept-Language': 'en', 'User-Agent': 'citywatch/1.0' }
+            });
+            if (!geoRes.ok) throw new Error(`geocode http ${geoRes.status}`);
+            const geoData = await geoRes.json();
+
+            if (!geoData || geoData.length === 0) {
+                routeStatus.textContent = 'not found';
+                routeBtn.disabled = false;
+                return;
+            }
+
+            // Nominatim returns lat/lon as strings -- parse as floats
+            const destLat = parseFloat(geoData[0].lat);
+            const destLon = parseFloat(geoData[0].lon);
+
+            routeStatus.textContent = 'routing...';
+
+            // Step 2: OSRM route
+            // Endpoint: /route/v1/driving/{lon1},{lat1};{lon2},{lat2}
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${originLon},${originLat};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`;
+            const osrmRes = await fetch(osrmUrl);
+            if (!osrmRes.ok) throw new Error(`osrm http ${osrmRes.status}`);
+            const osrmData = await osrmRes.json();
+
+            if (!osrmData.routes || osrmData.routes.length === 0) {
+                routeStatus.textContent = 'no route';
+                routeBtn.disabled = false;
+                return;
+            }
+
+            const route = osrmData.routes[0];
+
+            // Extract geometry: routes[0].geometry.coordinates is [[lon, lat], ...]
+            const coords = route.geometry.coordinates;
+            const waypoints = coords.map(([lon, lat]) => ({ lat, lon }));
+
+            // Extract steps for turn-by-turn
+            // routes[0].legs[0].steps -> [{maneuver: {type, modifier}, distance, geometry: {coordinates}}]
+            const steps = [];
+            if (route.legs && route.legs.length > 0 && route.legs[0].steps) {
+                for (const step of route.legs[0].steps) {
+                    const m = step.maneuver;
+                    const instruction = maneuverText(m.type, m.modifier);
+                    // Step location: maneuver.location is [lon, lat]
+                    const [sLon, sLat] = m.location;
+                    steps.push({
+                        instruction,
+                        distanceM: step.distance,
+                        lat: sLat,
+                        lon: sLon,
+                    });
+                }
+            }
+
+            // Update state
+            clearRoute(); // clears old objects but resets state -- we re-populate below
+            routeState.active = true;
+            routeState.destLat = destLat;
+            routeState.destLon = destLon;
+            routeState.distanceM = route.distance;
+            routeState.waypoints = waypoints;
+            routeState.steps = steps;
+
+            drawRoute(waypoints, destLat, destLon);
+
+            routeClearBtn.style.display = 'inline-block';
+            routeStatus.textContent = '';
+            updateCoordsHUD();
+
+        } catch (err) {
+            console.error('routing error:', err);
+            routeStatus.textContent = 'error';
+        }
+
+        routeBtn.disabled = false;
+    }
+
+    // Update turn instruction panel (called from animation loop)
+    function updateTurnPanel() {
+        if (!routeState.active || routeState.steps.length === 0 || smoothLat === null) {
+            turnPanel.style.display = 'none';
+            return;
+        }
+
+        // Find the next step ahead: the step whose maneuver location is closest
+        // but that we haven't passed yet. We detect "passed" by checking if
+        // the user is within 15m of the step location.
+        const userLat = smoothLat;
+        const userLon = smoothLon;
+
+        let nextStep = null;
+        let nextDist = Infinity;
+
+        for (const step of routeState.steps) {
+            if (step.instruction === 'arrive') {
+                // Always keep arrive as fallback
+                const d = haversineM(userLat, userLon, step.lat, step.lon);
+                if (nextStep === null) { nextStep = step; nextDist = d; }
+                continue;
+            }
+            const d = haversineM(userLat, userLon, step.lat, step.lon);
+            // Consider steps more than 15m away (not yet passed)
+            if (d > 15 && d < nextDist) {
+                nextDist = d;
+                nextStep = step;
+            }
+        }
+
+        if (!nextStep) {
+            turnPanel.style.display = 'none';
+            return;
+        }
+
+        const distLabel = nextDist < 1000
+            ? `${Math.round(nextDist)}m`
+            : `${(nextDist / 1000).toFixed(1)}km`;
+
+        turnPanel.textContent = `${nextStep.instruction} in ${distLabel}`;
+        turnPanel.style.display = 'block';
+
+        // Pulse when close
+        if (nextDist < 50) {
+            turnPanel.classList.add('pulse');
+        } else {
+            turnPanel.classList.remove('pulse');
+        }
+    }
+
+    // Route input event listeners
+    routeBtn.addEventListener('click', () => {
+        geocodeAndRoute(routeInput.value);
+    });
+    routeInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') geocodeAndRoute(routeInput.value);
+    });
+    routeClearBtn.addEventListener('click', () => {
+        clearRoute();
+        routeInput.value = '';
+    });
+
     // ─── Animation loop ───────────────────────────────────────────────────────
     let clock = new THREE.Clock();
 
@@ -809,6 +1126,17 @@
             gpsRing.scale.set(pulse, pulse, pulse);
         }
 
+        // Destination ring pulse (same style, period 2.5s, offset phase)
+        if (destRing) {
+            const pulse = 1.0 + 0.3 * (1 - Math.cos(0.8 * Math.PI * t + 1));
+            destRing.scale.set(pulse, pulse, pulse);
+        }
+
+        // Destination beacon opacity flicker
+        if (destBeacon) {
+            destBeacon.material.opacity = 0.4 + 0.3 * Math.sin(t * 2);
+        }
+
         // Update GPS dot position if we have a position
         if (smoothLat !== null && worldOriginLat !== null) {
             const wp = latLonToWorld(smoothLat, smoothLon);
@@ -817,6 +1145,9 @@
             if (followGPS) {
                 camTarget.set(wp.x, 0, wp.z);
             }
+
+            // Update turn instructions
+            updateTurnPanel();
         }
 
         updateCameraPosition();
