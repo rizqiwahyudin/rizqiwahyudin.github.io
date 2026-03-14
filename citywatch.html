@@ -2304,11 +2304,16 @@
         updateSurveillanceLayers();
     });
 
-    // ─── Airport data (EVRA / Riga) ───────────────────────────────────────────
+    // ─── Airport data (nearest airport to GPS position) ───────────────────────
     let airportPoints = null;
 
     async function fetchAirportData() {
-        const query = `[out:json][timeout:30];(way["aeroway"~"^(runway|taxiway|apron|terminal)$"](56.85,23.9,56.95,24.05););out body;>;out skel qt;`;
+        // Build bbox around current GPS position (roughly 60km radius)
+        const aLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const aLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const d = 0.55; // ~60km in degrees
+        const bbox = `${(aLat - d).toFixed(4)},${(aLon - d * 1.6).toFixed(4)},${(aLat + d).toFixed(4)},${(aLon + d * 1.6).toFixed(4)}`;
+        const query = `[out:json][timeout:30];(way["aeroway"~"^(runway|taxiway|apron|terminal)$"](${bbox}););out body;>;out skel qt;`;
         try {
             const res = await fetch(OVERPASS_URL, {
                 method: 'POST',
@@ -2416,6 +2421,11 @@
     const transitVehicles = [];
 
     async function fetchTransitRoutes() {
+        // VPS transit routes are Riga-specific -- skip if not in Riga area (~80km)
+        const tLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const tLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const distFromRiga = Math.hypot(tLat - 56.9496, tLon - 24.1052);
+        if (distFromRiga > 0.8) return; // outside ~80km of Riga center
         try {
             const res = await fetch(`${VPS_URL}/proxy/transit`, { signal: AbortSignal.timeout(8000) });
             if (!res.ok) return;
@@ -2458,19 +2468,17 @@
         }
     }
 
-    const TRANSIT_STOPS = [
-        // [lat, lon] -- major Riga stops from OSM
-        [56.9496, 24.1052], // center
-        [56.9461, 24.0950], // old town
-        [56.9550, 24.1150], // central station area
-        [56.9400, 24.0800], // Āgenskalns
-        [56.9600, 24.1300], // Teika
-        [56.9480, 24.1250], // Čiekurkalns
-        [56.9350, 24.1100], // Pārdaugava
-        [56.9700, 24.1050], // Jugla
-        [56.9430, 24.0700], // Imanta
-        [56.9620, 24.0900], // Sarkandaugava
-    ];
+    // Generate transit stops around the current GPS position (location-agnostic)
+    function getTransitStops() {
+        const cLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const cLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const offsets = [
+            [0, 0], [-0.004, -0.009], [0.006, 0.009], [-0.009, 0.012],
+            [0.009, -0.013], [-0.005, 0.013], [0.013, 0.005],
+            [0.007, -0.004], [-0.013, -0.004], [0.004, 0.015],
+        ];
+        return offsets.map(([dLat, dLon]) => [cLat + dLat, cLon + dLon]);
+    }
 
     function initTransit() {
         // Wait for world origin
@@ -2480,6 +2488,7 @@
         });
         waitOrigin().then(() => {
             // Create 20 vehicles, each assigned a route between two random stops
+            const TRANSIT_STOPS = getTransitStops();
             for (let v = 0; v < 20; v++) {
                 const a = Math.floor(Math.random() * TRANSIT_STOPS.length);
                 let b = Math.floor(Math.random() * TRANSIT_STOPS.length);
