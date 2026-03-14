@@ -1695,6 +1695,8 @@
         geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
         geo.getAttribute('position').needsUpdate = true;
+        geo.getAttribute('color').needsUpdate = true;
+        geo.computeBoundingSphere(); // required for frustum culling to work correctly
     }
 
     function initAircraftPoints() {
@@ -1711,6 +1713,7 @@
         });
         aircraftPoints = new THREE.Points(geo, mat);
         aircraftPoints.visible = false;
+        aircraftPoints.frustumCulled = false; // never cull -- aircraft can be far from origin
         scene.add(aircraftPoints);
     }
     initAircraftPoints();
@@ -2219,9 +2222,9 @@
                 if (lon2 === null || lat2 === null || onGround) continue;
 
                 const ww = latLonToWorld(lat2, lon2);
-                // Scale altitude: 1 world unit ≈ 8m. Cap at 500 units (4000m) so even
-                // high-altitude aircraft stay visible against the city scale.
-                const rawY = baroAlt !== null ? Math.max(20, baroAlt / 8) : 60;
+                // Scale altitude: compress so low-altitude (100m) → y≈15, cruise (10000m) → y≈120
+                // Formula: log scale keeps all altitudes in a visible range
+                const rawY = baroAlt !== null ? Math.max(15, Math.log(baroAlt + 1) * 12) : 60;
 
                 if (aircraftData.has(icao24)) {
                     const ac = aircraftData.get(icao24);
@@ -2271,16 +2274,15 @@
     // Update aircraft interpolation each frame (called from animation loop)
     const AIRCRAFT_UPDATE_INTERVAL = 15000; // ms
     function updateAircraftInterpolation(nowMs) {
-        let changed = false;
+        if (aircraftData.size === 0) return;
         for (const ac of aircraftData.values()) {
             const elapsed = nowMs - ac.updateTime;
             const t = Math.min(elapsed / AIRCRAFT_UPDATE_INTERVAL, 1.0);
             ac.currentX = ac.prevX + (ac.targetX - ac.prevX) * t;
             ac.currentY = ac.prevY + (ac.targetY - ac.prevY) * t;
             ac.currentZ = ac.prevZ + (ac.targetZ - ac.prevZ) * t;
-            changed = true;
         }
-        if (changed) buildAircraftGeometry();
+        buildAircraftGeometry(); // updates buffer with current interpolated positions
     }
 
     // Start aircraft fetch interval
