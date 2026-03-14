@@ -508,7 +508,37 @@
     // ─── Scene setup ──────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x050810, 0.0008);
+    scene.fog = new THREE.FogExp2(0x050810, 0.0012); // slightly denser for atmosphere
+
+    // ── Mist layer: sparse transparent sprites at low altitude ───────────────
+    // Gives the same volumetric haze feel as city.html without choking aircraft visibility
+    {
+        const MIST_COUNT = 600;
+        const MIST_SPAN  = 1200; // ±meters from origin
+        const mistPos = new Float32Array(MIST_COUNT * 3);
+        const mistCol = new Float32Array(MIST_COUNT * 3);
+        for (let i = 0; i < MIST_COUNT; i++) {
+            mistPos[i * 3]     = (Math.random() - 0.5) * MIST_SPAN * 2;
+            mistPos[i * 3 + 1] = Math.random() * 18; // 0-18m above ground
+            mistPos[i * 3 + 2] = (Math.random() - 0.5) * MIST_SPAN * 2;
+            const b = 0.06 + Math.random() * 0.06;
+            mistCol[i * 3]     = b * 0.55;
+            mistCol[i * 3 + 1] = b * 0.75;
+            mistCol[i * 3 + 2] = b * 1.0;
+        }
+        const mistGeo = new THREE.BufferGeometry();
+        mistGeo.setAttribute('position', new THREE.BufferAttribute(mistPos, 3));
+        mistGeo.setAttribute('color', new THREE.BufferAttribute(mistCol, 3));
+        const mistMat = new THREE.PointsMaterial({
+            size: 28,
+            sizeAttenuation: true,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.06,
+            depthWrite: false,
+        });
+        scene.add(new THREE.Points(mistGeo, mistMat));
+    }
 
     // Orthographic camera, top-down
     const frustumSize = 400; // meters across initially
@@ -1293,44 +1323,6 @@
                         }
                     }
 
-                    // Edge emphasis: wall top strip (y = h-0.3 to h), 3x density, brighter
-                    const topStripCount = Math.max(2, Math.floor(edgeLen * DENSITY * 1.2));
-                    for (let j = 0; j < topStripCount; j++) {
-                        const t = Math.random();
-                        const wallH = (h - 0.3) + Math.random() * 0.3;
-                        const wx2 = p0.x + t * (p1.x - p0.x);
-                        const wy2 = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
-                        posArr.push(wx + wx2, wallH, wz - wy2);
-                        colArr.push(Math.min(1, r * 1.15), Math.min(1, g * 1.15), Math.min(1, b * 1.15));
-                    }
-
-                    // Edge emphasis: wall base strip (y = 0 to 0.5), 2x density, dimmer
-                    const baseStripCount = Math.max(2, Math.floor(edgeLen * DENSITY * 0.8));
-                    for (let j = 0; j < baseStripCount; j++) {
-                        const t = Math.random();
-                        const wallH = Math.random() * 0.5;
-                        const wx2 = p0.x + t * (p1.x - p0.x);
-                        const wy2 = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(0, wallH);
-                        posArr.push(wx + wx2, wallH, wz - wy2);
-                        colArr.push(r * 0.7, g * 0.7, b * 0.7);
-                    }
-                }
-
-                // Edge emphasis: roof perimeter at height h, 3x density, brighter
-                for (let i = 0; i < footprint.length - 1; i++) {
-                    const p0 = footprint[i], p1 = footprint[i + 1];
-                    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-                    const perimCount = Math.max(3, Math.floor(edgeLen * DENSITY * 1.5));
-                    for (let j = 0; j < perimCount; j++) {
-                        const t = j / (perimCount - 1);
-                        const px = p0.x + t * (p1.x - p0.x);
-                        const py = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
-                        posArr.push(wx + px, h, wz - py);
-                        colArr.push(Math.min(1, r * 1.15), Math.min(1, g * 1.15), Math.min(1, b * 1.15));
-                    }
                 }
             }
 
