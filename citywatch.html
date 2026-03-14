@@ -384,6 +384,7 @@
         <div id="anchor-sub-row">
             <button class="anchor-sub-btn active" id="btn-anchor-me">me</button>
             <button class="anchor-sub-btn" id="btn-anchor-dest" disabled>dest</button>
+            <button class="anchor-sub-btn" id="btn-anchor-plane" disabled>plane</button>
         </div>
     </div>
 
@@ -403,6 +404,9 @@
         <button id="route-clear-btn" title="clear route">×</button>
         <span id="route-status"></span>
     </div>
+
+    <!-- Aircraft callsign labels overlay -->
+    <div id="aircraft-labels" style="position:fixed;top:0;left:0;pointer-events:none;z-index:30;"></div>
 
     <!-- Surveillance mode -->
     <div id="zoom-indicator">zoom // <span id="zoom-level-label">street</span></div>
@@ -504,7 +508,7 @@
     // ─── Scene setup ──────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x050810, 0.004);
+    scene.fog = new THREE.FogExp2(0x050810, 0.0008);
 
     // Orthographic camera, top-down
     const frustumSize = 400; // meters across initially
@@ -557,9 +561,10 @@
     anchorControls.enabled = false; // only enabled in anchor mode
 
     // Anchor mode state
-    let anchorSubMode = 'me'; // 'me' or 'dest'
+    let anchorSubMode = 'me'; // 'me', 'dest', or 'plane'
     let anchorTargetCurrent = new THREE.Vector3(0, 0, 0); // lerped target for anchorControls
     let anchorEntryTransition = null; // {startPos, startTarget, endPos, endTarget, elapsed} for entry anim
+    let anchorPlaneIdx = -1; // index into aircraftData keys; -1 = none selected
 
     // Smooth follow-me camera state (lerp targets)
     const followCamPos = new THREE.Vector3();   // current lerped position
@@ -599,6 +604,25 @@
     const anchorSubRow = document.getElementById('anchor-sub-row');
     const btnAnchorMe = document.getElementById('btn-anchor-me');
     const btnAnchorDest = document.getElementById('btn-anchor-dest');
+    const btnAnchorPlane = document.getElementById('btn-anchor-plane');
+
+    function updateAnchorPlaneButton() {
+        if (cameraMode !== 'anchor' || aircraftData.size === 0) {
+            btnAnchorPlane.disabled = true;
+            btnAnchorPlane.textContent = 'plane';
+        } else {
+            btnAnchorPlane.disabled = false;
+            if (anchorSubMode === 'plane' && anchorPlaneIdx >= 0) {
+                const keys = [...aircraftData.keys()];
+                const icao = keys[anchorPlaneIdx % keys.length];
+                const ac = aircraftData.get(icao);
+                const label = ac ? (ac.callsign || icao) : 'plane';
+                btnAnchorPlane.textContent = `plane: ${label}`;
+            } else {
+                btnAnchorPlane.textContent = 'plane';
+            }
+        }
+    }
 
     // Helper to update point material size/attenuation on all cached tiles
     function updateTileMaterials(usePerspective) {
@@ -627,6 +651,7 @@
 
         // Anchor sub-row visibility
         anchorSubRow.style.display = mode === 'anchor' ? 'flex' : 'none';
+        updateAnchorPlaneButton();
 
         // Disable orbit controls initially; re-enable after entry animation completes
         anchorControls.enabled = false;
@@ -727,8 +752,12 @@
         anchorSubMode = subMode;
         btnAnchorMe.classList.toggle('active', subMode === 'me');
         btnAnchorDest.classList.toggle('active', subMode === 'dest');
+        btnAnchorPlane.classList.toggle('active', subMode === 'plane');
+        updateAnchorPlaneButton();
 
         if (cameraMode !== 'anchor') return;
+
+        if (subMode === 'plane') return; // target updated each frame in animate()
 
         // Reposition anchor target
         let anchorWorldPos;
@@ -753,6 +782,12 @@
     btnAnchorMe.addEventListener('click', () => setAnchorSubMode('me'));
     btnAnchorDest.addEventListener('click', () => {
         if (!btnAnchorDest.disabled) setAnchorSubMode('dest');
+    });
+    btnAnchorPlane.addEventListener('click', () => {
+        if (btnAnchorPlane.disabled) return;
+        if (aircraftData.size === 0) return;
+        anchorPlaneIdx = (anchorPlaneIdx + 1) % aircraftData.size;
+        setAnchorSubMode('plane');
     });
 
     // ─── Resize handler ───────────────────────────────────────────────────────
@@ -1627,14 +1662,15 @@
             aircraftPoints.visible = false;
             return;
         }
-        aircraftPoints.visible = true;
+        aircraftPoints.visible = layerAircraft && states.length > 0;
 
-        // Each aircraft gets 7 points: center + 4 arm tips + 2 diagonal tips (cross pattern)
+        // Each aircraft gets 8 points: center + 4 arm tips + 2 diagonal tips + vertical spike (cross pattern)
         const CROSS_OFFSETS = [
             [0, 0, 0],
-            [3, 0, 0], [-3, 0, 0],
-            [0, 0, 3], [0, 0, -3],
-            [2, 0, 2], [-2, 0, -2],
+            [6, 0, 0], [-6, 0, 0],
+            [0, 0, 6], [0, 0, -6],
+            [4, 0, 4], [-4, 0, -4],
+            [0, 4, 0], // vertical spike
         ];
         const totalPoints = states.length * CROSS_OFFSETS.length;
         const posArr = new Float32Array(totalPoints * 3);
@@ -1670,12 +1706,37 @@
             size: 4,
             sizeAttenuation: false,
             vertexColors: true,
+            fog: false,
+            depthTest: false,
         });
         aircraftPoints = new THREE.Points(geo, mat);
         aircraftPoints.visible = false;
         scene.add(aircraftPoints);
     }
     initAircraftPoints();
+
+    // ─── Aircraft callsign label overlay ─────────────────────────────────────
+    const aircraftLabelsEl = document.getElementById('aircraft-labels');
+    function updateAircraftLabels() {
+        if (!aircraftLabelsEl) return;
+        if (aircraftData.size === 0) { aircraftLabelsEl.innerHTML = ''; return; }
+        if (worldOriginLat === null) return;
+
+        const cam = cameraMode === 'birdseye' ? camera :
+                    cameraMode === 'followme' ? followCam : anchorCam;
+
+        const labels = [];
+        for (const [icao, ac] of aircraftData.entries()) {
+            const pos = new THREE.Vector3(ac.currentX, ac.currentY, ac.currentZ);
+            pos.project(cam);
+            const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
+            const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+            if (pos.z > 1) continue;
+            const cs = ac.callsign || icao;
+            labels.push(`<span style="position:absolute;left:${sx+8}px;top:${sy}px;font-family:'DotGothic16',monospace;font-size:9px;color:#33ccff;letter-spacing:1px;text-transform:lowercase;white-space:nowrap;">${cs}</span>`);
+        }
+        aircraftLabelsEl.innerHTML = labels.join('');
+    }
 
     // ─── Aircraft trail ring buffers ──────────────────────────────────────────
     // Per-aircraft ICAO24: ring buffer of world positions
@@ -1824,7 +1885,7 @@
                 applyLODToTiles(1.0);
             }
             windParticles.visible = true;
-            aircraftPoints.visible = aircraftData.size > 0;
+            aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
             aircraftTrailLines.visible = false;
             if (airportPoints) airportPoints.visible = false;
             if (transitPoints) transitPoints.visible = false;
@@ -1861,7 +1922,7 @@
     function updateSurveillanceLayers() {
         if (!surveillanceOn) {
             windParticles.visible = true;
-            aircraftPoints.visible = aircraftData.size > 0;
+            aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
             aircraftTrailLines.visible = false;
             if (airportPoints) airportPoints.visible = false;
             if (transitPoints) transitPoints.visible = false;
@@ -2149,6 +2210,7 @@
                 //  longitude, latitude, baro_altitude, on_ground, velocity,
                 //  true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source]
                 const icao24    = state[0];
+                const callsign  = (state[1] || icao24).trim();
                 const lon2      = state[5];
                 const lat2      = state[6];
                 const baroAlt   = state[7];
@@ -2171,12 +2233,14 @@
                     ac.targetY = rawY;
                     ac.targetZ = ww.z;
                     ac.updateTime = now;
+                    ac.callsign = ac.callsign || callsign;
                 } else {
                     aircraftData.set(icao24, {
                         prevX: ww.x, prevY: rawY, prevZ: ww.z,
                         targetX: ww.x, targetY: rawY, targetZ: ww.z,
                         currentX: ww.x, currentY: rawY, currentZ: ww.z,
                         updateTime: now,
+                        callsign,
                     });
                 }
                 // Push trail position on every update
@@ -2197,6 +2261,7 @@
             if (surveillanceOn && layerAircraft) {
                 rebuildTrailGeometry(currentLOD);
             }
+            updateAnchorPlaneButton();
             updateTileHUD();
         } catch (e) {
             // Network error or timeout -- skip silently
@@ -2828,6 +2893,7 @@
         if (aircraftData.size > 0) {
             updateAircraftInterpolation(nowMs);
         }
+        updateAircraftLabels();
 
         // ── Wind particles ─────────────────────────────────────────────────────
         updateWindParticles(delta);
@@ -2922,6 +2988,14 @@
                     const desiredTarget = new THREE.Vector3(wp.x, 0, wp.z);
                     anchorTargetCurrent.lerp(desiredTarget, 0.03);
                     anchorControls.target.copy(anchorTargetCurrent);
+                } else if (anchorSubMode === 'plane' && aircraftData.size > 0) {
+                    const planeValues = [...aircraftData.values()];
+                    const ac = planeValues[anchorPlaneIdx % planeValues.length];
+                    if (ac) {
+                        const planePos = new THREE.Vector3(ac.currentX, ac.currentY, ac.currentZ);
+                        anchorControls.target.lerp(planePos, 0.05);
+                    }
+                    updateAnchorPlaneButton();
                 }
                 anchorControls.update();
             }
