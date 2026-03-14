@@ -226,6 +226,13 @@
             border: 1px solid rgba(255,255,255,0.4);
             display: none;
             pointer-events: none;
+            overflow: hidden;
+        }
+        #minimap-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 160px;
+            height: 160px;
         }
         #minimap-label {
             position: absolute;
@@ -380,8 +387,9 @@
         </div>
     </div>
 
-    <!-- Minimap (bottom-right, follow-me mode only) -->
+    <!-- Minimap (bottom-right, follow-me and anchor mode) -->
     <div id="minimap-container">
+        <canvas id="minimap-canvas" width="160" height="160"></canvas>
         <span id="minimap-label">minimap</span>
     </div>
 
@@ -545,7 +553,7 @@
     anchorControls.enableDamping = true;
     anchorControls.dampingFactor = 0.08;
     anchorControls.minDistance = 20;
-    anchorControls.maxDistance = 500;
+    anchorControls.maxDistance = 50000;
     anchorControls.enabled = false; // only enabled in anchor mode
 
     // Anchor mode state
@@ -558,7 +566,7 @@
     const followCamTarget = new THREE.Vector3(); // current lerped look-at point
     let followCamInitialized = false;
 
-    // ─── Minimap orthographic camera ─────────────────────────────────────────
+    // ─── Minimap: dedicated renderer on its own canvas ────────────────────────
     const minimapSize = 200; // frustum half-size in meters
     const minimapCamera = new THREE.OrthographicCamera(
         -minimapSize, minimapSize,
@@ -568,6 +576,12 @@
     minimapCamera.position.set(0, 500, 0);
     minimapCamera.lookAt(0, 0, 0);
     minimapCamera.up.set(0, 0, -1); // north up
+
+    const minimapCanvas = document.getElementById('minimap-canvas');
+    const minimapRenderer = new THREE.WebGLRenderer({ canvas: minimapCanvas, antialias: false, alpha: true });
+    minimapRenderer.setSize(160, 160);
+    minimapRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    minimapRenderer.setClearColor(0x000000, 0.85);
 
     // ─── Camera mode state ────────────────────────────────────────────────────
     // 'birdseye' | 'followme' | 'anchor'
@@ -592,10 +606,10 @@
             if (!entry.points) continue;
             const m = entry.points.material;
             if (usePerspective) {
-                m.size = 1.5;
+                m.size = 0.8;
                 m.sizeAttenuation = true;
             } else {
-                m.size = 1.2;
+                m.size = 0.6;
                 m.sizeAttenuation = false;
             }
             m.needsUpdate = true;
@@ -827,7 +841,7 @@
     renderer.domElement.addEventListener('wheel', (e) => {
         e.preventDefault();
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        currentZoom = Math.max(0.2, Math.min(10, currentZoom * delta));
+        currentZoom = Math.max(0.001, Math.min(10, currentZoom * delta));
         updateCameraFrustum();
     }, { passive: false });
 
@@ -1011,8 +1025,9 @@
                 const j = (Math.random() - 0.5) * 0.1;
                 let r, g, b;
                 // Brighter floor: start at 0.4 teal, go to full cyan
-                if (t < 0.5) { const s = t * 2; r = 0; g = 0.4 + s * 0.6; b = 0.4 + s * 0.6; }
-                else { const s = (t - 0.5) * 2; r = s * 0.7; g = 1.0; b = 1.0; }
+                // Target color: #ccffff (r=0.8, g=1.0, b=1.0) at tips, darker at base
+                if (t < 0.5) { const s = t * 2; r = 0.3 + s * 0.5; g = 0.6 + s * 0.4; b = 0.6 + s * 0.4; }
+                else { const s = (t - 0.5) * 2; r = 0.8; g = 1.0; b = 1.0; }
                 // Apply time-of-day shift
                 r = r * todMult[0];
                 g = g * todMult[1];
@@ -1262,7 +1277,7 @@
 
             const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
-                size: isPerspectiveMode ? 1.5 : 1.2,
+                size: isPerspectiveMode ? 0.8 : 0.6,
                 sizeAttenuation: isPerspectiveMode,
                 vertexColors: true,
             });
@@ -2711,29 +2726,12 @@
         renderer.autoClear = true;
         composer.render();
 
-        // ── Minimap render (follow-me and anchor mode, rendered after composer) ──
+        // ── Minimap render (dedicated renderer on its own canvas) ────────────
         if ((cameraMode === 'followme' || cameraMode === 'anchor') && smoothLat !== null && worldOriginLat !== null) {
             const wp = latLonToWorld(smoothLat, smoothLon);
             minimapCamera.position.set(wp.x, 500, wp.z);
             minimapCamera.lookAt(wp.x, 0, wp.z);
-
-            const MM = 160;
-            const pixelRatio = renderer.getPixelRatio();
-            // CSS: bottom:14px right:14px -- renderer Y=0 is bottom of canvas
-            const vpX = Math.round((window.innerWidth - MM - 14) * pixelRatio);
-            const vpY = Math.round(14 * pixelRatio);
-            const MMpx = Math.round(MM * pixelRatio);
-
-            renderer.autoClear = false; // don't clear -- draw minimap on top of main scene
-            renderer.setScissorTest(true);
-            renderer.setScissor(vpX, vpY, MMpx, MMpx);
-            renderer.setViewport(vpX, vpY, MMpx, MMpx);
-            // Clear just the minimap region manually
-            renderer.clearDepth();
-            renderer.render(scene, minimapCamera);
-            renderer.setScissorTest(false);
-            renderer.autoClear = true;
-            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+            minimapRenderer.render(scene, minimapCamera);
         }
     }
 
