@@ -94,6 +94,93 @@
             z-index: 30;
             display: none;
         }
+
+        /* ── Routing input panel ── */
+        #route-panel {
+            position: fixed;
+            bottom: 36px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 25;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            padding: 7px 10px;
+            pointer-events: all;
+        }
+        #route-input {
+            font-family: 'DotGothic16', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #ffffff;
+            width: 200px;
+            caret-color: #00ffff;
+        }
+        #route-input::placeholder {
+            color: rgba(255,255,255,0.3);
+        }
+        #route-btn, #route-clear-btn {
+            font-family: 'DotGothic16', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #ffffff;
+            padding: 2px 8px;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        #route-btn:hover { border-color: #00ffff; color: #00ffff; }
+        #route-clear-btn {
+            border-color: rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.4);
+            display: none;
+            padding: 2px 6px;
+        }
+        #route-clear-btn:hover { border-color: #ff2244; color: #ff2244; }
+        #route-status {
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.4);
+            min-width: 80px;
+            text-align: right;
+        }
+
+        /* ── Turn-by-turn panel ── */
+        #turn-panel {
+            position: fixed;
+            bottom: 82px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 25;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            padding: 8px 14px;
+            pointer-events: none;
+            font-family: 'DotGothic16', monospace;
+            font-size: 16px;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            color: #ffffff;
+            white-space: nowrap;
+            display: none;
+        }
+        #turn-panel.pulse {
+            animation: turnPulse 0.8s ease-in-out infinite alternate;
+        }
+        @keyframes turnPulse {
+            from { opacity: 1; }
+            to   { opacity: 0.35; }
+        }
     </style>
 </head>
 <body>
@@ -102,6 +189,17 @@
     <div id="coords-panel" class="hud-panel"></div>
     <div id="tile-panel" class="hud-panel"></div>
     <div id="gps-denied">gps_denied // enable location</div>
+
+    <!-- Turn-by-turn instruction (shows above route input when route active) -->
+    <div id="turn-panel"></div>
+
+    <!-- Route input panel -->
+    <div id="route-panel">
+        <input id="route-input" type="text" placeholder="destination..." autocomplete="off" spellcheck="false" />
+        <button id="route-btn">route</button>
+        <button id="route-clear-btn" title="clear route">×</button>
+        <span id="route-status"></span>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
@@ -202,7 +300,7 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.toneMapping = THREE.ReinhardToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 2.5;
     document.body.appendChild(renderer.domElement);
 
     // ─── Post-processing (bloom) ──────────────────────────────────────────────
@@ -210,9 +308,9 @@
     composer.addPass(new THREE.RenderPass(scene, camera));
     const bloomPass = new THREE.UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        1.2, // strength
-        0.4, // radius
-        0.1  // threshold
+        0.6, // strength -- reduced, bird's eye doesn't need heavy bloom
+        0.3, // radius
+        0.0  // threshold -- lower so dim points still glow
     );
     composer.addPass(bloomPass);
 
@@ -426,7 +524,8 @@
             function heightColor(t) {
                 const j = (Math.random() - 0.5) * 0.1;
                 let r, g, b;
-                if (t < 0.5) { const s = t * 2; r = 0; g = 0.2 + s * 0.8; b = 0.2 + s * 0.8; }
+                // Brighter floor: start at 0.4 teal, go to full cyan
+                if (t < 0.5) { const s = t * 2; r = 0; g = 0.4 + s * 0.6; b = 0.4 + s * 0.6; }
                 else { const s = (t - 0.5) * 2; r = s * 0.7; g = 1.0; b = 1.0; }
                 return [Math.max(0,Math.min(1,r+j)), Math.max(0,Math.min(1,g+j)), Math.max(0,Math.min(1,b+j))];
             }
@@ -516,8 +615,8 @@
             geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
             const mat = new THREE.PointsMaterial({
-                size: 0.15,
-                sizeAttenuation: true,
+                size: 2.5,          // fixed pixel size for orthographic view
+                sizeAttenuation: false, // orthographic camera -- no distance scaling
                 vertexColors: true,
             });
 
