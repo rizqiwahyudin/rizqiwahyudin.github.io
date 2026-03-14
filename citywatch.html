@@ -2451,10 +2451,13 @@
         if (errors > 0) {
             const errorEntries = [...tileCache.values()].filter(e => e.error);
             const retrying = errorEntries.filter(e => Date.now() < e.retryAt).length;
+            const waitSec = retrying > 0 ? Math.ceil((Math.max(...errorEntries.filter(e => Date.now() < e.retryAt).map(e => e.retryAt)) - Date.now()) / 1000) : 0;
             if (retrying > 0) {
-                html += `\n<span class="warn">${retrying} retrying...</span>`;
+                html += `\n<span class="warn">retry in ${waitSec}s...</span>`;
             } else {
-                html += `\n<span class="err">${errors} tile error(s)</span>`;
+                // Show the actual error reason for the worst tile
+                const worstMsg = errorEntries[0] && errorEntries[0].msg ? errorEntries[0].msg : 'unknown';
+                html += `\n<span class="err">${errors} err: ${worstMsg.slice(0, 24)}</span>`;
             }
         }
         html += `\naircraft  <span>${aircraftCount}</span>`;
@@ -2507,7 +2510,7 @@
         const gpsDeniedEl = document.getElementById('gps-denied');
         gpsDeniedEl.style.display = 'block';
         setTimeout(() => { gpsDeniedEl.style.display = 'none'; }, 4000);
-        gpsError = 'gps_denied';
+        gpsError = 'no_gps // using riga';
 
         // Fall back to Riga
         if (smoothLat === null) {
@@ -2516,6 +2519,8 @@
             if (worldOriginLat === null) worldOriginFromFallback = true;
             updateCoordsHUD();
             updateTileManager(smoothLat, smoothLon);
+        } else {
+            updateCoordsHUD();
         }
     }
 
