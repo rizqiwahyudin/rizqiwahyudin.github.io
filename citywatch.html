@@ -286,6 +286,17 @@
     const FALLBACK_LON = 24.1052;
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
 
+    // ─── Time-of-day color temperature ───────────────────────────────────────
+    // Local hour = UTC + 2 (Riga EET approximation)
+    function getTimeOfDayMultiplier() {
+        const utcHour = new Date().getUTCHours();
+        const localHour = (utcHour + 2) % 24;
+        if (localHour >= 22 || localHour < 5)  return [1.00, 1.00, 1.00]; // night
+        if (localHour >= 5  && localHour < 8)  return [1.10, 1.00, 0.85]; // dawn
+        if (localHour >= 8  && localHour < 18) return [0.90, 1.00, 1.05]; // day
+        /* dusk 18-22 */                        return [1.15, 0.95, 0.75];
+    }
+
     // ─── Tile Math ────────────────────────────────────────────────────────────
     function latLonToTile(lat, lon, z) {
         const n = Math.pow(2, z);
@@ -727,12 +738,23 @@
 
             const posArr = [], colArr = [];
 
-            function heightColor(t) {
+            const todMult = getTimeOfDayMultiplier();
+
+            function heightColor(t, worldY) {
                 const j = (Math.random() - 0.5) * 0.1;
                 let r, g, b;
                 // Brighter floor: start at 0.4 teal, go to full cyan
                 if (t < 0.5) { const s = t * 2; r = 0; g = 0.4 + s * 0.6; b = 0.4 + s * 0.6; }
                 else { const s = (t - 0.5) * 2; r = s * 0.7; g = 1.0; b = 1.0; }
+                // Apply time-of-day shift
+                r = r * todMult[0];
+                g = g * todMult[1];
+                b = b * todMult[2];
+                // Height-based opacity: ground points (y < 1) get multiplied by 0.45
+                const opacityMult = (worldY < 1) ? 0.45 : 1.0;
+                r = r * opacityMult;
+                g = g * opacityMult;
+                b = b * opacityMult;
                 return [Math.max(0,Math.min(1,r+j)), Math.max(0,Math.min(1,g+j)), Math.max(0,Math.min(1,b+j))];
             }
 
@@ -753,7 +775,7 @@
                     const px = ax + s * bx + tt * cx;
                     const py = ay + s * by + tt * cy;
                     const pz = az + s * bz + tt * cz;
-                    const [r, g, b] = heightColor(Math.max(0, py / MAX_HEIGHT));
+                    const [r, g, b] = heightColor(Math.max(0, py / MAX_HEIGHT), py);
                     posArr.push(px, py, pz);
                     colArr.push(r, g, b);
                 }
@@ -788,7 +810,7 @@
                 for (let i = 0; i < roofCount; i++) {
                     const rx = minX + Math.random() * (maxX - minX);
                     const ry = minY + Math.random() * (maxY - minY);
-                    const [r, g, b] = heightColor(h / MAX_HEIGHT);
+                    const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
                     posArr.push(wx + rx, h, wz - ry);
                     colArr.push(r, g, b);
                 }
@@ -803,7 +825,7 @@
                         const wallH = Math.random() * h;
                         const wx2 = p0.x + t * (p1.x - p0.x);
                         const wy2 = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT);
+                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
                         posArr.push(wx + wx2, wallH, wz - wy2);
                         colArr.push(r, g, b);
                     }
@@ -816,9 +838,15 @@
             const positions = new Float32Array(posArr);
             const colors = new Float32Array(colArr);
 
+            // Store original colors for focus mode and tile animation
+            const origColors = new Float32Array(colArr);
+            // Start with zero colors (tile fade-in animation)
+            const animColors = new Float32Array(colors.length);
+            // animColors starts at 0 -- animate toward origColors over 1s
+
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
 
             const mat = new THREE.PointsMaterial({
                 size: 2.5,          // fixed pixel size for orthographic view
@@ -832,7 +860,19 @@
             // (GPS may have moved to different tiles while we were loading)
             if (currentTileKeys.has(key)) {
                 scene.add(points);
-                tileCache.set(key, { points, loading: false, error: false, pointCount: actualCount });
+                tileCache.set(key, {
+                    points,
+                    loading: false,
+                    error: false,
+                    pointCount: actualCount,
+                    origColors,       // full-brightness colors (base, before focus dim)
+                    loadStartTime: performance.now(), // for fade-in animation
+                    fadeComplete: false,
+                });
+                // If a route is active, apply focus mode to this new tile immediately
+                if (routeState.active && routeState.waypoints.length > 0) {
+                    applyFocusModeTile(key);
+                }
             } else {
                 // Stale tile: dispose immediately
                 geo.dispose();
@@ -887,6 +927,316 @@
         updateTileHUD();
     }
 
+    // ─── Focus mode: dim tiles outside route corridor ─────────────────────────
+    // Call when route is set or cleared. Only recalculates on route change.
+    const FOCUS_CORRIDOR_M = 30;
+    const FOCUS_DIM_MULT = 0.25;
+
+    function applyFocusModeTile(key) {
+        const entry = tileCache.get(key);
+        if (!entry || !entry.points || !entry.origColors) return;
+        if (!entry.fadeComplete) return; // let fade-in finish first
+        const geo = entry.points.geometry;
+        const colorAttr = geo.getAttribute('color');
+        const pos = geo.getAttribute('position');
+        const count = pos.count;
+        const waypoints = routeState.waypoints; // [{lat, lon}]
+
+        const posArr = pos.array;
+        const colArr2 = colorAttr.array;
+        const R2 = FOCUS_CORRIDOR_M * FOCUS_CORRIDOR_M;
+
+        // Pre-compute waypoint world positions once per call
+        const wpWorld = [];
+        if (worldOriginLat !== null) {
+            for (const wp of waypoints) {
+                wpWorld.push(latLonToWorld(wp.lat, wp.lon));
+            }
+        }
+
+        for (let i = 0; i < count; i++) {
+            const wx = posArr[i * 3];
+            const wz = posArr[i * 3 + 2];
+
+            let inCorridor = false;
+            for (const ww of wpWorld) {
+                const dx = wx - ww.x;
+                const dz = wz - ww.z;
+                if (dx * dx + dz * dz <= R2) { inCorridor = true; break; }
+            }
+
+            const mult = inCorridor ? 1.0 : FOCUS_DIM_MULT;
+            colArr2[i * 3]     = entry.origColors[i * 3]     * mult;
+            colArr2[i * 3 + 1] = entry.origColors[i * 3 + 1] * mult;
+            colArr2[i * 3 + 2] = entry.origColors[i * 3 + 2] * mult;
+        }
+        colorAttr.needsUpdate = true;
+    }
+
+    function applyFocusModeAll() {
+        for (const key of tileCache.keys()) {
+            applyFocusModeTile(key);
+        }
+    }
+
+    function clearFocusModeAll() {
+        for (const [key, entry] of tileCache.entries()) {
+            if (!entry.points || !entry.origColors || !entry.fadeComplete) continue;
+            const geo = entry.points.geometry;
+            const colorAttr = geo.getAttribute('color');
+            const arr = colorAttr.array;
+            const src = entry.origColors;
+            for (let j = 0; j < arr.length; j++) arr[j] = src[j];
+            colorAttr.needsUpdate = true;
+        }
+    }
+
+    // ─── OpenSky aircraft ─────────────────────────────────────────────────────
+    // Separate THREE.Points for aircraft -- never mixed into tile geometry
+    let aircraftPoints = null;
+    let aircraftCount = 0;
+
+    // Interpolation data: [{icao24, prevX, prevY, prevZ, targetX, targetY, targetZ, updateTime}]
+    const aircraftData = new Map(); // icao24 -> state
+
+    function degreesToCardinal(deg) {
+        const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+        return dirs[Math.round(deg / 45) % 8];
+    }
+
+    function buildAircraftGeometry() {
+        if (!aircraftPoints) return;
+        const states = [...aircraftData.values()];
+        if (states.length === 0) {
+            aircraftPoints.visible = false;
+            return;
+        }
+        aircraftPoints.visible = true;
+
+        // Each aircraft gets 7 points: center + 4 arm tips + 2 diagonal tips (cross pattern)
+        const CROSS_OFFSETS = [
+            [0, 0, 0],
+            [3, 0, 0], [-3, 0, 0],
+            [0, 0, 3], [0, 0, -3],
+            [2, 0, 2], [-2, 0, -2],
+        ];
+        const totalPoints = states.length * CROSS_OFFSETS.length;
+        const posArr = new Float32Array(totalPoints * 3);
+        const colArr = new Float32Array(totalPoints * 3);
+
+        let idx = 0;
+        for (const ac of states) {
+            const cx = ac.currentX, cy = ac.currentY, cz = ac.currentZ;
+            for (const [dx, dy, dz] of CROSS_OFFSETS) {
+                posArr[idx * 3]     = cx + dx;
+                posArr[idx * 3 + 1] = cy + dy;
+                posArr[idx * 3 + 2] = cz + dz;
+                // Bright white-blue tint
+                colArr[idx * 3]     = 0.7;
+                colArr[idx * 3 + 1] = 0.85;
+                colArr[idx * 3 + 2] = 1.0;
+                idx++;
+            }
+        }
+
+        const geo = aircraftPoints.geometry;
+        geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+        geo.getAttribute('position').needsUpdate = true;
+    }
+
+    function initAircraftPoints() {
+        const geo = new THREE.BufferGeometry();
+        // Start with an empty geometry
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
+        const mat = new THREE.PointsMaterial({
+            size: 4,
+            sizeAttenuation: false,
+            vertexColors: true,
+        });
+        aircraftPoints = new THREE.Points(geo, mat);
+        aircraftPoints.visible = false;
+        scene.add(aircraftPoints);
+    }
+    initAircraftPoints();
+
+    async function fetchAircraft() {
+        if (smoothLat === null || worldOriginLat === null) return;
+        const lat = smoothLat;
+        const lon = smoothLon;
+        const D = 0.03;
+        const url = `https://opensky-network.org/api/states/all?lamin=${lat - D}&lomin=${lon - D}&lamax=${lat + D}&lomax=${lon + D}`;
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+            if (res.status === 429) return; // rate limited, skip silently
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data || !data.states) {
+                aircraftData.clear();
+                aircraftCount = 0;
+                buildAircraftGeometry();
+                updateTileHUD();
+                return;
+            }
+
+            const now = performance.now();
+            const seen = new Set();
+
+            for (const state of data.states) {
+                // [icao24, callsign, origin_country, time_position, last_contact,
+                //  longitude, latitude, baro_altitude, on_ground, velocity,
+                //  true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source]
+                const icao24    = state[0];
+                const lon2      = state[5];
+                const lat2      = state[6];
+                const baroAlt   = state[7];
+                const onGround  = state[8];
+
+                if (lon2 === null || lat2 === null || onGround) continue;
+
+                const ww = latLonToWorld(lat2, lon2);
+                const rawY = baroAlt !== null ? Math.min(baroAlt / 20, 150) : 80;
+
+                if (aircraftData.has(icao24)) {
+                    const ac = aircraftData.get(icao24);
+                    // Store previous as interpolation source
+                    ac.prevX = ac.currentX;
+                    ac.prevY = ac.currentY;
+                    ac.prevZ = ac.currentZ;
+                    ac.targetX = ww.x;
+                    ac.targetY = rawY;
+                    ac.targetZ = ww.z;
+                    ac.updateTime = now;
+                } else {
+                    aircraftData.set(icao24, {
+                        prevX: ww.x, prevY: rawY, prevZ: ww.z,
+                        targetX: ww.x, targetY: rawY, targetZ: ww.z,
+                        currentX: ww.x, currentY: rawY, currentZ: ww.z,
+                        updateTime: now,
+                    });
+                }
+                seen.add(icao24);
+            }
+
+            // Remove aircraft no longer in response
+            for (const icao of aircraftData.keys()) {
+                if (!seen.has(icao)) aircraftData.delete(icao);
+            }
+
+            aircraftCount = aircraftData.size;
+            updateTileHUD();
+        } catch (e) {
+            // Network error or timeout -- skip silently
+        }
+    }
+
+    // Update aircraft interpolation each frame (called from animation loop)
+    const AIRCRAFT_UPDATE_INTERVAL = 15000; // ms
+    function updateAircraftInterpolation(nowMs) {
+        let changed = false;
+        for (const ac of aircraftData.values()) {
+            const elapsed = nowMs - ac.updateTime;
+            const t = Math.min(elapsed / AIRCRAFT_UPDATE_INTERVAL, 1.0);
+            ac.currentX = ac.prevX + (ac.targetX - ac.prevX) * t;
+            ac.currentY = ac.prevY + (ac.targetY - ac.prevY) * t;
+            ac.currentZ = ac.prevZ + (ac.targetZ - ac.prevZ) * t;
+            changed = true;
+        }
+        if (changed) buildAircraftGeometry();
+    }
+
+    // Start aircraft fetch interval
+    fetchAircraft();
+    setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
+
+    // ─── Open-Meteo wind particles ────────────────────────────────────────────
+    const WIND_PARTICLE_COUNT = 30;
+    let windSpeed = 0;       // m/s
+    let windDirDeg = 0;      // meteorological: direction wind comes FROM
+    let windDirX = 0;        // world-space drift direction unit vector X
+    let windDirZ = 0;        // world-space drift direction unit vector Z
+    let windLabel = 'calm';  // HUD string
+
+    // Particle world-space positions
+    const windParticlePos = new Float32Array(WIND_PARTICLE_COUNT * 3);
+    // Tile half-extent in world meters (approximate, based on zoom 16 tile ~600m wide)
+    const WIND_AREA = 300; // ±300m from origin
+
+    function randomWindParticle(i) {
+        windParticlePos[i * 3]     = (Math.random() - 0.5) * WIND_AREA * 2;
+        windParticlePos[i * 3 + 1] = 0.5 + Math.random() * 2.5; // y: 0.5 to 3
+        windParticlePos[i * 3 + 2] = (Math.random() - 0.5) * WIND_AREA * 2;
+    }
+
+    for (let i = 0; i < WIND_PARTICLE_COUNT; i++) randomWindParticle(i);
+
+    const windGeo = new THREE.BufferGeometry();
+    windGeo.setAttribute('position', new THREE.BufferAttribute(windParticlePos, 3));
+    const windColors = new Float32Array(WIND_PARTICLE_COUNT * 3);
+    for (let i = 0; i < WIND_PARTICLE_COUNT; i++) {
+        windColors[i * 3] = 0.3; windColors[i * 3 + 1] = 0.3; windColors[i * 3 + 2] = 0.3;
+    }
+    windGeo.setAttribute('color', new THREE.BufferAttribute(windColors, 3));
+    const windMat = new THREE.PointsMaterial({
+        size: 2,
+        sizeAttenuation: false,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.3,
+    });
+    const windParticles = new THREE.Points(windGeo, windMat);
+    scene.add(windParticles);
+
+    function updateWindParticles(delta) {
+        if (windSpeed < 0.1) return; // no wind, no drift
+        const speed = windSpeed * 2; // scale for visual effect (world m/s)
+        const posAttr = windGeo.getAttribute('position');
+        for (let i = 0; i < WIND_PARTICLE_COUNT; i++) {
+            let px = posAttr.getX(i) + windDirX * speed * delta;
+            let py = posAttr.getY(i);
+            let pz = posAttr.getZ(i) + windDirZ * speed * delta;
+
+            // Reset if out of bounds
+            if (Math.abs(px) > WIND_AREA || Math.abs(pz) > WIND_AREA) {
+                randomWindParticle(i);
+                px = posAttr.getX(i);
+                py = posAttr.getY(i);
+                pz = posAttr.getZ(i);
+            }
+            posAttr.setXYZ(i, px, py, pz);
+        }
+        posAttr.needsUpdate = true;
+    }
+
+    async function fetchWind() {
+        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms`;
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data.current) return;
+            windSpeed  = data.current.wind_speed_10m    ?? 0;
+            windDirDeg = data.current.wind_direction_10m ?? 0;
+            // Meteorological: wind comes FROM windDirDeg, so it blows TOWARD opposite
+            // Convert to world drift vector. In Three.js top-down: north = -Z, east = +X
+            // windDirDeg=0 means wind from north, blowing south (+Z)
+            const blowDeg = (windDirDeg + 180) % 360; // direction wind blows toward
+            const blowRad = blowDeg * Math.PI / 180;
+            windDirX = Math.sin(blowRad);   // east component
+            windDirZ = -Math.cos(blowRad);  // north component (inverted for Three.js)
+            windLabel = `${windSpeed.toFixed(1)}m/s ${degreesToCardinal(windDirDeg)}`;
+            updateTileHUD();
+        } catch (e) {
+            // Skip silently
+        }
+    }
+
+    fetchWind();
+    setInterval(fetchWind, 5 * 60 * 1000); // every 5 minutes
+
     // ─── HUD updates ──────────────────────────────────────────────────────────
     const coordsPanel = document.getElementById('coords-panel');
     const tilePanel = document.getElementById('tile-panel');
@@ -917,9 +1267,8 @@
         const errors = [...tileCache.values()].filter(e => e.error).length;
         const offline = [...tileCache.values()].some(e => e.offline);
 
-        let html = `tiles  <span>${loaded}/4</span>`;
+        let html = `tiles     <span>${loaded}/4</span>`;
         if (loading > 0) {
-            // Show which tiles are loading
             const loadingKeys = [...loadingSet];
             for (const k of loadingKeys) {
                 const parts = k.split('/');
@@ -933,6 +1282,8 @@
                 html += `\n<span class="err">${errors} tile error(s)</span>`;
             }
         }
+        html += `\naircraft  <span>${aircraftCount}</span>`;
+        html += `\nwind      <span>${windLabel}</span>`;
         tilePanel.innerHTML = html;
     }
 
@@ -1109,6 +1460,8 @@
         routeClearBtn.style.display = 'none';
         routeStatus.textContent = '';
         updateCoordsHUD();
+        // Restore full brightness on all tiles
+        clearFocusModeAll();
     }
 
     // Draw route in Three.js scene (requires worldOriginLat to be set)
@@ -1247,6 +1600,8 @@
             routeState.steps = steps;
 
             drawRoute(waypoints, destLat, destLon);
+            // Apply focus mode now that route waypoints are set
+            applyFocusModeAll();
 
             routeClearBtn.style.display = 'inline-block';
             routeStatus.textContent = '';
@@ -1326,11 +1681,43 @@
     // ─── Animation loop ───────────────────────────────────────────────────────
     let clock = new THREE.Clock();
     let _lastAnimTime = 0;
+    const TILE_FADE_DURATION = 1000; // ms
 
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();   // seconds since last frame
         const t = clock.elapsedTime;      // total elapsed (updated by getDelta)
+        const nowMs = performance.now();
+
+        // ── Tile fade-in animation ─────────────────────────────────────────────
+        for (const [key, entry] of tileCache.entries()) {
+            if (entry.fadeComplete || !entry.points || !entry.origColors) continue;
+            const elapsed = nowMs - entry.loadStartTime;
+            const lerpT = Math.min(elapsed / TILE_FADE_DURATION, 1.0);
+            const colorAttr = entry.points.geometry.getAttribute('color');
+            const arr = colorAttr.array;
+            const src = entry.origColors;
+            const len = arr.length;
+            for (let j = 0; j < len; j++) {
+                arr[j] = src[j] * lerpT;
+            }
+            colorAttr.needsUpdate = true;
+            if (lerpT >= 1.0) {
+                entry.fadeComplete = true;
+                // If route is active, re-apply focus mode at full brightness
+                if (routeState.active && routeState.waypoints.length > 0) {
+                    applyFocusModeTile(key);
+                }
+            }
+        }
+
+        // ── Aircraft interpolation ─────────────────────────────────────────────
+        if (aircraftData.size > 0) {
+            updateAircraftInterpolation(nowMs);
+        }
+
+        // ── Wind particles ─────────────────────────────────────────────────────
+        updateWindParticles(delta);
 
         // GPS ring pulse: scale 1.0 -> 1.5 -> 1.0, period 2s
         if (gpsRing.visible) {
