@@ -192,7 +192,7 @@
         .cam-mode-btn:hover { color: rgba(255,255,255,0.8); }
         .cam-mode-btn.active { color: #33ccff; }
 
-        /* ── Anchor sub-buttons (inside mode strip, below anchor icon) ── */
+        /* ── Anchor sub-buttons (inside strip) ── */
         #anchor-sub-row {
             display: none;
             flex-direction: column;
@@ -402,10 +402,10 @@
 
     <!-- Camera mode strip (left side) -->
     <div id="cam-mode-panel">
-        <button class="cam-mode-btn" id="btn-birdseye" title="bird's eye">&#8857;</button>
+        <button class="cam-mode-btn active" id="btn-birdseye" title="bird's eye">&#8857;</button>
         <button class="cam-mode-btn" id="btn-followme" title="follow me">&#9650;</button>
-        <button class="cam-mode-btn active" id="btn-anchor" title="anchor">&#8853;</button>
-        <div id="anchor-sub-row" style="display:flex;flex-direction:column;">
+        <button class="cam-mode-btn" id="btn-anchor" title="anchor">&#8853;</button>
+        <div id="anchor-sub-row">
             <button class="anchor-sub-btn active" id="btn-anchor-me">me</button>
             <button class="anchor-sub-btn" id="btn-anchor-dest" disabled>dest</button>
             <button class="anchor-sub-btn" id="btn-anchor-plane" disabled>plane</button>
@@ -536,19 +536,9 @@
     let worldOriginFromFallback = false;
 
     function setWorldOrigin(lat, lon, fromFallback = false) {
-        const firstSet = worldOriginLat === null;
         worldOriginLat = lat;
         worldOriginLon = lon;
         worldOriginFromFallback = fromFallback;
-        // Snap anchor camera to GPS position immediately on first world origin set
-        if (firstSet && smoothLat !== null) {
-            const wp = latLonToWorld(smoothLat, smoothLon);
-            anchorTargetCurrent.set(wp.x, 0, wp.z);
-            anchorControls.target.set(wp.x, 0, wp.z);
-            anchorCam.position.set(wp.x, 80, wp.z + 80);
-            anchorCam.lookAt(wp.x, 0, wp.z);
-            anchorControls.update();
-        }
     }
 
     function latLonToWorld(lat, lon) {
@@ -673,7 +663,7 @@
 
     // ─── Camera mode state ────────────────────────────────────────────────────
     // 'birdseye' | 'followme' | 'anchor'
-    let cameraMode = 'anchor';
+    let cameraMode = 'birdseye';
 
     // Transition state: animate from bird's eye to follow-me over 1.5s
     const CAM_TRANSITION_DURATION = 1.5;
@@ -818,6 +808,37 @@
             };
 
             composer.passes[0].camera = anchorCam;
+
+            // Bubble-up: push all building points underground then animate them rising
+            {
+                const now = performance.now();
+                let stagger = 0;
+                for (const [, entry] of tileCache.entries()) {
+                    if (!entry.points || !entry.origY || !entry.fadeComplete) continue;
+                    const posAttr = entry.points.geometry.getAttribute('position');
+                    const posArr = posAttr.array;
+                    // Push building points below ground (Y > 0.5 = building, not road/ground)
+                    for (let i = 0; i < entry.pointCount; i++) {
+                        if (entry.streamIndices && entry.streamIndices.has(i)) continue;
+                        if (entry.origY[i] > 0.5) posArr[i * 3 + 1] = -2.0;
+                    }
+                    posAttr.needsUpdate = true;
+                    entry.regenStartTime = now + stagger;
+                    // Store tile center for radial bubble-up
+                    if (entry.tileCenterX === undefined) {
+                        entry.tileCenterX = 0; entry.tileCenterZ = 0;
+                        for (let i = 0; i < Math.min(entry.pointCount, 200); i++) {
+                            entry.tileCenterX += posArr[i * 3];
+                            entry.tileCenterZ += posArr[i * 3 + 2];
+                        }
+                        const n = Math.min(entry.pointCount, 200);
+                        entry.tileCenterX /= n;
+                        entry.tileCenterZ /= n;
+                        entry.tileRadius = 350;
+                    }
+                    stagger += 100; // stagger tiles 100ms apart
+                }
+            }
 
         } else {
             // Back to bird's eye
@@ -1242,12 +1263,9 @@
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
             const buildAbort = new AbortController();
             const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
-            // Query Overpass directly (rotate mirrors to spread load).
-            // CF Worker has a 30s wall-time limit -- not reliable for slow tiles.
+            // Query Overpass directly with mirror retry (CF Worker too slow for large tiles)
             const encodedQuery = `data=${encodeURIComponent(query)}`;
-            let overpassRes;
-            // Try up to 3 mirrors before giving up
-            let lastErr;
+            let overpassRes, lastErr;
             for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
                 const mirrorUrl = OVERPASS_MIRRORS[(_overpassMirrorIdx + attempt) % OVERPASS_MIRRORS.length];
                 try {
@@ -1259,7 +1277,7 @@
                     });
                     if (overpassRes.status === 429) { lastErr = new Error('rate_limited'); continue; }
                     if (overpassRes.status === 504 || overpassRes.status === 502) { lastErr = new Error('server_overloaded'); continue; }
-                    if (overpassRes.ok) break; // success
+                    if (overpassRes.ok) break;
                     lastErr = new Error(`Overpass HTTP ${overpassRes.status}`);
                 } catch (e) { lastErr = e; }
             }
@@ -1578,9 +1596,9 @@
                     origY,            // original Y positions for regen animation
                     streamPoints: tileStreamPoints, // rising stream particles for this tile
                     streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
-                    loadStartTime: performance.now(),
+                    loadStartTime: performance.now(), // for fade-in animation
                     fadeComplete: false,
-                    regenStartTime: performance.now(), // trigger bubble-up on tile load
+                    regenStartTime: null, // set when regen animation is active
                     tileCenterX: tileWorldOffset.x,
                     tileCenterZ: tileWorldOffset.z,
                     tileRadius: 350,
@@ -1979,16 +1997,14 @@
                 }
                 posAttr.needsUpdate = true;
                 entry.regenStartTime = null;
-                if (!entry.fadeComplete) entry.fadeComplete = true; // tile-load bubble-up done
                 continue;
             }
 
-            // Bubble-up: center points rise first, outer points lag by up to 40% of duration
+            // Bubble-up: center points rise first, outer points lag
             for (let i = 0; i < count; i++) {
                 if (entry.streamIndices && entry.streamIndices.has(i)) continue;
                 const targetY = entry.origY[i];
                 const fromY = targetY > 0.5 ? -2.0 : targetY;
-                // Radial distance from tile center drives per-point delay
                 const px = posArr[i * 3];
                 const pz = posArr[i * 3 + 2];
                 const dx = px - (entry.tileCenterX || 0);
@@ -3210,12 +3226,17 @@
         // ── Tile fade-in animation ─────────────────────────────────────────────
         for (const [key, entry] of tileCache.entries()) {
             if (entry.fadeComplete || !entry.points || !entry.origColors) continue;
-            // Colors start at full brightness -- no color lerp needed.
-            // fadeComplete flips when the bubble-up regen animation ends (regenStartTime cleared).
-            // Fallback: if no regen animation running, mark complete after TILE_FADE_DURATION.
             const elapsed = nowMs - entry.loadStartTime;
             const lerpT = Math.min(elapsed / TILE_FADE_DURATION, 1.0);
-            if (!entry.regenStartTime && lerpT >= 1.0) {
+            const colorAttr = entry.points.geometry.getAttribute('color');
+            const arr = colorAttr.array;
+            const src = entry.origColors;
+            const len = arr.length;
+            for (let j = 0; j < len; j++) {
+                arr[j] = src[j] * lerpT;
+            }
+            colorAttr.needsUpdate = true;
+            if (lerpT >= 1.0) {
                 entry.fadeComplete = true;
                 // Apply LOD factor to newly faded-in tile
                 if (surveillanceOn && currentLOD !== 'street') {
@@ -3383,13 +3404,6 @@
             minimapRenderer.render(scene, minimapCamera);
         }
     }
-
-    // Bootstrap anchor mode (default) -- set composer camera + controls
-    composer.passes[0].camera = anchorCam;
-    minimapContainer.style.display = 'block';
-    anchorControls.enabled = true;
-    updateTileMaterials(true);
-    document.getElementById('hint').textContent = 'anchor // drag to orbit';
 
     animate();
 
