@@ -452,7 +452,10 @@
 
     // ─── Config ───────────────────────────────────────────────────────────────
     const ZOOM = 16;
-    // Rotate across mirrors to spread rate limit pressure
+    // Cloudflare Worker proxy -- caches Overpass responses at the edge
+    // After first request per tile, subsequent loads are served from CF cache (~50ms)
+    const CF_WORKER = 'https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev';
+    // Direct Overpass mirrors as fallback if Worker is down
     const OVERPASS_MIRRORS = [
         'https://overpass-api.de/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
@@ -464,11 +467,11 @@
         _overpassMirrorIdx++;
         return url;
     }
-    const OVERPASS_URL = getOverpassURL(); // keep for legacy refs -- actual tile loads call getOverpassURL()
+    const OVERPASS_URL = getOverpassURL();
     const FALLBACK_LAT = 56.9496;
     const FALLBACK_LON = 24.1052;
     // VPS backend -- tile server + authenticated proxy endpoints
-    const VPS_URL = 'http://95.217.18.164';
+    const VPS_URL = CF_WORKER; // route VPS calls through CF Worker (HTTPS + cached)
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
 
     // ─── Time-of-day color temperature ───────────────────────────────────────
@@ -1225,12 +1228,26 @@
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
             const buildAbort = new AbortController();
             const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
-            const overpassRes = await fetch(getOverpassURL(), {
-                method: 'POST',
-                body: `data=${encodeURIComponent(query)}`,
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                signal: buildAbort.signal,
-            });
+            // Try CF Worker first (caches responses at edge), fall back to direct Overpass
+            const encodedQuery = `data=${encodeURIComponent(query)}`;
+            let overpassRes;
+            try {
+                overpassRes = await fetch(`${CF_WORKER}/overpass`, {
+                    method: 'POST',
+                    body: encodedQuery,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    signal: buildAbort.signal,
+                });
+                if (!overpassRes.ok && overpassRes.status !== 429) throw new Error('worker_fail');
+            } catch (workerErr) {
+                // Worker failed or timed out -- fall back to direct Overpass
+                overpassRes = await fetch(getOverpassURL(), {
+                    method: 'POST',
+                    body: encodedQuery,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    signal: buildAbort.signal,
+                });
+            }
             clearTimeout(buildTimeout);
             if (overpassRes.status === 429) throw new Error('rate_limited');
             if (overpassRes.status === 504 || overpassRes.status === 502) throw new Error('server_overloaded');
