@@ -47,7 +47,7 @@
         }
         #hint {
             position: fixed;
-            bottom: 14px;
+            bottom: 66px;
             width: 100%;
             text-align: center;
             color: rgba(255,255,255,0.25);
@@ -76,7 +76,7 @@
         .hud-panel span { color: #00ffff; }
         .hud-panel .warn { color: #ffaa00; }
         .hud-panel .err { color: #ff2244; }
-        #coords-panel { top: 60px; left: 14px; }
+        #coords-panel { top: 14px; left: 58px; } /* offset from 44px mode strip */
         #tile-panel { top: 14px; right: 14px; }
         #gps-denied {
             position: fixed;
@@ -224,7 +224,7 @@
         /* ── Minimap ── */
         #minimap-container {
             position: fixed;
-            bottom: 58px;
+            bottom: 66px; /* route panel ~52px + 14px gap */
             right: 14px;
             width: 120px;
             height: 120px;
@@ -283,7 +283,7 @@
         /* ── Surveillance mode UI ── */
         #regen-btn {
             position: fixed;
-            bottom: 186px;
+            bottom: 200px; /* above minimap: 66 + 120 + 14 */
             right: 14px;
             z-index: 25;
             font-family: 'DotGothic16', monospace;
@@ -1542,12 +1542,9 @@
             // Store original colors for focus mode and tile animation
             const origColors = new Float32Array(colArr);
             // Start with zero colors (tile fade-in animation)
-            const animColors = new Float32Array(colors.length);
-            // animColors starts at 0 -- animate toward origColors over 1s
-
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
             const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
@@ -1993,11 +1990,15 @@
                 continue;
             }
 
+            const isLoad = !!entry.isTileLoad;
             for (let i = 0; i < count; i++) {
                 if (entry.streamIndices && entry.streamIndices.has(i)) continue;
 
                 const targetY = entry.origY[i];
-                const fromY = targetY > 0.5 ? -2.0 : targetY;
+                // Building points bubble up from below; ground points stay put during tile-load
+                const fromY = (!isLoad && targetY > 0.5) ? -2.0
+                            : (isLoad && targetY > 0.5)  ? -2.0
+                            : targetY;
 
                 const px = posArr[i * 3];
                 const pz = posArr[i * 3 + 2];
@@ -2010,15 +2011,15 @@
 
                 posArr[i * 3 + 1] = fromY + localT * (targetY - fromY);
 
-                // Fade colors in during animation
-                if (entry.origColors) {
+                // Color fade only on regen (not tile-load -- tiles start with full colors)
+                if (!isLoad && entry.origColors) {
                     colArr[i * 3]     = entry.origColors[i * 3]     * localT;
                     colArr[i * 3 + 1] = entry.origColors[i * 3 + 1] * localT;
                     colArr[i * 3 + 2] = entry.origColors[i * 3 + 2] * localT;
                 }
             }
             posAttr.needsUpdate = true;
-            colAttr.needsUpdate = true;
+            if (!isLoad) colAttr.needsUpdate = true;
         }
     }
 
