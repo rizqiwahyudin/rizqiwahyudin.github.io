@@ -222,6 +222,76 @@
         .anchor-sub-btn.active { color: #33ccff; }
         .anchor-sub-btn:disabled { color: rgba(255,255,255,0.18); cursor: default; }
 
+        #gps-override-btn {
+            display: block;
+            width: 100%;
+            background: none;
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.35);
+            font-family: 'DotGothic16', monospace;
+            font-size: 14px;
+            padding: 10px 0;
+            cursor: pointer;
+            letter-spacing: 0.05em;
+        }
+        #gps-override-btn:hover { color: rgba(255,255,255,0.7); }
+        #gps-override-btn.active { color: #33ccff; }
+
+        #gps-override-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        #gps-override-overlay.visible { display: flex; }
+        #gps-override-dialog {
+            background: #0a0f12;
+            border: 1px solid rgba(51,204,255,0.3);
+            padding: 20px;
+            width: 280px;
+            font-family: 'DotGothic16', monospace;
+            color: rgba(255,255,255,0.7);
+        }
+        #gps-override-label {
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            color: rgba(255,255,255,0.35);
+            margin-bottom: 10px;
+        }
+        #gps-override-input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.85);
+            font-family: 'DotGothic16', monospace;
+            font-size: 14px;
+            padding: 8px 10px;
+            margin-bottom: 12px;
+            outline: none;
+        }
+        #gps-override-input:focus { border-color: #33ccff; }
+        #gps-override-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+        #gps-override-confirm, #gps-override-cancel, #gps-override-revert {
+            flex: 1;
+            background: none;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.6);
+            font-family: 'DotGothic16', monospace;
+            font-size: 13px;
+            padding: 7px 0;
+            cursor: pointer;
+        }
+        #gps-override-confirm:hover { border-color: #33ccff; color: #33ccff; }
+        #gps-override-cancel:hover { border-color: rgba(255,255,255,0.4); color: rgba(255,255,255,0.8); }
+        #gps-override-revert { width: 100%; border-color: rgba(255,100,100,0.3); color: rgba(255,100,100,0.6); }
+        #gps-override-revert:hover { border-color: rgba(255,100,100,0.7); color: rgba(255,100,100,0.9); }
+
         /* ── Minimap ── */
         #minimap-container {
             position: fixed;
@@ -410,6 +480,7 @@
             <button class="anchor-sub-btn" id="btn-anchor-dest" disabled>dest</button>
             <button class="anchor-sub-btn" id="btn-anchor-plane" disabled>plane</button>
         </div>
+        <button id="gps-override-btn" title="pin location">&#8982;</button>
     </div>
 
     <!-- Minimap (bottom-right, follow-me and anchor mode) -->
@@ -883,6 +954,58 @@
     btnBirdseye.addEventListener('click', () => setCameraMode('birdseye'));
     btnFollowme.addEventListener('click', () => setCameraMode('followme'));
     btnAnchor.addEventListener('click', () => setCameraMode('anchor'));
+
+    // ─── GPS override UI wiring ───────────────────────────────────────────────
+    const gpsOverrideBtn     = document.getElementById('gps-override-btn');
+    const gpsOverrideOverlay = document.getElementById('gps-override-overlay');
+    const gpsOverrideInput   = document.getElementById('gps-override-input');
+    const gpsConfirmBtn      = document.getElementById('gps-override-confirm');
+    const gpsCancelBtn       = document.getElementById('gps-override-cancel');
+    const gpsRevertBtn       = document.getElementById('gps-override-revert');
+
+    function openOverrideOverlay() {
+        gpsOverrideOverlay.classList.add('visible');
+        // Show revert button only when already overriding
+        gpsRevertBtn.style.display = gpsOverrideActive ? 'block' : 'none';
+        gpsConfirmBtn.style.display = gpsOverrideActive ? 'none' : '';
+        gpsCancelBtn.style.display = gpsOverrideActive ? 'none' : '';
+        document.getElementById('gps-override-actions').style.display = gpsOverrideActive ? 'none' : 'flex';
+        setTimeout(() => gpsOverrideInput.focus(), 50);
+    }
+
+    function closeOverrideOverlay() {
+        gpsOverrideOverlay.classList.remove('visible');
+    }
+
+    function tryApplyOverride() {
+        const parts = gpsOverrideInput.value.split(',').map(s => parseFloat(s.trim()));
+        if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+            gpsOverrideInput.style.borderColor = 'rgba(255,80,80,0.7)';
+            setTimeout(() => { gpsOverrideInput.style.borderColor = ''; }, 1000);
+            return;
+        }
+        const [lat, lon] = parts;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            gpsOverrideInput.style.borderColor = 'rgba(255,80,80,0.7)';
+            setTimeout(() => { gpsOverrideInput.style.borderColor = ''; }, 1000);
+            return;
+        }
+        applyGpsOverride(lat, lon);
+        closeOverrideOverlay();
+    }
+
+    gpsOverrideBtn.addEventListener('click', openOverrideOverlay);
+    gpsConfirmBtn.addEventListener('click', tryApplyOverride);
+    gpsCancelBtn.addEventListener('click', closeOverrideOverlay);
+    gpsRevertBtn.addEventListener('click', () => { revertGpsOverride(); closeOverrideOverlay(); });
+    gpsOverrideInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') tryApplyOverride();
+        if (e.key === 'Escape') closeOverrideOverlay();
+    });
+    // Tap outside dialog closes overlay
+    gpsOverrideOverlay.addEventListener('click', e => {
+        if (e.target === gpsOverrideOverlay) closeOverrideOverlay();
+    });
     btnAnchorMe.addEventListener('click', () => {
         setAnchorSubMode('me');
         if (smoothLat !== null && worldOriginLat !== null) {
@@ -1016,6 +1139,13 @@
     // ─── GPS state ────────────────────────────────────────────────────────────
     let smoothLat = null;
     let smoothLon = null;
+
+    // ─── GPS override state ───────────────────────────────────────────────────
+    let gpsOverrideActive = false;
+    let gpsOverrideLat = null;
+    let gpsOverrideLon = null;
+    let gpsRevertPending = false;
+    let sceneGeneration = 0;
     let gpsAccuracy = null;
     let gpsError = null;
 
@@ -1255,6 +1385,7 @@
         const key = `${z}/${x}/${y}`;
         if (tileCache.has(key) || loadingSet.has(key)) return;
         loadingSet.add(key);
+        const myGeneration = sceneGeneration; // capture on entry; stale if scene resets mid-load
 
         // Set world origin from first tile loaded
         if (worldOriginLat === null) {
@@ -1345,7 +1476,7 @@
 
                         const points = new THREE.Points(geo, mat);
 
-                        if (currentTileKeys.has(key)) {
+                        if (currentTileKeys.has(key) && sceneGeneration === myGeneration) {
                             scene.add(points);
                             const origY = new Float32Array(pointCount);
                             for (let i = 0; i < pointCount; i++) origY[i] = positions[i * 3 + 1];
@@ -1706,9 +1837,9 @@
 
             const points = new THREE.Points(geo, mat);
 
-            // Only add to scene if this tile is still wanted
+            // Only add to scene if this tile is still wanted and scene hasn't reset
             // (GPS may have moved to different tiles while we were loading)
-            if (currentTileKeys.has(key)) {
+            if (currentTileKeys.has(key) && sceneGeneration === myGeneration) {
                 scene.add(points);
                 // Store original Y values for regen animation
                 const origY = new Float32Array(actualCount);
@@ -2946,6 +3077,17 @@
 
     // ─── GPS watch ────────────────────────────────────────────────────────────
     function onGPSPosition(pos) {
+        // Override active: suppress GPS updates
+        if (gpsOverrideActive) return;
+        // Revert pending: use this real position to reset scene
+        if (gpsRevertPending) {
+            gpsRevertPending = false;
+            resetScene(pos.coords.latitude, pos.coords.longitude);
+            const input = document.getElementById('gps-override-input');
+            if (input) input.placeholder = 'lat, lon';
+            return;
+        }
+
         const rawLat = pos.coords.latitude;
         const rawLon = pos.coords.longitude;
         gpsAccuracy = pos.coords.accuracy;
@@ -2998,6 +3140,72 @@
             updateTileManager(smoothLat, smoothLon);
         }
         // gpsError stays null -- don't clutter HUD when fallback works fine
+    }
+
+    // ─── GPS Override: resetScene, apply, revert ─────────────────────────────
+
+    function clearTransit() {
+        if (transitPoints) { transitPoints.geometry.dispose(); transitPoints.material.dispose(); scene.remove(transitPoints); transitPoints = null; }
+        for (const line of transitRouteLines) { line.geometry.dispose(); line.material.dispose(); scene.remove(line); }
+        transitRouteLines.length = 0;
+        transitVehicles.length = 0;
+    }
+
+    function resetScene(lat, lon) {
+        sceneGeneration++;
+        // Null world origin -- first tile load will reset it
+        worldOriginLat = null;
+        worldOriginLon = null;
+        worldOriginFromFallback = false;
+        // Clear all tiles
+        for (const key of [...tileCache.keys()]) disposeTile(key);
+        tileCache.clear();
+        loadingSet.clear();
+        // Reset position
+        smoothLat = lat;
+        smoothLon = lon;
+        // Reset camera state so bird's-eye doesn't wander to old world coords
+        camTarget.set(0, 0, 0);
+        followGPS = true;
+        // Clear route (destination was in the old city)
+        routeState.active = false;
+        routeState.destLat = null;
+        routeState.destLon = null;
+        routeState.waypoints = [];
+        const routeInput = document.getElementById('route-input');
+        if (routeInput) routeInput.value = '';
+        if (typeof setAnchorSubMode === 'function') setAnchorSubMode('me');
+        // Clear transit
+        clearTransit();
+        // Load new tiles
+        updateTileManager(lat, lon);
+        // Re-fetch location-relative data
+        fetchAirportData();
+        initTransit();
+    }
+
+    function applyGpsOverride(lat, lon) {
+        gpsOverrideActive = true;
+        gpsOverrideLat = lat;
+        gpsOverrideLon = lon;
+        gpsRevertPending = false;
+        resetScene(lat, lon);
+        // Update UI
+        const btn = document.getElementById('gps-override-btn');
+        if (btn) btn.classList.add('active');
+    }
+
+    function revertGpsOverride() {
+        gpsOverrideActive = false;
+        gpsOverrideLat = null;
+        gpsOverrideLon = null;
+        gpsRevertPending = true;
+        // Update UI
+        const btn = document.getElementById('gps-override-btn');
+        if (btn) btn.classList.remove('active');
+        const input = document.getElementById('gps-override-input');
+        if (input) { input.value = ''; input.placeholder = 'waiting for gps...'; }
+        // resetScene fires on next watchPosition callback (gpsRevertPending check)
     }
 
     if ('geolocation' in navigator) {
@@ -3548,5 +3756,16 @@
     updateTileHUD();
 
     </script>
+    <div id="gps-override-overlay">
+        <div id="gps-override-dialog">
+            <div id="gps-override-label">pin location</div>
+            <input id="gps-override-input" type="text" placeholder="lat, lon" spellcheck="false" autocomplete="off" inputmode="decimal" />
+            <div id="gps-override-actions">
+                <button id="gps-override-confirm">pin</button>
+                <button id="gps-override-cancel">cancel</button>
+            </div>
+            <button id="gps-override-revert" style="display:none">revert to gps</button>
+        </div>
+    </div>
 </body>
 </html>
