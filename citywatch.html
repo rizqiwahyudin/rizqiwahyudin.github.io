@@ -523,6 +523,18 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 
+    <div id="gps-override-overlay">
+        <div id="gps-override-dialog">
+            <div id="gps-override-label">pin location</div>
+            <input id="gps-override-input" type="text" placeholder="lat, lon" spellcheck="false" autocomplete="off" inputmode="decimal" />
+            <div id="gps-override-actions">
+                <button id="gps-override-confirm">pin</button>
+                <button id="gps-override-cancel">cancel</button>
+            </div>
+            <button id="gps-override-revert" style="display:none">revert to gps</button>
+        </div>
+    </div>
+
     <script>
     'use strict';
 
@@ -3756,16 +3768,5 @@
     updateTileHUD();
 
     </script>
-    <div id="gps-override-overlay">
-        <div id="gps-override-dialog">
-            <div id="gps-override-label">pin location</div>
-            <input id="gps-override-input" type="text" placeholder="lat, lon" spellcheck="false" autocomplete="off" inputmode="decimal" />
-            <div id="gps-override-actions">
-                <button id="gps-override-confirm">pin</button>
-                <button id="gps-override-cancel">cancel</button>
-            </div>
-            <button id="gps-override-revert" style="display:none">revert to gps</button>
-        </div>
-    </div>
 </body>
 </html>
