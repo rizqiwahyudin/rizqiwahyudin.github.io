@@ -1197,6 +1197,8 @@
                 signal: buildAbort.signal,
             });
             clearTimeout(buildTimeout);
+            if (overpassRes.status === 429) throw new Error('rate_limited');
+            if (overpassRes.status === 504 || overpassRes.status === 502) throw new Error('server_overloaded');
             if (!overpassRes.ok) throw new Error(`Overpass HTTP ${overpassRes.status}`);
             const osmData = await overpassRes.json();
 
@@ -1504,11 +1506,12 @@
 
         } catch (err) {
             console.error(`Tile ${key} failed:`, err.message);
-            // Get previous attempt count for exponential backoff
             const prev = tileCache.get(key);
-            const attempts = (prev && prev.attempts) ? prev.attempts + 1 : 1;
-            // Backoff: 10s, 30s, 90s, then 5min cap
-            const backoffMs = Math.min(300000, 10000 * Math.pow(3, attempts - 1));
+            const isRateLimit = err.message === 'rate_limited' || err.message === 'server_overloaded';
+            // Rate limits retry fast (5s) and don't count toward exponential backoff
+            const attempts = isRateLimit ? (prev && prev.attempts ? prev.attempts : 0) : ((prev && prev.attempts) ? prev.attempts + 1 : 1);
+            // Backoff: 5s (rate limit), else 10s/30s/90s/5min
+            const backoffMs = isRateLimit ? 5000 : Math.min(300000, 10000 * Math.pow(3, attempts - 1));
             tileCache.set(key, {
                 points: null,
                 loading: false,
@@ -2519,10 +2522,11 @@
     if ('geolocation' in navigator) {
         navigator.geolocation.watchPosition(onGPSPosition, onGPSError, {
             enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0,
+            timeout: 30000,   // 30s to respond to permission prompt
+            maximumAge: 5000,
         });
-        // If GPS hasn't reported in 5s, load fallback tiles so the map is visible
+        // If GPS hasn't reported in 12s, load fallback tiles so the map is visible
+        // (gives user time to respond to the browser permission prompt)
         setTimeout(() => {
             if (smoothLat === null) {
                 console.log('GPS timeout -- loading fallback tiles for Riga');
@@ -2532,7 +2536,7 @@
                 if (worldOriginLat === null) worldOriginFromFallback = true;
                 updateTileManager(FALLBACK_LAT, FALLBACK_LON);
             }
-        }, 5000);
+        }, 12000);
     } else {
         onGPSError(new Error('Geolocation not available'));
     }
