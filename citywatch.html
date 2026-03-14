@@ -606,10 +606,10 @@
             if (!entry.points) continue;
             const m = entry.points.material;
             if (usePerspective) {
-                m.size = 0.8;
+                m.size = 0.5;
                 m.sizeAttenuation = true;
             } else {
-                m.size = 0.6;
+                m.size = 0.4;
                 m.sizeAttenuation = false;
             }
             m.needsUpdate = true;
@@ -919,6 +919,16 @@
         return { targetPos, targetLookAt };
     }
 
+    // ─── Ground plane mesh (Fix 4B) -- added once at startup ─────────────────
+    {
+        const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+        const groundMat = new THREE.MeshBasicMaterial({ color: 0x050a0f, transparent: true, opacity: 0.9 });
+        const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+        groundMesh.rotation.x = -Math.PI / 2; // rotate to lie flat (XZ plane)
+        groundMesh.position.set(0, -0.5, 0);
+        scene.add(groundMesh);
+    }
+
     // ─── GPS dot + ring ───────────────────────────────────────────────────────
     // Single white point (no attenuation)
     const gpsDotGeo = new THREE.BufferGeometry();
@@ -978,6 +988,18 @@
         return tiles;
     }
 
+    // Returns a 5x5 grid of tile coords centered on the tile containing lat/lon.
+    function get5x5Tiles(lat, lon) {
+        const center = latLonToTile(lat, lon, ZOOM);
+        const tiles = [];
+        for (let oy = -2; oy <= 2; oy++) {
+            for (let ox = -2; ox <= 2; ox++) {
+                tiles.push({ x: center.x + ox, y: center.y + oy });
+            }
+        }
+        return tiles;
+    }
+
     async function loadTile(z, x, y) {
         const key = `${z}/${x}/${y}`;
         if (tileCache.has(key) || loadingSet.has(key)) return;
@@ -995,11 +1017,15 @@
             // ── Fetch OSM data from Overpass ────────────────────────────────
             const bbox = tileToBbox(z, x, y);
             const query = `[out:json][timeout:25];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
+            const buildAbort = new AbortController();
+            const buildTimeout = setTimeout(() => buildAbort.abort(), 30000); // 30s timeout for building fetch
             const overpassRes = await fetch(OVERPASS_URL, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`,
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                signal: buildAbort.signal,
             });
+            clearTimeout(buildTimeout);
             if (!overpassRes.ok) throw new Error(`Overpass HTTP ${overpassRes.status}`);
             const osmData = await overpassRes.json();
 
@@ -1018,16 +1044,29 @@
             const DENSITY = 2; // points per m² -- sparse hacker look
 
             const posArr = [], colArr = [];
+            const buildingFootprints = []; // collected for ground plane sampling
 
             const todMult = getTimeOfDayMultiplier();
+
+            // Point-in-polygon test (ray casting) -- hoisted so it's available for ground plane
+            function pointInPolygon(px, py, poly) {
+                let inside = false;
+                for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+                    const xi = poly[a].x, yi = poly[a].y, xj = poly[b].x, yj = poly[b].y;
+                    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+                }
+                return inside;
+            }
 
             function heightColor(t, worldY) {
                 const j = (Math.random() - 0.5) * 0.1;
                 let r, g, b;
-                // Brighter floor: start at 0.4 teal, go to full cyan
-                // Target color: #ccffff (r=0.8, g=1.0, b=1.0) at tips, darker at base
-                if (t < 0.5) { const s = t * 2; r = 0.3 + s * 0.5; g = 0.6 + s * 0.4; b = 0.6 + s * 0.4; }
-                else { const s = (t - 0.5) * 2; r = 0.8; g = 1.0; b = 1.0; }
+                // Ground/base: r=0.1, g=0.5, b=0.8 (dark blue-teal)
+                // Tips/top: r=0.2, g=0.8, b=1.0 (full #33ccff)
+                // Smooth linear gradient from base to tip
+                r = 0.1 + t * 0.1;
+                g = 0.5 + t * 0.3;
+                b = 0.8 + t * 0.2;
                 // Apply time-of-day shift
                 r = r * todMult[0];
                 g = g * todMult[1];
@@ -1089,15 +1128,8 @@
                 for (const p of footprint) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
                 const bboxArea = (maxX - minX) * (maxY - minY);
                 const roofCount = Math.max(4, Math.floor(bboxArea * DENSITY * 0.6));
-                // Point-in-polygon test (ray casting)
-                function pointInPolygon(px, py, poly) {
-                    let inside = false;
-                    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
-                        const xi = poly[a].x, yi = poly[a].y, xj = poly[b].x, yj = poly[b].y;
-                        if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
-                    }
-                    return inside;
-                }
+                // Collect footprint for ground plane exclusion
+                buildingFootprints.push(footprint);
                 let attempts = 0;
                 let roofPlaced = 0;
                 while (roofPlaced < roofCount && attempts < roofCount * 4) {
@@ -1167,24 +1199,59 @@
                 }
             }
 
+            // ── Ground plane point grid (Fix 4A) ─────────────────────────────
+            // Add a uniform grid of ground points covering the tile bounding box,
+            // skipping points inside building footprints.
+            {
+                const GROUND_Y = -0.2;
+                const GRID_SPACING = 8; // meters
+                // Tile bounding box in local coords (relative to tileWorldOffset)
+                const latSpanM = (bbox.north - bbox.south) * METERS_PER_DEG_LAT;
+                const lonSpanM = (bbox.east - bbox.west) * METERS_PER_DEG_LON;
+                const gridMinX = -lonSpanM / 2;
+                const gridMaxX =  lonSpanM / 2;
+                const gridMinY = -latSpanM / 2;
+                const gridMaxY =  latSpanM / 2;
+
+                for (let gx = gridMinX; gx <= gridMaxX; gx += GRID_SPACING) {
+                    for (let gy = gridMinY; gy <= gridMaxY; gy += GRID_SPACING) {
+                        // Check against all building footprints
+                        let insideBuilding = false;
+                        for (const fp of buildingFootprints) {
+                            if (pointInPolygon(gx, gy, fp)) { insideBuilding = true; break; }
+                        }
+                        if (!insideBuilding) {
+                            posArr.push(tileWorldOffset.x + gx, GROUND_Y, tileWorldOffset.z - gy);
+                            colArr.push(0.08, 0.12, 0.15);
+                        }
+                    }
+                }
+            }
+
             // ── Fetch roads for this tile and append to posArr/colArr ────────
             try {
+                const roadAbort = new AbortController();
+                const roadTimeout = setTimeout(() => roadAbort.abort(), 5000);
                 const roadQuery = `[out:json][timeout:20];(way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
                 const roadRes = await fetch(OVERPASS_URL, {
                     method: 'POST',
                     body: `data=${encodeURIComponent(roadQuery)}`,
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    signal: roadAbort.signal,
                 });
+                clearTimeout(roadTimeout);
                 if (roadRes.ok) {
                     const roadData = await roadRes.json();
+                    const roadWays = roadData.elements.filter(e => e.type === 'way' && e.tags && e.tags.highway);
+                    console.log(`[citywatch] tile ${key}: road fetch got ${roadData.elements.length} elements, ${roadWays.length} road ways`);
+
                     // Build node lookup for road data
                     const roadNodes = {};
                     for (const el of roadData.elements) {
                         if (el.type === 'node') roadNodes[el.id] = { lat: el.lat, lon: el.lon };
                     }
 
-                    for (const el of roadData.elements) {
-                        if (el.type !== 'way' || !el.tags || !el.tags.highway) continue;
+                    for (const el of roadWays) {
                         const hwType = el.tags.highway;
                         const nodeIds = el.nodes;
                         if (!nodeIds || nodeIds.length < 2) continue;
@@ -1201,25 +1268,26 @@
                         if (roadPts.length < 2) continue;
 
                         // Determine color and strip offsets by highway type
+                        // Brighter base colors so roads are visible after ToD and LOD multipliers
                         let rc, gc, bc;
                         let strips;
                         if (hwType === 'primary') {
-                            rc = 0.55; gc = 0.55; bc = 0.6;
+                            rc = 0.70; gc = 0.70; bc = 0.75;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'secondary') {
-                            rc = 0.4; gc = 0.4; bc = 0.45;
+                            rc = 0.55; gc = 0.55; bc = 0.60;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'tertiary') {
-                            rc = 0.4; gc = 0.4; bc = 0.45;
+                            rc = 0.50; gc = 0.50; bc = 0.55;
                             strips = [-2, 2];
                         } else if (hwType === 'residential') {
-                            rc = 0.3; gc = 0.3; bc = 0.35;
+                            rc = 0.45; gc = 0.45; bc = 0.50;
                             strips = [-2, 2];
                         } else if (hwType === 'service' || hwType === 'pedestrian') {
-                            rc = 0.3; gc = 0.3; bc = 0.35;
+                            rc = 0.40; gc = 0.40; bc = 0.45;
                             strips = [0];
                         } else { // footway, path
-                            rc = 0.2; gc = 0.35; bc = 0.35;
+                            rc = 0.35; gc = 0.45; bc = 0.45;
                             strips = [0];
                         }
 
@@ -1247,7 +1315,7 @@
                                 for (const offset of strips) {
                                     const finalX = basePx + perpX * offset;
                                     const finalY = basePy + perpY * offset;
-                                    posArr.push(tileWorldOffset.x + finalX, 0.05, tileWorldOffset.z - finalY);
+                                    posArr.push(tileWorldOffset.x + finalX, -0.1, tileWorldOffset.z - finalY);
                                     colArr.push(rc, gc, bc);
                                 }
                             }
@@ -1260,7 +1328,7 @@
             }
 
             const actualCount = posArr.length / 3;
-            if (actualCount === 0) throw new Error('No buildings in tile');
+            if (actualCount === 0) throw new Error('No data in tile');
 
             const positions = new Float32Array(posArr);
             const colors = new Float32Array(colArr);
@@ -1277,7 +1345,7 @@
 
             const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
-                size: isPerspectiveMode ? 0.8 : 0.6,
+                size: isPerspectiveMode ? 0.5 : 0.4,
                 sizeAttenuation: isPerspectiveMode,
                 vertexColors: true,
             });
@@ -1312,7 +1380,14 @@
         } catch (err) {
             console.error(`Tile ${key} failed:`, err.message);
             const isOffline = err.message.includes('Failed to fetch') || err.message.includes('NetworkError');
-            tileCache.set(key, { points: null, loading: false, error: true, offline: isOffline, msg: err.message });
+            tileCache.set(key, {
+                points: null,
+                loading: false,
+                error: true,
+                offline: isOffline,
+                msg: err.message,
+                retryAt: Date.now() + 15000, // retry after 15s
+            });
             loadingSet.delete(key);
             updateTileHUD();
         }
@@ -1329,9 +1404,10 @@
         tileCache.delete(key);
     }
 
-    // Called whenever GPS position updates -- manages the 2x2 tile grid
+    // Called whenever GPS position updates -- manages the tile grid
+    // Surveillance OFF: 2x2 grid (4 tiles); Surveillance ON: 5x5 grid (25 tiles)
     function updateTileManager(lat, lon) {
-        const desired = get2x2Tiles(lat, lon);
+        const desired = surveillanceOn ? get5x5Tiles(lat, lon) : get2x2Tiles(lat, lon);
         const desiredKeys = new Set(desired.map(t => `${ZOOM}/${t.x}/${t.y}`));
 
         // Evict tiles no longer needed (not in desired set, not loading)
@@ -1343,9 +1419,17 @@
         // Also evict from loadingSet if no longer needed (they'll finish but won't be added)
         // (we just let them finish and then they'll be evicted on next update)
 
-        // Load new tiles
+        // Load new tiles -- with retry logic (Fix 6)
         for (const t of desired) {
             const key = `${ZOOM}/${t.x}/${t.y}`;
+            // Check for retriable error entries
+            if (tileCache.has(key)) {
+                const entry = tileCache.get(key);
+                if (entry.error && Date.now() > entry.retryAt) {
+                    // Retry: clear the error entry and reload
+                    disposeTile(key);
+                }
+            }
             if (!tileCache.has(key) && !loadingSet.has(key)) {
                 loadTile(ZOOM, t.x, t.y);
             }
@@ -1706,6 +1790,10 @@
                 // Re-apply focus mode to get correct dimming back
                 applyFocusModeAll();
             }
+        }
+        // Switch tile grid size based on new surveillance state
+        if (smoothLat !== null) {
+            updateTileManager(smoothLat, smoothLon);
         }
     });
 
@@ -2142,8 +2230,9 @@
         const loading = loadingSet.size;
         const errors = [...tileCache.values()].filter(e => e.error).length;
         const offline = [...tileCache.values()].some(e => e.offline);
+        const tileTarget = surveillanceOn ? 25 : 4;
 
-        let html = `tiles     <span>${loaded}/4</span>`;
+        let html = `tiles     <span>${loaded}/${tileTarget}</span>`;
         if (loading > 0) {
             const loadingKeys = [...loadingSet];
             for (const k of loadingKeys) {
