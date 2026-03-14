@@ -163,11 +163,15 @@
             transform: translateX(-50%);
             z-index: 25;
             display: flex;
-            align-items: center;
+            flex-direction: column;
             gap: 0;
             background: rgba(0,0,0,0.82);
             border: 1px solid rgba(255,255,255,0.22);
             pointer-events: all;
+        }
+        #cam-btn-row {
+            display: flex;
+            align-items: center;
         }
         .cam-mode-btn {
             font-family: 'DotGothic16', monospace;
@@ -185,6 +189,31 @@
         .cam-mode-btn:last-child { border-right: none; }
         .cam-mode-btn:hover { color: rgba(255,255,255,0.85); }
         .cam-mode-btn.active { color: #00ffff; }
+
+        /* ── Anchor sub-buttons ── */
+        #anchor-sub-row {
+            display: none;
+            justify-content: center;
+            gap: 0;
+            border-top: 1px solid rgba(255,255,255,0.15);
+        }
+        .anchor-sub-btn {
+            font-family: 'DotGothic16', monospace;
+            font-size: 9px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: none;
+            border-right: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.4);
+            padding: 2px 8px;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        .anchor-sub-btn:last-child { border-right: none; }
+        .anchor-sub-btn:hover { color: rgba(255,255,255,0.85); }
+        .anchor-sub-btn.active { color: #00ffff; }
+        .anchor-sub-btn:disabled { color: rgba(255,255,255,0.2); cursor: default; }
 
         /* ── Minimap ── */
         #minimap-container {
@@ -248,8 +277,15 @@
 
     <!-- Camera mode switcher -->
     <div id="cam-mode-panel">
-        <button class="cam-mode-btn active" id="btn-birdseye">bird's eye</button>
-        <button class="cam-mode-btn" id="btn-followme">follow me</button>
+        <div id="cam-btn-row">
+            <button class="cam-mode-btn active" id="btn-birdseye">bird's eye</button>
+            <button class="cam-mode-btn" id="btn-followme">follow me</button>
+            <button class="cam-mode-btn" id="btn-anchor">anchor</button>
+        </div>
+        <div id="anchor-sub-row">
+            <button class="anchor-sub-btn active" id="btn-anchor-me">me</button>
+            <button class="anchor-sub-btn" id="btn-anchor-dest" disabled>dest</button>
+        </div>
     </div>
 
     <!-- Minimap (bottom-right, follow-me mode only) -->
@@ -269,6 +305,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
@@ -397,6 +434,24 @@
     followCam.position.set(0, 25, 40);
     followCam.lookAt(0, 0, -20);
 
+    // ─── Anchor (perspective) camera + OrbitControls ──────────────────────────
+    const anchorCam = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 2000);
+    anchorCam.position.set(0, 80 * Math.sin(Math.PI / 4), 80 * Math.cos(Math.PI / 4));
+    anchorCam.lookAt(0, 0, 0);
+
+    const anchorControls = new THREE.OrbitControls(anchorCam, renderer.domElement);
+    anchorControls.enablePan = false;
+    anchorControls.enableDamping = true;
+    anchorControls.dampingFactor = 0.08;
+    anchorControls.minDistance = 20;
+    anchorControls.maxDistance = 500;
+    anchorControls.enabled = false; // only enabled in anchor mode
+
+    // Anchor mode state
+    let anchorSubMode = 'me'; // 'me' or 'dest'
+    let anchorTargetCurrent = new THREE.Vector3(0, 0, 0); // lerped target for anchorControls
+    let anchorEntryTransition = null; // {startPos, startTarget, endPos, endTarget, elapsed} for entry anim
+
     // Smooth follow-me camera state (lerp targets)
     const followCamPos = new THREE.Vector3();   // current lerped position
     const followCamTarget = new THREE.Vector3(); // current lerped look-at point
@@ -414,7 +469,7 @@
     minimapCamera.up.set(0, 0, -1); // north up
 
     // ─── Camera mode state ────────────────────────────────────────────────────
-    // 'birdseye' | 'followme'
+    // 'birdseye' | 'followme' | 'anchor'
     let cameraMode = 'birdseye';
 
     // Transition state: animate from bird's eye to follow-me over 1.5s
@@ -425,6 +480,26 @@
     const minimapContainer = document.getElementById('minimap-container');
     const btnBirdseye = document.getElementById('btn-birdseye');
     const btnFollowme = document.getElementById('btn-followme');
+    const btnAnchor = document.getElementById('btn-anchor');
+    const anchorSubRow = document.getElementById('anchor-sub-row');
+    const btnAnchorMe = document.getElementById('btn-anchor-me');
+    const btnAnchorDest = document.getElementById('btn-anchor-dest');
+
+    // Helper to update point material size/attenuation on all cached tiles
+    function updateTileMaterials(usePerspective) {
+        for (const entry of tileCache.values()) {
+            if (!entry.points) continue;
+            const m = entry.points.material;
+            if (usePerspective) {
+                m.size = 1.5;
+                m.sizeAttenuation = true;
+            } else {
+                m.size = 1.2;
+                m.sizeAttenuation = false;
+            }
+            m.needsUpdate = true;
+        }
+    }
 
     function setCameraMode(mode) {
         if (mode === cameraMode) return;
@@ -433,13 +508,22 @@
 
         btnBirdseye.classList.toggle('active', mode === 'birdseye');
         btnFollowme.classList.toggle('active', mode === 'followme');
+        btnAnchor.classList.toggle('active', mode === 'anchor');
+
+        // Anchor sub-row visibility
+        anchorSubRow.style.display = mode === 'anchor' ? 'flex' : 'none';
+
+        // Disable orbit controls initially; re-enable after entry animation completes
+        anchorControls.enabled = false;
 
         if (mode === 'followme') {
             minimapContainer.style.display = 'block';
             document.getElementById('hint').textContent = 'follow-me mode';
 
+            // Disable anchor controls (already done above)
+            updateTileMaterials(true);
+
             // Kick off transition from current ortho camera position
-            // Convert ortho camera's world XZ to a 3D start position
             const startPos = new THREE.Vector3(camTarget.x, 25, camTarget.z + 40);
             const startTarget = new THREE.Vector3(camTarget.x, 0, camTarget.z - 20);
 
@@ -447,7 +531,6 @@
             const { targetPos, targetLookAt } = computeFollowCamTarget();
 
             if (!followCamInitialized) {
-                // No GPS movement history yet -- snap to start
                 followCamPos.copy(startPos);
                 followCamTarget.copy(startTarget);
                 followCamInitialized = true;
@@ -461,20 +544,101 @@
                 elapsed: 0,
             };
 
-            // Update render pass to use followCam
             composer.passes[0].camera = followCam;
+
+        } else if (mode === 'anchor') {
+            minimapContainer.style.display = 'block';
+            document.getElementById('hint').textContent = 'anchor mode // drag to orbit';
+            updateTileMaterials(true);
+
+            // Determine anchor target position
+            let anchorWorldPos;
+            if (anchorSubMode === 'dest' && routeState.active && routeState.destLat !== null && worldOriginLat !== null) {
+                const dw = latLonToWorld(routeState.destLat, routeState.destLon);
+                anchorWorldPos = new THREE.Vector3(dw.x, 0, dw.z);
+            } else {
+                // Default to GPS position
+                if (smoothLat !== null && worldOriginLat !== null) {
+                    const wp = latLonToWorld(smoothLat, smoothLon);
+                    anchorWorldPos = new THREE.Vector3(wp.x, 0, wp.z);
+                } else {
+                    anchorWorldPos = new THREE.Vector3(0, 0, 0);
+                }
+            }
+
+            anchorTargetCurrent.copy(anchorWorldPos);
+            anchorControls.target.copy(anchorWorldPos);
+
+            // Position camera 80m from target at 45° elevation
+            const dist = 80;
+            const elevAngle = Math.PI / 4; // 45°
+            const azimuth = 0; // facing south initially
+            const startCamPos = prev === 'birdseye'
+                ? new THREE.Vector3(camTarget.x, 500, camTarget.z) // from ortho cam pos
+                : anchorCam.position.clone();
+
+            const endCamPos = new THREE.Vector3(
+                anchorWorldPos.x + dist * Math.cos(elevAngle) * Math.sin(azimuth),
+                dist * Math.sin(elevAngle),
+                anchorWorldPos.z + dist * Math.cos(elevAngle) * Math.cos(azimuth)
+            );
+
+            anchorCam.position.copy(startCamPos);
+            anchorCam.lookAt(anchorWorldPos);
+
+            anchorEntryTransition = {
+                startPos: startCamPos.clone(),
+                startTarget: anchorWorldPos.clone(),
+                endPos: endCamPos,
+                endTarget: anchorWorldPos.clone(),
+                elapsed: 0,
+            };
+
+            composer.passes[0].camera = anchorCam;
+
         } else {
             // Back to bird's eye
             minimapContainer.style.display = 'none';
             document.getElementById('hint').textContent = "pan // drag \u00a0\u00a0 zoom // scroll";
             camTransition = null;
+            anchorEntryTransition = null;
+            updateTileMaterials(false);
             composer.passes[0].camera = camera;
             followGPS = true;
         }
     }
 
+    function setAnchorSubMode(subMode) {
+        anchorSubMode = subMode;
+        btnAnchorMe.classList.toggle('active', subMode === 'me');
+        btnAnchorDest.classList.toggle('active', subMode === 'dest');
+
+        if (cameraMode !== 'anchor') return;
+
+        // Reposition anchor target
+        let anchorWorldPos;
+        if (subMode === 'dest' && routeState.active && routeState.destLat !== null && worldOriginLat !== null) {
+            const dw = latLonToWorld(routeState.destLat, routeState.destLon);
+            anchorWorldPos = new THREE.Vector3(dw.x, 0, dw.z);
+        } else {
+            if (smoothLat !== null && worldOriginLat !== null) {
+                const wp = latLonToWorld(smoothLat, smoothLon);
+                anchorWorldPos = new THREE.Vector3(wp.x, 0, wp.z);
+            } else {
+                anchorWorldPos = new THREE.Vector3(0, 0, 0);
+            }
+        }
+        anchorTargetCurrent.copy(anchorWorldPos);
+        anchorControls.target.copy(anchorWorldPos);
+    }
+
     btnBirdseye.addEventListener('click', () => setCameraMode('birdseye'));
     btnFollowme.addEventListener('click', () => setCameraMode('followme'));
+    btnAnchor.addEventListener('click', () => setCameraMode('anchor'));
+    btnAnchorMe.addEventListener('click', () => setAnchorSubMode('me'));
+    btnAnchorDest.addEventListener('click', () => {
+        if (!btnAnchorDest.disabled) setAnchorSubMode('dest');
+    });
 
     // ─── Resize handler ───────────────────────────────────────────────────────
     window.addEventListener('resize', () => {
@@ -488,6 +652,8 @@
         camera.updateProjectionMatrix();
         followCam.aspect = w / h;
         followCam.updateProjectionMatrix();
+        anchorCam.aspect = w / h;
+        anchorCam.updateProjectionMatrix();
         renderer.setSize(w, h);
         composer.setSize(w, h);
     });
@@ -734,7 +900,7 @@
             const METERS_PER_DEG_LAT = 111320;
             const METERS_PER_DEG_LON = Math.cos(tileC.lat * Math.PI / 180) * 111320;
             const MAX_HEIGHT = 40;
-            const DENSITY = 3; // points per m²
+            const DENSITY = 6; // points per m²
 
             const posArr = [], colArr = [];
 
@@ -829,7 +995,138 @@
                         posArr.push(wx + wx2, wallH, wz - wy2);
                         colArr.push(r, g, b);
                     }
+
+                    // Edge emphasis: wall top strip (y = h-0.3 to h), 3x density, brighter
+                    const topStripCount = Math.max(2, Math.floor(edgeLen * DENSITY * 1.2));
+                    for (let j = 0; j < topStripCount; j++) {
+                        const t = Math.random();
+                        const wallH = (h - 0.3) + Math.random() * 0.3;
+                        const wx2 = p0.x + t * (p1.x - p0.x);
+                        const wy2 = p0.y + t * (p1.y - p0.y);
+                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
+                        posArr.push(wx + wx2, wallH, wz - wy2);
+                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
+                    }
+
+                    // Edge emphasis: wall base strip (y = 0 to 0.5), 2x density, dimmer
+                    const baseStripCount = Math.max(2, Math.floor(edgeLen * DENSITY * 0.8));
+                    for (let j = 0; j < baseStripCount; j++) {
+                        const t = Math.random();
+                        const wallH = Math.random() * 0.5;
+                        const wx2 = p0.x + t * (p1.x - p0.x);
+                        const wy2 = p0.y + t * (p1.y - p0.y);
+                        const [r, g, b] = heightColor(0, wallH);
+                        posArr.push(wx + wx2, wallH, wz - wy2);
+                        colArr.push(r * 0.7, g * 0.7, b * 0.7);
+                    }
                 }
+
+                // Edge emphasis: roof perimeter at height h, 3x density, brighter
+                for (let i = 0; i < footprint.length - 1; i++) {
+                    const p0 = footprint[i], p1 = footprint[i + 1];
+                    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                    const perimCount = Math.max(3, Math.floor(edgeLen * DENSITY * 1.5));
+                    for (let j = 0; j < perimCount; j++) {
+                        const t = j / (perimCount - 1);
+                        const px = p0.x + t * (p1.x - p0.x);
+                        const py = p0.y + t * (p1.y - p0.y);
+                        const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
+                        posArr.push(wx + px, h, wz - py);
+                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
+                    }
+                }
+            }
+
+            // ── Fetch roads for this tile and append to posArr/colArr ────────
+            try {
+                const roadQuery = `[out:json][timeout:20];(way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
+                const roadRes = await fetch(OVERPASS_URL, {
+                    method: 'POST',
+                    body: `data=${encodeURIComponent(roadQuery)}`,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                });
+                if (roadRes.ok) {
+                    const roadData = await roadRes.json();
+                    // Build node lookup for road data
+                    const roadNodes = {};
+                    for (const el of roadData.elements) {
+                        if (el.type === 'node') roadNodes[el.id] = { lat: el.lat, lon: el.lon };
+                    }
+
+                    for (const el of roadData.elements) {
+                        if (el.type !== 'way' || !el.tags || !el.tags.highway) continue;
+                        const hwType = el.tags.highway;
+                        const nodeIds = el.nodes;
+                        if (!nodeIds || nodeIds.length < 2) continue;
+
+                        // Convert node coords to local XY (same reference as buildings)
+                        const roadPts = [];
+                        for (const nid of nodeIds) {
+                            const nd = roadNodes[nid];
+                            if (!nd) continue;
+                            const rx = (nd.lon - tileC.lon) * METERS_PER_DEG_LON;
+                            const ry = (nd.lat - tileC.lat) * METERS_PER_DEG_LAT;
+                            roadPts.push({ x: rx, y: ry });
+                        }
+                        if (roadPts.length < 2) continue;
+
+                        // Determine color and strip offsets by highway type
+                        let rc, gc, bc;
+                        let strips;
+                        if (hwType === 'primary') {
+                            rc = 0.55; gc = 0.55; bc = 0.6;
+                            strips = [-3, 0, 3];
+                        } else if (hwType === 'secondary') {
+                            rc = 0.4; gc = 0.4; bc = 0.45;
+                            strips = [-3, 0, 3];
+                        } else if (hwType === 'tertiary') {
+                            rc = 0.4; gc = 0.4; bc = 0.45;
+                            strips = [-2, 2];
+                        } else if (hwType === 'residential') {
+                            rc = 0.3; gc = 0.3; bc = 0.35;
+                            strips = [-2, 2];
+                        } else if (hwType === 'service' || hwType === 'pedestrian') {
+                            rc = 0.3; gc = 0.3; bc = 0.35;
+                            strips = [0];
+                        } else { // footway, path
+                            rc = 0.2; gc = 0.35; bc = 0.35;
+                            strips = [0];
+                        }
+
+                        // Apply time-of-day to road colors
+                        rc *= todMult[0]; gc *= todMult[1]; bc *= todMult[2];
+
+                        // Sample points every 1.5m along each segment
+                        for (let si = 0; si < roadPts.length - 1; si++) {
+                            const rp0 = roadPts[si], rp1 = roadPts[si + 1];
+                            const segDx = rp1.x - rp0.x;
+                            const segDy = rp1.y - rp0.y;
+                            const segLen = Math.hypot(segDx, segDy);
+                            if (segLen < 0.01) continue;
+                            const segUx = segDx / segLen; // unit along segment
+                            const segUy = segDy / segLen;
+                            // Perpendicular unit vector (rotate 90°)
+                            const perpX = -segUy;
+                            const perpY = segUx;
+
+                            const numSamples = Math.max(2, Math.ceil(segLen / 1.5));
+                            for (let k = 0; k <= numSamples; k++) {
+                                const t = k / numSamples;
+                                const basePx = rp0.x + t * segDx;
+                                const basePy = rp0.y + t * segDy;
+                                for (const offset of strips) {
+                                    const finalX = basePx + perpX * offset;
+                                    const finalY = basePy + perpY * offset;
+                                    posArr.push(tileWorldOffset.x + finalX, 0.05, tileWorldOffset.z - finalY);
+                                    colArr.push(rc, gc, bc);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (roadErr) {
+                // Road fetch failure is non-fatal -- continue with buildings only
+                console.warn(`Road fetch for tile ${key} failed:`, roadErr.message);
             }
 
             const actualCount = posArr.length / 3;
@@ -848,9 +1145,10 @@
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
 
+            const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
-                size: 2.5,          // fixed pixel size for orthographic view
-                sizeAttenuation: false, // orthographic camera -- no distance scaling
+                size: isPerspectiveMode ? 1.5 : 1.2,
+                sizeAttenuation: isPerspectiveMode,
                 vertexColors: true,
             });
 
@@ -1459,6 +1757,13 @@
         turnPanel.classList.remove('pulse');
         routeClearBtn.style.display = 'none';
         routeStatus.textContent = '';
+        // Disable anchor dest sub-button when route is cleared
+        btnAnchorDest.disabled = true;
+        btnAnchorDest.classList.remove('active');
+        if (anchorSubMode === 'dest') {
+            anchorSubMode = 'me';
+            btnAnchorMe.classList.add('active');
+        }
         updateCoordsHUD();
         // Restore full brightness on all tiles
         clearFocusModeAll();
@@ -1605,6 +1910,8 @@
 
             routeClearBtn.style.display = 'inline-block';
             routeStatus.textContent = '';
+            // Enable anchor dest sub-button now that a route is active
+            btnAnchorDest.disabled = false;
             updateCoordsHUD();
 
         } catch (err) {
@@ -1752,7 +2059,7 @@
         if (cameraMode === 'birdseye') {
             // Bird's eye: standard ortho camera update
             updateCameraPosition();
-        } else {
+        } else if (cameraMode === 'followme') {
             // Follow-me: update perspective camera with lerp
             const { targetPos, targetLookAt } = computeFollowCamTarget();
 
@@ -1779,6 +2086,33 @@
             followCam.position.copy(followCamPos);
             followCam.lookAt(followCamTarget);
             followCamInitialized = true;
+        } else if (cameraMode === 'anchor') {
+            // Anchor mode: OrbitControls around a fixed/GPS target
+            if (anchorEntryTransition !== null) {
+                // Play entry animation (smoothstep over 1.5s), controls disabled during this
+                anchorEntryTransition.elapsed += delta;
+                const rawT = Math.min(anchorEntryTransition.elapsed / CAM_TRANSITION_DURATION, 1.0);
+                const tt = rawT * rawT * (3 - 2 * rawT);
+                anchorCam.position.lerpVectors(anchorEntryTransition.startPos, anchorEntryTransition.endPos, tt);
+                const tgt = new THREE.Vector3().lerpVectors(anchorEntryTransition.startTarget, anchorEntryTransition.endTarget, tt);
+                anchorControls.target.copy(tgt);
+                anchorCam.lookAt(tgt);
+                if (rawT >= 1.0) {
+                    anchorEntryTransition = null;
+                    anchorControls.enabled = true;
+                    // Sync OrbitControls internal state with current camera position
+                    anchorControls.update();
+                }
+            } else {
+                if (anchorSubMode === 'me' && smoothLat !== null && worldOriginLat !== null) {
+                    // Lerp the anchor target toward current GPS position
+                    const wp = latLonToWorld(smoothLat, smoothLon);
+                    const desiredTarget = new THREE.Vector3(wp.x, 0, wp.z);
+                    anchorTargetCurrent.lerp(desiredTarget, 0.03);
+                    anchorControls.target.copy(anchorTargetCurrent);
+                }
+                anchorControls.update();
+            }
         }
 
         // ── Main render ────────────────────────────────────────────────────────
@@ -1787,8 +2121,8 @@
         renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
         composer.render();
 
-        // ── Minimap render (follow-me mode only, after composer) ───────────────
-        if (cameraMode === 'followme' && smoothLat !== null && worldOriginLat !== null) {
+        // ── Minimap render (follow-me and anchor mode, after composer) ─────────
+        if ((cameraMode === 'followme' || cameraMode === 'anchor') && smoothLat !== null && worldOriginLat !== null) {
             const wp = latLonToWorld(smoothLat, smoothLon);
 
             // Position minimap camera directly above GPS position
