@@ -1056,17 +1056,24 @@
             gGeo.setAttribute('position', new THREE.Float32BufferAttribute(gPositions, 3));
             gGeo.setAttribute('color', new THREE.Float32BufferAttribute(gColors, 3));
             // Shader material: wave via sin(x*freq + t) * sin(z*freq + t*0.7)
-            const groundUniforms = { uTime: { value: 0 } };
+            // uCamPos drives local reverberation -- closer to camera = more displacement
+            const groundUniforms = { uTime: { value: 0 }, uCamPos: { value: new THREE.Vector3() } };
             const gMat = new THREE.ShaderMaterial({
                 uniforms: groundUniforms,
                 vertexShader: `
                     uniform float uTime;
+                    uniform vec3 uCamPos;
                     attribute vec3 color;
                     varying vec3 vColor;
                     void main() {
                         vColor = color;
-                        float wave = sin(position.x * 0.06 + uTime * 0.5) * sin(position.z * 0.045 + uTime * 0.35) * 2.2;
-                        vec3 pos = vec3(position.x, -0.5 + wave, position.z);
+                        // Base wave -- visible from any height
+                        float wave = sin(position.x * 0.06 + uTime * 0.5) * sin(position.z * 0.045 + uTime * 0.35) * 3.6;
+                        // Local reverberation: extra ripple within 80m of camera ground projection
+                        float dist = length(position.xz - uCamPos.xz);
+                        float localMask = smoothstep(80.0, 10.0, dist); // 1.0 near camera, 0 far
+                        float localWave = sin(dist * 0.35 - uTime * 3.0) * localMask * 3.0;
+                        vec3 pos = vec3(position.x, -0.5 + wave + localWave, position.z);
                         gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
                         gl_PointSize = 2.0;
                     }
@@ -1361,6 +1368,21 @@
                     roofPlaced++;
                 }
 
+                // Roof perimeter edge strip -- brighter points tracing the outline
+                for (let i = 0; i < footprint.length - 1; i++) {
+                    const p0 = footprint[i], p1 = footprint[i + 1];
+                    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                    const perimCount = Math.max(2, Math.floor(edgeLen * 1.2));
+                    for (let j = 0; j < perimCount; j++) {
+                        const t = j / perimCount;
+                        const ex = p0.x + t * (p1.x - p0.x);
+                        const ey = p0.y + t * (p1.y - p0.y);
+                        const [r, g, b] = heightColor(1.0, h);
+                        posArr.push(wx + ex, h, wz - ey);
+                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
+                    }
+                }
+
                 // Walls: sample along each edge
                 // Stream particles: ~4% of interior wall points are flagged as streams
                 // They will be animated each frame (Y rises from 0 to h, wraps)
@@ -1376,8 +1398,11 @@
                         const wy2 = p0.y + t * (p1.y - p0.y);
                         const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
                         const idx = posArr.length / 3;
+                        // Base strip: bottom 8% of wall height gets brightened
+                        const isBase = wallH < h * 0.08;
+                        const em = isBase ? 1.35 : 1.0;
                         posArr.push(wx + wx2, wallH, wz - wy2);
-                        colArr.push(r, g, b);
+                        colArr.push(Math.min(1, r * em), Math.min(1, g * em), Math.min(1, b * em));
                         // ~4% of wall points become stream particles
                         if (Math.random() < 0.04) {
                             streamIndices.push({ idx, yBase: 0, yTop: h, speed: 0.03 + Math.random() * 0.09 });
@@ -1392,7 +1417,7 @@
             // skipping points inside building footprints.
             {
                 const GROUND_Y = -0.2;
-                const GRID_SPACING = 20; // meters
+                const GRID_SPACING = 12; // meters -- denser ground dot field
                 // Tile bounding box in local coords (relative to tileWorldOffset)
                 const latSpanM = (bbox.north - bbox.south) * METERS_PER_DEG_LAT;
                 const lonSpanM = (bbox.east - bbox.west) * METERS_PER_DEG_LON;
@@ -1514,7 +1539,7 @@
 
             const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
-                size: isPerspectiveMode ? 0.5 : 0.4,
+                size: isPerspectiveMode ? 0.32 : 0.28,
                 sizeAttenuation: isPerspectiveMode,
                 vertexColors: true,
             });
@@ -3218,7 +3243,11 @@
         if (regenActive) updateRegenAnimation();
 
         // ── Ground wave (shader time uniform) ─────────────────────────────────
-        if (window._groundUniforms) window._groundUniforms.uTime.value = t;
+        if (window._groundUniforms) {
+            window._groundUniforms.uTime.value = t;
+            const activeCam = cameraMode === 'anchor' ? anchorCam : camera;
+            window._groundUniforms.uCamPos.value.copy(activeCam.position);
+        }
 
         // ── Stream particles (city.html style -- move inside building buffers) ──
         updateStreamParticles();
