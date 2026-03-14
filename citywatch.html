@@ -36,6 +36,7 @@
             color: rgba(255,255,255,0.35);
             background: rgba(0,0,0,0.5);
             border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px;
             padding: 6px 14px;
             z-index: 20;
             transition: color 0.15s, border-color 0.15s;
@@ -47,7 +48,7 @@
         }
         #hint {
             position: fixed;
-            bottom: 66px;
+            bottom: 70px;
             width: 100%;
             text-align: center;
             color: rgba(255,255,255,0.25);
@@ -76,7 +77,7 @@
         .hud-panel span { color: #00ffff; }
         .hud-panel .warn { color: #ffaa00; }
         .hud-panel .err { color: #ff2244; }
-        #coords-panel { top: 14px; left: 58px; } /* offset from 44px mode strip */
+        #coords-panel { top: 14px; left: 58px; }
         #tile-panel { top: 14px; right: 14px; }
         #gps-denied {
             position: fixed;
@@ -97,8 +98,9 @@
         /* ── Routing input panel ── */
         #route-panel {
             position: fixed;
-            bottom: 14px;
-            right: 14px;
+            bottom: 36px;
+            left: 50%;
+            transform: translateX(-50%);
             z-index: 25;
             display: flex;
             align-items: center;
@@ -153,8 +155,9 @@
             text-align: right;
         }
 
+        /* ── Camera mode switcher ── */
         /* ── Left mode strip ── */
-        #mode-strip {
+        #cam-mode-panel {
             position: fixed;
             left: 0;
             top: 50%;
@@ -164,19 +167,19 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 0;
-            background: rgba(0,10,20,0.7);
-            border-right: 1px solid #33ccff33;
+            background: rgba(0,10,20,0.75);
+            border-right: 1px solid rgba(51,204,255,0.2);
             pointer-events: all;
-            padding: 8px 0;
+            padding: 6px 0;
         }
-        .mode-strip-btn {
+        .cam-mode-btn {
             font-family: 'DotGothic16', monospace;
-            font-size: 18px;
+            font-size: 20px;
             line-height: 1;
             background: transparent;
             border: none;
-            color: rgba(255,255,255,0.4);
+            border-bottom: 1px solid rgba(51,204,255,0.12);
+            color: rgba(255,255,255,0.35);
             width: 44px;
             height: 44px;
             display: flex;
@@ -184,21 +187,19 @@
             justify-content: center;
             cursor: pointer;
             transition: color 0.15s;
-            border-bottom: 1px solid #33ccff22;
         }
-        .mode-strip-btn:last-child { border-bottom: none; }
-        .mode-strip-btn:hover { color: rgba(255,255,255,0.85); }
-        .mode-strip-btn.active { color: #33ccff; }
+        .cam-mode-btn:last-child { border-bottom: none; }
+        .cam-mode-btn:hover { color: rgba(255,255,255,0.8); }
+        .cam-mode-btn.active { color: #33ccff; }
 
-        /* ── Anchor sub-panel (inside mode-strip) ── */
-        #anchor-sub-panel {
+        /* ── Anchor sub-buttons (inside mode strip, below anchor icon) ── */
+        #anchor-sub-row {
             display: none;
             flex-direction: column;
             align-items: center;
             width: 100%;
-            border-top: 1px solid #33ccff22;
+            border-top: 1px solid rgba(51,204,255,0.12);
         }
-        #anchor-sub-panel.visible { display: flex; }
         .anchor-sub-btn {
             font-family: 'DotGothic16', monospace;
             font-size: 9px;
@@ -206,10 +207,10 @@
             text-transform: lowercase;
             background: transparent;
             border: none;
-            border-bottom: 1px solid #33ccff22;
+            border-bottom: 1px solid rgba(51,204,255,0.12);
             color: rgba(255,255,255,0.4);
             width: 44px;
-            height: 30px;
+            height: 28px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -219,12 +220,12 @@
         .anchor-sub-btn:last-child { border-bottom: none; }
         .anchor-sub-btn:hover { color: rgba(255,255,255,0.85); }
         .anchor-sub-btn.active { color: #33ccff; }
-        .anchor-sub-btn:disabled { color: rgba(255,255,255,0.2); cursor: default; }
+        .anchor-sub-btn:disabled { color: rgba(255,255,255,0.18); cursor: default; }
 
         /* ── Minimap ── */
         #minimap-container {
             position: fixed;
-            bottom: 66px; /* route panel ~52px + 14px gap */
+            bottom: 66px;
             right: 14px;
             width: 120px;
             height: 120px;
@@ -283,7 +284,7 @@
         /* ── Surveillance mode UI ── */
         #regen-btn {
             position: fixed;
-            bottom: 200px; /* above minimap: 66 + 120 + 14 */
+            bottom: 200px;
             right: 14px;
             z-index: 25;
             font-family: 'DotGothic16', monospace;
@@ -399,12 +400,12 @@
     <div id="tile-panel" class="hud-panel"></div>
     <div id="gps-denied">gps_denied // enable location</div>
 
-    <!-- Left mode strip: camera modes -->
-    <div id="mode-strip">
-        <button class="mode-strip-btn" id="btn-birdseye" title="bird's eye">&#8857;</button>
-        <button class="mode-strip-btn" id="btn-followme" title="follow me">&#9650;</button>
-        <button class="mode-strip-btn active" id="btn-anchor" title="anchor">&#8853;</button>
-        <div id="anchor-sub-panel" class="visible">
+    <!-- Camera mode strip (left side) -->
+    <div id="cam-mode-panel">
+        <button class="cam-mode-btn" id="btn-birdseye" title="bird's eye">&#8857;</button>
+        <button class="cam-mode-btn" id="btn-followme" title="follow me">&#9650;</button>
+        <button class="cam-mode-btn active" id="btn-anchor" title="anchor">&#8853;</button>
+        <div id="anchor-sub-row" style="display:flex;flex-direction:column;">
             <button class="anchor-sub-btn active" id="btn-anchor-me">me</button>
             <button class="anchor-sub-btn" id="btn-anchor-dest" disabled>dest</button>
             <button class="anchor-sub-btn" id="btn-anchor-plane" disabled>plane</button>
@@ -673,7 +674,7 @@
     const btnBirdseye = document.getElementById('btn-birdseye');
     const btnFollowme = document.getElementById('btn-followme');
     const btnAnchor = document.getElementById('btn-anchor');
-    const anchorSubRow = document.getElementById('anchor-sub-panel');
+    const anchorSubRow = document.getElementById('anchor-sub-row');
     const btnAnchorMe = document.getElementById('btn-anchor-me');
     const btnAnchorDest = document.getElementById('btn-anchor-dest');
     const btnAnchorPlane = document.getElementById('btn-anchor-plane');
@@ -722,7 +723,7 @@
         btnAnchor.classList.toggle('active', mode === 'anchor');
 
         // Anchor sub-row visibility
-        anchorSubRow.classList.toggle('visible', mode === 'anchor');
+        anchorSubRow.style.display = mode === 'anchor' ? 'flex' : 'none';
         updateAnchorPlaneButton();
 
         // Disable orbit controls initially; re-enable after entry animation completes
@@ -875,14 +876,6 @@
         anchorPlaneIdx = (anchorPlaneIdx + 1) % aircraftData.size;
         setAnchorSubMode('plane');
     });
-
-    // ─── Initialize anchor mode as default ───────────────────────────────────
-    // Set up camera and controls for anchor mode startup (no transition animation)
-    composer.passes[0].camera = anchorCam;
-    minimapContainer.style.display = 'block';
-    anchorControls.enabled = true;
-    updateTileMaterials(true);
-    document.getElementById('hint').textContent = 'anchor mode // drag to orbit';
 
     // ─── Resize handler ───────────────────────────────────────────────────────
     window.addEventListener('resize', () => {
@@ -1542,9 +1535,12 @@
             // Store original colors for focus mode and tile animation
             const origColors = new Float32Array(colArr);
             // Start with zero colors (tile fade-in animation)
+            const animColors = new Float32Array(colors.length);
+            // animColors starts at 0 -- animate toward origColors over 1s
+
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
 
             const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
             const mat = new THREE.PointsMaterial({
@@ -1572,10 +1568,9 @@
                     origY,            // original Y positions for regen animation
                     streamPoints: tileStreamPoints, // rising stream particles for this tile
                     streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
-                    loadStartTime: performance.now(), // for fade-in animation (used by tile load bubble-up)
+                    loadStartTime: performance.now(),
                     fadeComplete: false,
                     regenStartTime: performance.now(), // trigger bubble-up on tile load
-                    isTileLoad: true,
                     tileCenterX: tileWorldOffset.x,
                     tileCenterZ: tileWorldOffset.z,
                     tileRadius: 350,
@@ -1963,63 +1958,38 @@
             if (elapsed < 0) continue; // stagger delay not reached yet
 
             const posAttr = entry.points.geometry.getAttribute('position');
-            const colAttr = entry.points.geometry.getAttribute('color');
             const posArr = posAttr.array;
-            const colArr = colAttr.array;
             const count = entry.pointCount;
 
-            // Overall tile progress (for color fade)
-            const rawOverall = Math.min(elapsed / REGEN_DURATION, 1.0);
-            const t = 1 - Math.pow(1 - rawOverall, 3);
-
             if (elapsed >= REGEN_DURATION) {
-                // Animation done: restore exact original Y for all non-stream points
+                // Animation done -- restore exact original Y for all non-stream points
                 for (let i = 0; i < count; i++) {
                     if (entry.streamIndices && entry.streamIndices.has(i)) continue;
                     posArr[i * 3 + 1] = entry.origY[i];
                 }
-                // Restore full colors
-                if (entry.origColors) {
-                    for (let j = 0; j < colArr.length; j++) colArr[j] = entry.origColors[j];
-                    colAttr.needsUpdate = true;
-                }
                 posAttr.needsUpdate = true;
                 entry.regenStartTime = null;
-                entry.isTileLoad = false;
-                entry.fadeComplete = true;
+                if (!entry.fadeComplete) entry.fadeComplete = true; // tile-load bubble-up done
                 continue;
             }
 
-            const isLoad = !!entry.isTileLoad;
+            // Bubble-up: center points rise first, outer points lag by up to 40% of duration
             for (let i = 0; i < count; i++) {
                 if (entry.streamIndices && entry.streamIndices.has(i)) continue;
-
                 const targetY = entry.origY[i];
-                // Building points bubble up from below; ground points stay put during tile-load
-                const fromY = (!isLoad && targetY > 0.5) ? -2.0
-                            : (isLoad && targetY > 0.5)  ? -2.0
-                            : targetY;
-
+                const fromY = targetY > 0.5 ? -2.0 : targetY;
+                // Radial distance from tile center drives per-point delay
                 const px = posArr[i * 3];
                 const pz = posArr[i * 3 + 2];
                 const dx = px - (entry.tileCenterX || 0);
                 const dz = pz - (entry.tileCenterZ || 0);
-                const normDist = Math.min(Math.sqrt(dx*dx + dz*dz) / (entry.tileRadius || 300), 1.0);
+                const normDist = Math.min(Math.sqrt(dx * dx + dz * dz) / (entry.tileRadius || 350), 1.0);
                 const pointDelay = normDist * 0.4;
                 const localRaw = Math.max(0, (elapsed / REGEN_DURATION) - pointDelay) / (1.0 - pointDelay);
                 const localT = 1 - Math.pow(1 - Math.min(localRaw, 1.0), 3);
-
                 posArr[i * 3 + 1] = fromY + localT * (targetY - fromY);
-
-                // Color fade only on regen (not tile-load -- tiles start with full colors)
-                if (!isLoad && entry.origColors) {
-                    colArr[i * 3]     = entry.origColors[i * 3]     * localT;
-                    colArr[i * 3 + 1] = entry.origColors[i * 3 + 1] * localT;
-                    colArr[i * 3 + 2] = entry.origColors[i * 3 + 2] * localT;
-                }
             }
             posAttr.needsUpdate = true;
-            if (!isLoad) colAttr.needsUpdate = true;
         }
     }
 
@@ -3227,11 +3197,17 @@
         const t = clock.elapsedTime;      // total elapsed (updated by getDelta)
         const nowMs = performance.now();
 
-        // ── Post-fade-in hooks (LOD + focus mode applied once fadeComplete flips true) ──
-        // Tile bubble-up animation (updateRegenAnimation) sets fadeComplete when done.
+        // ── Tile fade-in animation ─────────────────────────────────────────────
         for (const [key, entry] of tileCache.entries()) {
-            if (!entry._postFadeApplied && entry.fadeComplete && entry.points) {
-                entry._postFadeApplied = true;
+            if (entry.fadeComplete || !entry.points || !entry.origColors) continue;
+            // Colors start at full brightness -- no color lerp needed.
+            // fadeComplete flips when the bubble-up regen animation ends (regenStartTime cleared).
+            // Fallback: if no regen animation running, mark complete after TILE_FADE_DURATION.
+            const elapsed = nowMs - entry.loadStartTime;
+            const lerpT = Math.min(elapsed / TILE_FADE_DURATION, 1.0);
+            if (!entry.regenStartTime && lerpT >= 1.0) {
+                entry.fadeComplete = true;
+                // Apply LOD factor to newly faded-in tile
                 if (surveillanceOn && currentLOD !== 'street') {
                     const lodFactor = currentLOD === 'district' ? 0.4 : 0.0;
                     if (lodFactor <= 0) {
@@ -3243,6 +3219,7 @@
                         ca.needsUpdate = true;
                     }
                 }
+                // If route is active, re-apply focus mode at full brightness
                 if (routeState.active && routeState.waypoints.length > 0) {
                     applyFocusModeTile(key);
                 }
@@ -3271,8 +3248,8 @@
         // ── Wind particles ─────────────────────────────────────────────────────
         updateWindParticles(delta);
 
-        // ── Regen animation (runs for both user-triggered regen and tile-load bubble-up) ──
-        updateRegenAnimation();
+        // ── Regen animation ───────────────────────────────────────────────────
+        if (regenActive) updateRegenAnimation();
 
         // ── Ground wave (shader time uniform) ─────────────────────────────────
         if (window._groundUniforms) {
@@ -3396,6 +3373,13 @@
             minimapRenderer.render(scene, minimapCamera);
         }
     }
+
+    // Bootstrap anchor mode (default) -- set composer camera + controls
+    composer.passes[0].camera = anchorCam;
+    minimapContainer.style.display = 'block';
+    anchorControls.enabled = true;
+    updateTileMaterials(true);
+    document.getElementById('hint').textContent = 'anchor // drag to orbit';
 
     animate();
 
