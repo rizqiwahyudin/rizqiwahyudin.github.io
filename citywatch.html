@@ -2121,10 +2121,12 @@
     initTransit();
 
     async function fetchAircraft() {
-        if (smoothLat === null || worldOriginLat === null) return;
-        const lat = smoothLat;
-        const lon = smoothLon;
-        const D = 0.03;
+        // Use GPS if available, fallback to Riga center
+        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const lon = smoothLon !== null ? smoothLon : 24.1052;
+        // latLonToWorld needs worldOriginLat set -- skip if not ready
+        if (worldOriginLat === null) return;
+        const D = 1.5; // ~150km radius -- catches all aircraft in the region
         const url = `https://opensky-network.org/api/states/all?lamin=${lat - D}&lomin=${lon - D}&lamax=${lat + D}&lomax=${lon + D}`;
         try {
             const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -2155,7 +2157,9 @@
                 if (lon2 === null || lat2 === null || onGround) continue;
 
                 const ww = latLonToWorld(lat2, lon2);
-                const rawY = baroAlt !== null ? Math.min(baroAlt / 20, 150) : 80;
+                // Scale altitude: 1 world unit ≈ 8m. Cap at 500 units (4000m) so even
+                // high-altitude aircraft stay visible against the city scale.
+                const rawY = baroAlt !== null ? Math.max(20, baroAlt / 8) : 60;
 
                 if (aircraftData.has(icao24)) {
                     const ac = aircraftData.get(icao24);
