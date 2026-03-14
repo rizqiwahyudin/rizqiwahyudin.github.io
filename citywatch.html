@@ -536,9 +536,19 @@
     let worldOriginFromFallback = false;
 
     function setWorldOrigin(lat, lon, fromFallback = false) {
+        const firstSet = worldOriginLat === null;
         worldOriginLat = lat;
         worldOriginLon = lon;
         worldOriginFromFallback = fromFallback;
+        // Snap anchor camera to GPS position immediately on first world origin set
+        if (firstSet && smoothLat !== null) {
+            const wp = latLonToWorld(smoothLat, smoothLon);
+            anchorTargetCurrent.set(wp.x, 0, wp.z);
+            anchorControls.target.set(wp.x, 0, wp.z);
+            anchorCam.position.set(wp.x, 80, wp.z + 80);
+            anchorCam.lookAt(wp.x, 0, wp.z);
+            anchorControls.update();
+        }
     }
 
     function latLonToWorld(lat, lon) {
@@ -1232,30 +1242,30 @@
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
             const buildAbort = new AbortController();
             const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
-            // Try CF Worker first (caches responses at edge), fall back to direct Overpass
+            // Query Overpass directly (rotate mirrors to spread load).
+            // CF Worker has a 30s wall-time limit -- not reliable for slow tiles.
             const encodedQuery = `data=${encodeURIComponent(query)}`;
             let overpassRes;
-            try {
-                overpassRes = await fetch(`${CF_WORKER}/overpass`, {
-                    method: 'POST',
-                    body: encodedQuery,
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    signal: buildAbort.signal,
-                });
-                if (!overpassRes.ok && overpassRes.status !== 429) throw new Error('worker_fail');
-            } catch (workerErr) {
-                // Worker failed or timed out -- fall back to direct Overpass
-                overpassRes = await fetch(getOverpassURL(), {
-                    method: 'POST',
-                    body: encodedQuery,
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    signal: buildAbort.signal,
-                });
+            // Try up to 3 mirrors before giving up
+            let lastErr;
+            for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
+                const mirrorUrl = OVERPASS_MIRRORS[(_overpassMirrorIdx + attempt) % OVERPASS_MIRRORS.length];
+                try {
+                    overpassRes = await fetch(mirrorUrl, {
+                        method: 'POST',
+                        body: encodedQuery,
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        signal: buildAbort.signal,
+                    });
+                    if (overpassRes.status === 429) { lastErr = new Error('rate_limited'); continue; }
+                    if (overpassRes.status === 504 || overpassRes.status === 502) { lastErr = new Error('server_overloaded'); continue; }
+                    if (overpassRes.ok) break; // success
+                    lastErr = new Error(`Overpass HTTP ${overpassRes.status}`);
+                } catch (e) { lastErr = e; }
             }
+            _overpassMirrorIdx++;
             clearTimeout(buildTimeout);
-            if (overpassRes.status === 429) throw new Error('rate_limited');
-            if (overpassRes.status === 504 || overpassRes.status === 502) throw new Error('server_overloaded');
-            if (!overpassRes.ok) throw new Error(`Overpass HTTP ${overpassRes.status}`);
+            if (!overpassRes || !overpassRes.ok) throw (lastErr || new Error('all mirrors failed'));
             const osmData = await overpassRes.json();
 
             // ── Parse nodes ─────────────────────────────────────────────────
