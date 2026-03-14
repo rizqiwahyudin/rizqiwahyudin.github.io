@@ -266,6 +266,98 @@
             from { opacity: 1; }
             to   { opacity: 0.35; }
         }
+
+        /* ── Surveillance mode UI ── */
+        #surveillance-btn {
+            position: fixed;
+            bottom: 82px;
+            left: 14px;
+            z-index: 25;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            color: rgba(255,255,255,0.45);
+            padding: 6px 10px;
+            cursor: pointer;
+            pointer-events: all;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        #surveillance-btn:hover {
+            color: rgba(255,255,255,0.85);
+            border-color: rgba(255,255,255,0.4);
+        }
+        #surveillance-btn.active {
+            color: #00ffff;
+            border-color: rgba(0,255,255,0.5);
+        }
+        #layer-panel {
+            position: fixed;
+            bottom: 116px;
+            left: 14px;
+            z-index: 25;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            padding: 6px 10px;
+            display: none;
+            pointer-events: all;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.6);
+        }
+        .layer-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 1px 0;
+            user-select: none;
+        }
+        .layer-toggle input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 10px;
+            height: 10px;
+            border: 1px solid rgba(255,255,255,0.4);
+            background: transparent;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .layer-toggle input[type="checkbox"]:checked {
+            background: rgba(0,255,255,0.3);
+            border-color: #00ffff;
+        }
+        .layer-toggle input[type="checkbox"]:checked::after {
+            content: '';
+            position: absolute;
+            top: 1px; left: 1px;
+            width: 6px; height: 6px;
+            background: #00ffff;
+        }
+        .layer-toggle:hover { color: #ffffff; }
+        #zoom-indicator {
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 25;
+            background: rgba(0,0,0,0.75);
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 4px 10px;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.5);
+            pointer-events: none;
+            display: none;
+        }
+        #zoom-indicator span { color: #00ffff; }
     </style>
 </head>
 <body>
@@ -303,6 +395,15 @@
         <button id="route-clear-btn" title="clear route">×</button>
         <span id="route-status"></span>
     </div>
+
+    <!-- Surveillance mode -->
+    <div id="zoom-indicator">zoom // <span id="zoom-level-label">street</span></div>
+    <div id="layer-panel">
+        <label class="layer-toggle"><input type="checkbox" id="layer-aircraft" checked> aircraft</label>
+        <label class="layer-toggle"><input type="checkbox" id="layer-transit"> transit</label>
+        <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
+    </div>
+    <button id="surveillance-btn">surveillance // off</button>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -900,7 +1001,7 @@
             const METERS_PER_DEG_LAT = 111320;
             const METERS_PER_DEG_LON = Math.cos(tileC.lat * Math.PI / 180) * 111320;
             const MAX_HEIGHT = 40;
-            const DENSITY = 6; // points per m²
+            const DENSITY = 2; // points per m² -- sparse hacker look
 
             const posArr = [], colArr = [];
 
@@ -968,17 +1069,31 @@
                 const wz = tileWorldOffset.z;
 
                 // Sample roof and walls
-                // Roof: random points inside polygon (bounding box sample)
+                // Roof: point-in-polygon sampling -- respects actual building shape
                 let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
                 for (const p of footprint) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
-                const area = (maxX - minX) * (maxY - minY);
-                const roofCount = Math.max(4, Math.floor(area * DENSITY * 0.5));
-                for (let i = 0; i < roofCount; i++) {
+                const bboxArea = (maxX - minX) * (maxY - minY);
+                const roofCount = Math.max(4, Math.floor(bboxArea * DENSITY * 0.6));
+                // Point-in-polygon test (ray casting)
+                function pointInPolygon(px, py, poly) {
+                    let inside = false;
+                    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+                        const xi = poly[a].x, yi = poly[a].y, xj = poly[b].x, yj = poly[b].y;
+                        if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+                    }
+                    return inside;
+                }
+                let attempts = 0;
+                let roofPlaced = 0;
+                while (roofPlaced < roofCount && attempts < roofCount * 4) {
+                    attempts++;
                     const rx = minX + Math.random() * (maxX - minX);
                     const ry = minY + Math.random() * (maxY - minY);
+                    if (!pointInPolygon(rx, ry, footprint)) continue;
                     const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
                     posArr.push(wx + rx, h, wz - ry);
                     colArr.push(r, g, b);
+                    roofPlaced++;
                 }
 
                 // Walls: sample along each edge
@@ -1359,6 +1474,445 @@
     }
     initAircraftPoints();
 
+    // ─── Aircraft trail ring buffers ──────────────────────────────────────────
+    // Per-aircraft ICAO24: ring buffer of world positions
+    const aircraftTrails = new Map(); // icao24 -> {buf: Float32Array(maxLen*3), head: int, count: int, maxLen: int}
+    const TRAIL_MAX_LEN = 100; // absolute max -- trimmed by LOD
+
+    // Single LineSegments object for all trails
+    const trailGeo = new THREE.BufferGeometry();
+    const trailMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 1.0, // per-vertex color handles fading
+    });
+    const aircraftTrailLines = new THREE.LineSegments(trailGeo, trailMat);
+    aircraftTrailLines.visible = false;
+    scene.add(aircraftTrailLines);
+
+    function getTrailLen(lodLevel) {
+        if (lodLevel === 'overview') return 100;
+        if (lodLevel === 'city')     return 60;
+        if (lodLevel === 'district') return 20;
+        return 10; // street -- short trail
+    }
+
+    function rebuildTrailGeometry(lodLevel) {
+        const trailLen = getTrailLen(lodLevel);
+        const posArr = [];
+        const colArr = [];
+
+        for (const [, trail] of aircraftTrails) {
+            if (trail.count < 2) continue;
+            // Extract positions in order (oldest first)
+            const pts = [];
+            const total = Math.min(trail.count, trailLen);
+            for (let i = total - 1; i >= 0; i--) {
+                const idx = ((trail.head - 1 - i) + TRAIL_MAX_LEN) % TRAIL_MAX_LEN;
+                pts.push(trail.buf[idx * 3], trail.buf[idx * 3 + 1], trail.buf[idx * 3 + 2]);
+            }
+            // Each segment = pair of consecutive points
+            for (let s = 0; s < pts.length / 3 - 1; s++) {
+                const t0 = s / (pts.length / 3 - 1);       // 0=oldest, 1=newest
+                const t1 = (s + 1) / (pts.length / 3 - 1);
+                const op0 = 0.05 + t0 * 0.85;
+                const op1 = 0.05 + t1 * 0.85;
+                // Start vertex
+                posArr.push(pts[s * 3], pts[s * 3 + 1], pts[s * 3 + 2]);
+                colArr.push(0.7 * op0, 0.8 * op0, 1.0 * op0);
+                // End vertex
+                posArr.push(pts[(s + 1) * 3], pts[(s + 1) * 3 + 1], pts[(s + 1) * 3 + 2]);
+                colArr.push(0.7 * op1, 0.8 * op1, 1.0 * op1);
+            }
+        }
+
+        if (posArr.length === 0) {
+            aircraftTrailLines.visible = false;
+            return;
+        }
+
+        trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(posArr), 3));
+        trailGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colArr), 3));
+        trailGeo.getAttribute('position').needsUpdate = true;
+        trailGeo.getAttribute('color').needsUpdate = true;
+
+        aircraftTrailLines.visible = surveillanceOn && layerAircraft;
+    }
+
+    function pushAircraftTrail(icao24, wx, wy, wz) {
+        if (!aircraftTrails.has(icao24)) {
+            aircraftTrails.set(icao24, {
+                buf: new Float32Array(TRAIL_MAX_LEN * 3),
+                head: 0,
+                count: 0,
+                maxLen: TRAIL_MAX_LEN,
+            });
+        }
+        const trail = aircraftTrails.get(icao24);
+        trail.buf[trail.head * 3]     = wx;
+        trail.buf[trail.head * 3 + 1] = wy;
+        trail.buf[trail.head * 3 + 2] = wz;
+        trail.head = (trail.head + 1) % TRAIL_MAX_LEN;
+        if (trail.count < TRAIL_MAX_LEN) trail.count++;
+    }
+
+    // ─── Surveillance state ───────────────────────────────────────────────────
+    let surveillanceOn = false;
+    let currentLOD = 'street'; // 'street' | 'district' | 'city' | 'overview'
+    let layerAircraft = true;
+    let layerTransit = false;
+    let layerWeather = true;
+
+    const surveillanceBtn  = document.getElementById('surveillance-btn');
+    const layerPanel       = document.getElementById('layer-panel');
+    const zoomIndicator    = document.getElementById('zoom-indicator');
+    const zoomLevelLabel   = document.getElementById('zoom-level-label');
+    const cbAircraft       = document.getElementById('layer-aircraft');
+    const cbTransit        = document.getElementById('layer-transit');
+    const cbWeather        = document.getElementById('layer-weather');
+
+    // Compute effective view radius in meters for LOD determination
+    function computeViewRadius() {
+        if (cameraMode === 'birdseye') {
+            // frustumSize / currentZoom gives the full height of the view in meters
+            return (frustumSize / currentZoom) / 2;
+        } else if (cameraMode === 'anchor') {
+            return anchorCam.position.distanceTo(anchorControls.target);
+        } else {
+            // followme
+            return followCam.position.distanceTo(followCamTarget);
+        }
+    }
+
+    function radiusToLOD(r) {
+        if (r < 600)   return 'street';
+        if (r < 3000)  return 'district';
+        if (r < 15000) return 'city';
+        return 'overview';
+    }
+
+    // Apply LOD factor to all tile colors (batch, direct Float32Array writes)
+    function applyLODToTiles(factor) {
+        for (const entry of tileCache.values()) {
+            if (!entry.points || !entry.origColors || !entry.fadeComplete) continue;
+            const colorAttr = entry.points.geometry.getAttribute('color');
+            const arr = colorAttr.array;
+            const src = entry.origColors;
+            const len = arr.length;
+            if (factor <= 0) {
+                entry.points.visible = false;
+            } else {
+                entry.points.visible = true;
+                for (let j = 0; j < len; j++) arr[j] = src[j] * factor;
+                colorAttr.needsUpdate = true;
+            }
+        }
+    }
+
+    // Called when LOD level changes (not every frame)
+    function onLODChange(newLOD) {
+        currentLOD = newLOD;
+        zoomLevelLabel.textContent = newLOD;
+
+        if (!surveillanceOn) {
+            // Surveillance off: always street LOD appearance
+            // Only restore tile colors if no route focus mode is active
+            if (!routeState.active) {
+                applyLODToTiles(1.0);
+            }
+            windParticles.visible = true;
+            aircraftPoints.visible = aircraftData.size > 0;
+            aircraftTrailLines.visible = false;
+            if (airportPoints) airportPoints.visible = false;
+            if (transitPoints) transitPoints.visible = false;
+            return;
+        }
+
+        // Tile building visibility and opacity
+        if (newLOD === 'street') {
+            applyLODToTiles(1.0);
+        } else if (newLOD === 'district') {
+            applyLODToTiles(0.4);
+        } else {
+            // city or overview: hide building tiles
+            applyLODToTiles(0.0);
+        }
+
+        // Wind particles: only at street level
+        windParticles.visible = layerWeather && (newLOD === 'street');
+
+        // Aircraft dots: visible at all LOD when layer active
+        aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
+
+        // Trails: shown at district+ when surveillance on
+        aircraftTrailLines.visible = layerAircraft && (newLOD !== 'street');
+        if (layerAircraft) rebuildTrailGeometry(newLOD);
+
+        // Airport: visible at district+ LOD
+        if (airportPoints) airportPoints.visible = (newLOD !== 'street');
+
+        // Transit: street only
+        if (transitPoints) transitPoints.visible = layerTransit && (newLOD === 'street');
+    }
+
+    function updateSurveillanceLayers() {
+        if (!surveillanceOn) {
+            windParticles.visible = true;
+            aircraftPoints.visible = aircraftData.size > 0;
+            aircraftTrailLines.visible = false;
+            if (airportPoints) airportPoints.visible = false;
+            if (transitPoints) transitPoints.visible = false;
+            return;
+        }
+        // Apply current LOD rules with current layer flags
+        windParticles.visible = layerWeather && (currentLOD === 'street');
+        aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
+        aircraftTrailLines.visible = layerAircraft && (currentLOD !== 'street');
+        if (airportPoints) airportPoints.visible = (currentLOD !== 'street');
+        if (transitPoints) transitPoints.visible = layerTransit && (currentLOD === 'street');
+    }
+
+    surveillanceBtn.addEventListener('click', () => {
+        surveillanceOn = !surveillanceOn;
+        surveillanceBtn.textContent = surveillanceOn ? 'surveillance // on' : 'surveillance // off';
+        surveillanceBtn.classList.toggle('active', surveillanceOn);
+        layerPanel.style.display = surveillanceOn ? 'block' : 'none';
+        zoomIndicator.style.display = surveillanceOn ? 'block' : 'none';
+        // Force LOD recalculation
+        onLODChange(currentLOD);
+        if (!surveillanceOn) {
+            // Restore tile colors/visibility (skip if route focus mode is active)
+            for (const entry of tileCache.values()) {
+                if (entry.points) entry.points.visible = true;
+            }
+            if (!routeState.active) {
+                applyLODToTiles(1.0);
+            } else {
+                // Re-apply focus mode to get correct dimming back
+                applyFocusModeAll();
+            }
+        }
+    });
+
+    cbAircraft.addEventListener('change', () => {
+        layerAircraft = cbAircraft.checked;
+        updateSurveillanceLayers();
+    });
+    cbTransit.addEventListener('change', () => {
+        layerTransit = cbTransit.checked;
+        updateSurveillanceLayers();
+    });
+    cbWeather.addEventListener('change', () => {
+        layerWeather = cbWeather.checked;
+        updateSurveillanceLayers();
+    });
+
+    // ─── Airport data (EVRA / Riga) ───────────────────────────────────────────
+    let airportPoints = null;
+
+    async function fetchAirportData() {
+        const query = `[out:json][timeout:30];(way["aeroway"~"^(runway|taxiway|apron|terminal)$"](56.85,23.9,56.95,24.05););out body;>;out skel qt;`;
+        try {
+            const res = await fetch(OVERPASS_URL, {
+                method: 'POST',
+                body: `data=${encodeURIComponent(query)}`,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data.elements || data.elements.length === 0) return;
+
+            // Wait until world origin is ready
+            const waitForOrigin = () => new Promise(resolve => {
+                const check = () => { if (worldOriginLat !== null) resolve(); else setTimeout(check, 300); };
+                check();
+            });
+            await waitForOrigin();
+
+            const nodes = {};
+            for (const el of data.elements) {
+                if (el.type === 'node') nodes[el.id] = { lat: el.lat, lon: el.lon };
+            }
+
+            const posArr = [];
+            const colArr = [];
+
+            for (const el of data.elements) {
+                if (el.type !== 'way' || !el.tags || !el.tags.aeroway) continue;
+                const aerotype = el.tags.aeroway;
+                const nodeIds = el.nodes;
+                if (!nodeIds || nodeIds.length < 2) continue;
+
+                // Color by aeroway type
+                let r, g, b, density;
+                if (aerotype === 'runway') {
+                    r = 0.95; g = 0.95; b = 1.0; density = 4.5; // bright white
+                } else if (aerotype === 'taxiway') {
+                    r = 0.6;  g = 0.6;  b = 0.65; density = 2.0;
+                } else if (aerotype === 'apron') {
+                    r = 0.35; g = 0.35; b = 0.4;  density = 1.0;
+                } else { // terminal
+                    r = 0.5;  g = 0.55; b = 0.6;  density = 1.5;
+                }
+
+                // Convert footprint to world coords, sample point strip
+                const pts = [];
+                for (const nid of nodeIds) {
+                    const nd = nodes[nid];
+                    if (!nd) continue;
+                    const wp = latLonToWorld(nd.lat, nd.lon);
+                    pts.push({ x: wp.x, z: wp.z });
+                }
+                if (pts.length < 2) continue;
+
+                // For runways: sample dense perpendicular strips (width estimation)
+                const widthM = aerotype === 'runway' ? 30 : (aerotype === 'taxiway' ? 15 : 40);
+                const stripOffsets = [];
+                const numStrips = Math.max(1, Math.round(widthM / (aerotype === 'runway' ? 3 : 5)));
+                for (let s = 0; s < numStrips; s++) {
+                    stripOffsets.push((s / (numStrips - 1 || 1) - 0.5) * widthM);
+                }
+
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const p0 = pts[i], p1 = pts[i + 1];
+                    const dx = p1.x - p0.x, dz = p1.z - p0.z;
+                    const len = Math.hypot(dx, dz);
+                    if (len < 0.01) continue;
+                    const ux = dx / len, uz = dz / len;
+                    const px = -uz, pz = ux; // perpendicular
+
+                    const numSamples = Math.max(2, Math.ceil(len * density));
+                    for (let k = 0; k <= numSamples; k++) {
+                        const t = k / numSamples;
+                        const bx = p0.x + t * dx, bz = p0.z + t * dz;
+                        for (const off of stripOffsets) {
+                            posArr.push(bx + px * off, 0.08, bz + pz * off);
+                            const jitter = (Math.random() - 0.5) * 0.05;
+                            colArr.push(Math.min(1, r + jitter), Math.min(1, g + jitter), Math.min(1, b + jitter));
+                        }
+                    }
+                }
+            }
+
+            if (posArr.length === 0) return;
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(posArr), 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colArr), 3));
+            const mat = new THREE.PointsMaterial({ size: 1.2, sizeAttenuation: false, vertexColors: true });
+            airportPoints = new THREE.Points(geo, mat);
+            airportPoints.visible = false; // controlled by LOD
+            scene.add(airportPoints);
+        } catch (e) {
+            console.warn('Airport data fetch failed:', e.message);
+        }
+    }
+
+    fetchAirportData();
+
+    // ─── Transit simulation (Riga) ────────────────────────────────────────────
+    // 20 simulated transit vehicles moving along fixed routes (major Riga stops)
+    let transitPoints = null;
+    const transitVehicles = [];
+
+    const TRANSIT_STOPS = [
+        // [lat, lon] -- major Riga stops from OSM
+        [56.9496, 24.1052], // center
+        [56.9461, 24.0950], // old town
+        [56.9550, 24.1150], // central station area
+        [56.9400, 24.0800], // Āgenskalns
+        [56.9600, 24.1300], // Teika
+        [56.9480, 24.1250], // Čiekurkalns
+        [56.9350, 24.1100], // Pārdaugava
+        [56.9700, 24.1050], // Jugla
+        [56.9430, 24.0700], // Imanta
+        [56.9620, 24.0900], // Sarkandaugava
+    ];
+
+    function initTransit() {
+        // Wait for world origin
+        const waitOrigin = () => new Promise(r => {
+            const c = () => { if (worldOriginLat !== null) r(); else setTimeout(c, 400); };
+            c();
+        });
+        waitOrigin().then(() => {
+            // Create 20 vehicles, each assigned a route between two random stops
+            for (let v = 0; v < 20; v++) {
+                const a = Math.floor(Math.random() * TRANSIT_STOPS.length);
+                let b = Math.floor(Math.random() * TRANSIT_STOPS.length);
+                while (b === a) b = Math.floor(Math.random() * TRANSIT_STOPS.length);
+                const wa = latLonToWorld(TRANSIT_STOPS[a][0], TRANSIT_STOPS[a][1]);
+                const wb = latLonToWorld(TRANSIT_STOPS[b][0], TRANSIT_STOPS[b][1]);
+                const dist = Math.hypot(wb.x - wa.x, wb.z - wa.z);
+                const speed = 30000 / 3600; // 30 km/h in m/s
+                const duration = dist / speed; // seconds to complete route
+                transitVehicles.push({
+                    ax: wa.x, az: wa.z,
+                    bx: wb.x, bz: wb.z,
+                    t: Math.random(), // start at random point in route
+                    duration,
+                    forward: true,
+                });
+            }
+            buildTransitGeometry();
+        });
+    }
+
+    function buildTransitGeometry() {
+        if (transitVehicles.length === 0) return;
+        // 4 points per vehicle (small cross cluster), cyan
+        const posArr = new Float32Array(transitVehicles.length * 4 * 3);
+        const colArr = new Float32Array(transitVehicles.length * 4 * 3);
+        const OFFSETS = [[0,0],[1.5,0],[-1.5,0],[0,1.5]];
+
+        let idx = 0;
+        for (const v of transitVehicles) {
+            const cx = v.ax + v.t * (v.bx - v.ax);
+            const cz = v.az + v.t * (v.bz - v.az);
+            for (const [ox, oz] of OFFSETS) {
+                posArr[idx * 3]     = cx + ox;
+                posArr[idx * 3 + 1] = 0.3;
+                posArr[idx * 3 + 2] = cz + oz;
+                colArr[idx * 3]     = 0.0;
+                colArr[idx * 3 + 1] = 0.9;
+                colArr[idx * 3 + 2] = 0.9;
+                idx++;
+            }
+        }
+
+        if (!transitPoints) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+            const mat = new THREE.PointsMaterial({ size: 3.5, sizeAttenuation: false, vertexColors: true });
+            transitPoints = new THREE.Points(geo, mat);
+            transitPoints.visible = false;
+            scene.add(transitPoints);
+        } else {
+            transitPoints.geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+            transitPoints.geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+            transitPoints.geometry.getAttribute('position').needsUpdate = true;
+        }
+    }
+
+    function updateTransit(delta) {
+        if (transitVehicles.length === 0 || !transitPoints || !transitPoints.visible) return;
+        const speed = 30000 / 3600; // m/s
+        for (const v of transitVehicles) {
+            const dt = delta / v.duration;
+            if (v.forward) {
+                v.t += dt;
+                if (v.t >= 1.0) { v.t = 1.0; v.forward = false; }
+            } else {
+                v.t -= dt;
+                if (v.t <= 0.0) { v.t = 0.0; v.forward = true; }
+            }
+        }
+        buildTransitGeometry();
+    }
+
+    initTransit();
+
     async function fetchAircraft() {
         if (smoothLat === null || worldOriginLat === null) return;
         const lat = smoothLat;
@@ -1414,15 +1968,24 @@
                         updateTime: now,
                     });
                 }
+                // Push trail position on every update
+                pushAircraftTrail(icao24, ww.x, rawY, ww.z);
                 seen.add(icao24);
             }
 
             // Remove aircraft no longer in response
             for (const icao of aircraftData.keys()) {
-                if (!seen.has(icao)) aircraftData.delete(icao);
+                if (!seen.has(icao)) {
+                    aircraftData.delete(icao);
+                    aircraftTrails.delete(icao);
+                }
             }
 
             aircraftCount = aircraftData.size;
+            // Rebuild trail geometry after each OpenSky poll cycle
+            if (surveillanceOn && layerAircraft) {
+                rebuildTrailGeometry(currentLOD);
+            }
             updateTileHUD();
         } catch (e) {
             // Network error or timeout -- skip silently
@@ -1989,6 +2552,7 @@
     let clock = new THREE.Clock();
     let _lastAnimTime = 0;
     const TILE_FADE_DURATION = 1000; // ms
+    let _lastLOD = 'street';
 
     function animate() {
         requestAnimationFrame(animate);
@@ -2011,12 +2575,37 @@
             colorAttr.needsUpdate = true;
             if (lerpT >= 1.0) {
                 entry.fadeComplete = true;
+                // Apply LOD factor to newly faded-in tile
+                if (surveillanceOn && currentLOD !== 'street') {
+                    const lodFactor = currentLOD === 'district' ? 0.4 : 0.0;
+                    if (lodFactor <= 0) {
+                        entry.points.visible = false;
+                    } else {
+                        const ca = entry.points.geometry.getAttribute('color');
+                        const ar = ca.array, sr = entry.origColors;
+                        for (let j = 0; j < ar.length; j++) ar[j] = sr[j] * lodFactor;
+                        ca.needsUpdate = true;
+                    }
+                }
                 // If route is active, re-apply focus mode at full brightness
                 if (routeState.active && routeState.waypoints.length > 0) {
                     applyFocusModeTile(key);
                 }
             }
         }
+
+        // ── LOD computation (once per frame, change handler only fires on change) ──
+        {
+            const vr = computeViewRadius();
+            const newLOD = radiusToLOD(vr);
+            if (newLOD !== _lastLOD) {
+                _lastLOD = newLOD;
+                onLODChange(newLOD);
+            }
+        }
+
+        // ── Transit vehicle update ─────────────────────────────────────────────
+        updateTransit(delta);
 
         // ── Aircraft interpolation ─────────────────────────────────────────────
         if (aircraftData.size > 0) {
@@ -2119,30 +2708,32 @@
         // Restore full viewport for the composer pass
         renderer.setScissorTest(false);
         renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+        renderer.autoClear = true;
         composer.render();
 
-        // ── Minimap render (follow-me and anchor mode, after composer) ─────────
+        // ── Minimap render (follow-me and anchor mode, rendered after composer) ──
         if ((cameraMode === 'followme' || cameraMode === 'anchor') && smoothLat !== null && worldOriginLat !== null) {
             const wp = latLonToWorld(smoothLat, smoothLon);
-
-            // Position minimap camera directly above GPS position
             minimapCamera.position.set(wp.x, 500, wp.z);
             minimapCamera.lookAt(wp.x, 0, wp.z);
 
-            const MM = 160; // minimap pixel size
+            const MM = 160;
             const pixelRatio = renderer.getPixelRatio();
-            const vpX = window.innerWidth - MM - 14;
-            const vpY = 14; // 14px from bottom in CSS; renderer coords are bottom-left
-            // renderer viewport Y=0 is bottom of canvas
-            const vpXpx = Math.round(vpX * pixelRatio);
-            const vpYpx = Math.round(vpY * pixelRatio);
+            // CSS: bottom:14px right:14px -- renderer Y=0 is bottom of canvas
+            const vpX = Math.round((window.innerWidth - MM - 14) * pixelRatio);
+            const vpY = Math.round(14 * pixelRatio);
             const MMpx = Math.round(MM * pixelRatio);
 
+            renderer.autoClear = false; // don't clear -- draw minimap on top of main scene
             renderer.setScissorTest(true);
-            renderer.setScissor(vpXpx, vpYpx, MMpx, MMpx);
-            renderer.setViewport(vpXpx, vpYpx, MMpx, MMpx);
+            renderer.setScissor(vpX, vpY, MMpx, MMpx);
+            renderer.setViewport(vpX, vpY, MMpx, MMpx);
+            // Clear just the minimap region manually
+            renderer.clearDepth();
             renderer.render(scene, minimapCamera);
             renderer.setScissorTest(false);
+            renderer.autoClear = true;
+            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
         }
     }
 
