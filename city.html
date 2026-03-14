@@ -18,11 +18,17 @@
             top: 0; left: 0;
             width: 100vw; height: 100vh;
         }
+        .dotgothic {
+            font-family: 'DotGothic16', monospace;
+            letter-spacing: 1px;
+            font-size: 11px;
+            line-height: 1.8;
+            color: #00ff88; /* Green */
+        }
         #back-btn {
             position: fixed;
             top: 14px; left: 14px;
-            font: 14px 'DotGothic16', monospace;
-            letter-spacing: 2px;
+            font-size: 14px;
             text-transform: lowercase;
             text-decoration: none;
             color: rgba(255,255,255,0.35);
@@ -30,7 +36,7 @@
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 6px;
             padding: 6px 14px;
-            z-index: 10;
+            z-index: 20;
             transition: color 0.15s, border-color 0.15s;
         }
         #back-btn:hover {
@@ -43,16 +49,102 @@
             width: 100%;
             text-align: center;
             color: rgba(255,255,255,0.12);
-            font: 11px 'DotGothic16', monospace;
             pointer-events: none;
-            z-index: 1;
-            letter-spacing: 1px;
+            z-index: 20;
+            font-size: 11px;
+        }
+
+        /* HUD Panels */
+        .hud-panel {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid rgba(0, 255, 136, 0.25);
+            padding: 10px 12px;
+            z-index: 20;
+            white-space: pre;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: none; /* Allow interaction with canvas / controls */
+        }
+        .hud-panel.visible {
+            opacity: 1;
+            pointer-events: auto; /* Allow interaction when visible */
+        }
+        .hud-panel span {
+            color: #00ffff; /* Cyan */
+        }
+        .hud-panel .red {
+            color: #ff2244; /* Red for alerts */
+        }
+
+        #sys-monitor {
+            top: 60px;
+            left: 14px;
+        }
+        #net-scan {
+            bottom: 40px;
+            left: 14px;
+        }
+        #target-panel {
+            top: 14px;
+            right: 14px;
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+
+        /* Tracking Camera Viewport */
+        #tracking-viewport {
+            position: fixed;
+            bottom: 14px;
+            right: 14px;
+            width: 280px;
+            height: 200px;
+            border: 1px solid #00ff88;
+            z-index: 20;
+            border-image: linear-gradient(to right, #00ff88 1px, transparent 1px) 1;
+            border-image-source: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='200'><line x1='0' y1='1' x2='10' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='0' x2='1' y2='10' stroke='%2300ff88' stroke-width='2'/><line x1='270' y1='1' x2='280' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='279' y1='0' x2='279' y2='10' stroke='%2300ff88' stroke-width='2'/><line x1='0' y1='199' x2='10' y2='199' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='190' x2='1' y2='200' stroke='%2300ff88' stroke-width='2'/><line x1='270' y1='199' x2='280' y2='199' stroke='%2300ff88' stroke-width='2'/><line x1='279' y1='190' x2='279' y2='200' stroke='%2300ff88' stroke-width='2'/></svg>");
+            border-image-slice: 1;
+            border-image-repeat: stretch;
+            background: black; /* To show the tracking canvas */
+            overflow: hidden;
+            display: none; /* Hidden by default */
+        }
+        #tracking-viewport.visible {
+            display: block;
+        }
+        #tracking-canvas {
+            display: block;
+        }
+        #tracking-label {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            font-family: 'DotGothic16', monospace;
+            font-size: 9px;
+            color: #00ff88;
+            z-index: 21;
+        }
+        #target-overlay-text {
+            color: #00ff88;
+            font-size: 13px;
         }
     </style>
 </head>
 <body>
-    <a id="back-btn" href="index.html">← back</a>
-    <div id="info">orbit // drag &nbsp;&nbsp; zoom // scroll &nbsp;&nbsp; reset // double-click</div>
+    <a id="back-btn" href="index.html" class="dotgothic">← back</a>
+    <div id="info" class="dotgothic">orbit // drag &nbsp;&nbsp; zoom // scroll &nbsp;&nbsp; reset // double-click</div>
+
+    <!-- HUD Panels -->
+    <div id="sys-monitor" class="hud-panel dotgothic"></div>
+    <div id="net-scan" class="hud-panel dotgothic"></div>
+    <div id="target-panel" class="hud-panel dotgothic"></div>
+
+    <!-- Tracking Viewport -->
+    <div id="tracking-viewport">
+        <canvas id="tracking-canvas"></canvas>
+        <div id="tracking-label" class="dotgothic">CAM_01 // TRACKING</div>
+    </div>
+
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -105,19 +197,29 @@
     // ─── Scene setup ─────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x000000, 0.004);
+    scene.fog = new THREE.FogExp2(0x000000, 0.005); /* Increased fog density a bit */
 
+    /* Main camera */
     const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
     const INITIAL_CAM = { x: 80, y: 60, z: 80 };
     camera.position.set(INITIAL_CAM.x, INITIAL_CAM.y, INITIAL_CAM.z);
     camera.lookAt(0, 0, 0);
 
+    /* Main renderer */
     const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(innerWidth, innerHeight);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.toneMapping = THREE.ReinhardToneMapping;
     renderer.toneMappingExposure = 1.2;
     document.body.appendChild(renderer.domElement);
+
+    /* Tracking camera (for PiP view) */
+    const trackingCanvas = document.getElementById('tracking-canvas');
+    const trackCam = new THREE.PerspectiveCamera(75, 280 / 200, 0.1, 200); /* Fixed aspect ratio for PiP */
+    const trackRenderer = new THREE.WebGLRenderer({ antialias: false, canvas: trackingCanvas });
+    trackRenderer.setSize(280, 200);
+    trackRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    trackRenderer.setClearColor(0x000000); // Clear color for the tracking view
 
     // ─── Controls ────────────────────────────────────────────────────────────
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -157,9 +259,6 @@
     // ─── Color by height ─────────────────────────────────────────────────────
     // Returns [r, g, b] in 0-1 range based on normalized height (0=ground, 1=tallest)
     function heightColor(t, jitter) {
-        // ground: dark teal #003333
-        // mid: cyan #00ffff
-        // tips: near white with cyan tint #ccffff
         const j = (jitter - 0.5) * 0.1;
         let r, g, b;
         if (t < 0.5) {
@@ -181,33 +280,26 @@
     }
 
     // ─── City generation ─────────────────────────────────────────────────────
-    // Grid: 10x10 blocks, block size 9, road width 3, stride 12
-    // Total span: 120 units, centered at origin => offset -60
     const GRID = 10;
     const BLOCK = 9;
-    const STRIDE = 12;
+    const ROAD_WIDTH = 3; /* New constant */
+    const STRIDE = BLOCK + ROAD_WIDTH; /* New constant */
     const OFFSET = -(GRID * STRIDE) / 2;
     const MAX_CITY_HEIGHT = 40;
 
-    // Buildings are stored as { x, z, w, d, h } in world space
     const buildings = [];
-
     function rng(min, max) { return min + Math.random() * (max - min); }
 
     for (let gi = 0; gi < GRID; gi++) {
         for (let gj = 0; gj < GRID; gj++) {
             const bx = OFFSET + gi * STRIDE;
             const bz = OFFSET + gj * STRIDE;
-
-            // distance from city center -> downtown has taller buildings
             const dx = (gi - GRID/2 + 0.5) / (GRID/2);
             const dz = (gj - GRID/2 + 0.5) / (GRID/2);
             const distFactor = 1 - Math.min(1, Math.sqrt(dx*dx + dz*dz) * 0.8);
-
             const count = Math.floor(rng(2, 6));
             for (let k = 0; k < count; k++) {
-                const w = rng(1.2, 3.5);
-                const d = rng(1.2, 3.5);
+                const w = rng(1.2, 3.5), d = rng(1.2, 3.5);
                 const maxH = 4 + distFactor * (MAX_CITY_HEIGHT - 4);
                 const h = rng(1.5, maxH);
                 const px = bx + rng(0.3, BLOCK - w - 0.3);
@@ -217,22 +309,12 @@
         }
     }
 
-    // ─── Point sampling ──────────────────────────────────────────────────────
-    // We'll collect all positions and colors into flat arrays, then build geometry.
-    // Also track animated point indices for the upward-drift effect.
-
-    const positions = [];
-    const colors = [];
-
-    // Animated stream points: { idx (index into positions /3), yBase, yTop, speed }
+    // ─── Point sampling (City) ───────────────────────────────────────────────
+    const cityPositions = []; /* Renamed from 'positions' */
+    const cityColors = [];    /* Renamed from 'colors' */
     const streamPoints = [];
 
-    // Sample points on a rectangle defined by two axes and an origin
-    // ax, ay, az: first axis direction * half-extent
-    // bx, by, bz: second axis direction * half-extent
-    // ox, oy, oz: center of rectangle
-    // count: how many points
-    function sampleRect(ox, oy, oz, ax, ay, az, bx2, by2, bz2, count, yMin, yMax, stream) {
+    function sampleRect(ox, oy, oz, ax, ay, az, bx2, by2, bz2, count, yMin, yMax, stream, isCar = false) {
         for (let i = 0; i < count; i++) {
             const s = (Math.random() - 0.5) * 2;
             const t = (Math.random() - 0.5) * 2;
@@ -240,135 +322,416 @@
             const py = oy + ay*s + by2*t;
             const pz = oz + az*s + bz2*t;
 
-            const tNorm = (py - 0) / MAX_CITY_HEIGHT;
+            const tNorm = py / MAX_CITY_HEIGHT;
             const jitter = Math.random();
-            const [r, g, b] = heightColor(Math.max(0, tNorm), jitter);
+            let r, g, b;
+            if (isCar) {
+                r = 0.95 + (jitter - 0.5) * 0.1;
+                g = 0.95 + (jitter - 0.5) * 0.1;
+                b = 0.95 + (jitter - 0.5) * 0.1;
+            } else {
+                [r, g, b] = heightColor(Math.max(0, tNorm), jitter);
+            }
 
-            const idx = positions.length / 3;
-            positions.push(px, py, pz);
-            colors.push(r, g, b);
+            const idx = cityPositions.length / 3; /* Uses cityPositions */
+            cityPositions.push(px, py, pz);
+            cityColors.push(r, g, b);
 
             if (stream) {
-                streamPoints.push({ idx, yBase: yMin, yTop: yMax, speed: rng(0.02, 0.08) });
+                streamPoints.push({ idx, yBase: yMin, yTop: yMax, speed: rng(0.03, 0.12) });
             }
         }
     }
 
-    // Sample all building faces
     for (const b of buildings) {
-        const cx = b.x + b.w / 2;
-        const cz = b.z + b.d / 2;
-        const hw = b.w / 2;
-        const hd = b.d / 2;
-        const h = b.h;
-
-        // Density: proportional to surface area
-        const wallArea = 2 * (b.w + b.d) * h;
+        const cx = b.x + b.w/2, cz = b.z + b.d/2;
+        const hw = b.w/2, hd = b.d/2, h = b.h;
+        const density = 6;
         const roofArea = b.w * b.d;
-        const totalArea = wallArea + roofArea;
-        const density = 6; // points per unit^2
-        const total = Math.floor(totalArea * density);
+        const wallArea = 2 * (b.w + b.d) * h;
+        const total = Math.floor((roofArea + wallArea) * density);
 
-        // Roof (top face, y = h)
-        const roofCount = Math.floor(roofArea * density);
-        sampleRect(cx, h, cz,  hw,0,0,  0,0,hd,  roofCount, h, h, false);
+        sampleRect(cx, h, cz,        hw,0,0,   0,0,hd,   Math.floor(roofArea*density), h, h, false);
+        sampleRect(cx, 0, cz,        hw,0,0,   0,0,hd,   Math.floor(roofArea*density*0.3), 0, 0, false);
+        sampleRect(cx, h/2, cz+hd,   hw,0,0,   0,h/2,0,  Math.floor(b.w*h*density), 0, h, false);
+        sampleRect(cx, h/2, cz-hd,   hw,0,0,   0,h/2,0,  Math.floor(b.w*h*density), 0, h, false);
+        sampleRect(cx-hw, h/2, cz,   0,0,hd,   0,h/2,0,  Math.floor(b.d*h*density), 0, h, false);
+        sampleRect(cx+hw, h/2, cz,   0,0,hd,   0,h/2,0,  Math.floor(b.d*h*density), 0, h, false);
 
-        // Floor (y = 0)
-        sampleRect(cx, 0, cz,  hw,0,0,  0,0,hd,  Math.floor(roofArea * density * 0.3), 0, 0, false);
-
-        // Front wall (z = cz + hd)
-        const frontCount = Math.floor(b.w * h * density);
-        sampleRect(cx, h/2, cz+hd,  hw,0,0,  0,h/2,0,  frontCount, 0, h, false);
-
-        // Back wall
-        sampleRect(cx, h/2, cz-hd,  hw,0,0,  0,h/2,0,  frontCount, 0, h, false);
-
-        // Left wall
-        const sideCount = Math.floor(b.d * h * density);
-        sampleRect(cx-hw, h/2, cz,  0,0,hd,  0,h/2,0,  sideCount, 0, h, false);
-
-        // Right wall
-        sampleRect(cx+hw, h/2, cz,  0,0,hd,  0,h/2,0,  sideCount, 0, h, false);
-
-        // Upward stream points on walls (5% of wall points, tracked for animation)
         const streamCount = Math.max(1, Math.floor(total * 0.04));
         for (let i = 0; i < streamCount; i++) {
-            // Place on a random wall
             const wall = Math.floor(Math.random() * 4);
-            let px, py, pz;
-            py = rng(0, h);
-            if (wall === 0) { px = cx + rng(-hw, hw); pz = cz + hd; }
+            let px, py = rng(0, h), pz;
+            if (wall === 0)      { px = cx + rng(-hw, hw); pz = cz + hd; }
             else if (wall === 1) { px = cx + rng(-hw, hw); pz = cz - hd; }
             else if (wall === 2) { px = cx - hw; pz = cz + rng(-hd, hd); }
-            else { px = cx + hw; pz = cz + rng(-hd, hd); }
-
-            const tNorm = py / MAX_CITY_HEIGHT;
-            const [r, g, b] = heightColor(Math.max(0, tNorm), Math.random());
-            const idx = positions.length / 3;
-            positions.push(px, py, pz);
-            colors.push(r, g, b);
+            else                 { px = cx + hw; pz = cz + rng(-hd, hd); }
+            const idx = cityPositions.length / 3;
+            cityPositions.push(px, py, pz);
+            let [r, g, b] = heightColor(py / MAX_CITY_HEIGHT, Math.random());
+            cityColors.push(r, g, b);
             streamPoints.push({ idx, yBase: 0, yTop: h, speed: rng(0.03, 0.12) });
         }
     }
 
-    // ─── Terrain ─────────────────────────────────────────────────────────────
     const TERRAIN_SPAN = GRID * STRIDE;
-    const TERRAIN_STEP = 0.8;
-    for (let tx = -TERRAIN_SPAN/2; tx <= TERRAIN_SPAN/2; tx += TERRAIN_STEP) {
-        for (let tz = -TERRAIN_SPAN/2; tz <= TERRAIN_SPAN/2; tz += TERRAIN_STEP) {
-            const ny = simplex(tx * 0.05, tz * 0.05) * 0.4; // very subtle terrain undulation
-            const jitter = Math.random();
-            const [r, g, b] = heightColor(0.05 + Math.random() * 0.05, jitter);
-            positions.push(tx, ny, tz);
-            colors.push(r, g, b);
+    for (let tx = -TERRAIN_SPAN/2; tx <= TERRAIN_SPAN/2; tx += 0.8) {
+        for (let tz = -TERRAIN_SPAN/2; tz <= TERRAIN_SPAN/2; tz += 0.8) {
+            const ny = simplex(tx * 0.05, tz * 0.05) * 0.4;
+            const [r, g, b] = heightColor(0.05 + Math.random()*0.05, Math.random());
+            cityPositions.push(tx, ny, tz);
+            cityColors.push(r, g, b);
         }
     }
 
-    // ─── Build geometry ───────────────────────────────────────────────────────
-    const geometry = new THREE.BufferGeometry();
-    const posArr = new Float32Array(positions);
-    const colArr = new Float32Array(colors);
-    geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+    // ─── Build geometry (City) ────────────────────────────────────────────────
+    const cityGeometry = new THREE.BufferGeometry(); /* Renamed from 'geometry' */
+    cityGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cityPositions), 3));
+    cityGeometry.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(cityColors), 3));
 
-    const material = new THREE.PointsMaterial({
-        size: 0.12,
-        sizeAttenuation: true,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
+    const cityMaterial = new THREE.PointsMaterial({ /* Renamed from 'material' */
+        size: 0.12, sizeAttenuation: true, vertexColors: true,
+        transparent: true, opacity: 0.9, depthWrite: false,
     });
 
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
+    const cityPoints = new THREE.Points(cityGeometry, cityMaterial); /* Renamed from 'points' */
+    scene.add(cityPoints);
+
+    // ─── Car System ───────────────────────────────────────────────────────────
+    const NUM_CARS = 30;
+    const CAR_POINTS_COUNT = 50;
+    const CAR_SPEED_MIN = 0.3;
+    const CAR_SPEED_MAX = 0.6;
+    const CAR_COLOR_NORMAL = new THREE.Color(0.95, 0.95, 0.95); /* White */
+    const CAR_COLOR_TARGET = new THREE.Color(1.0, 0.1, 0.1);    /* Red */
+
+
+    /* Road network setup */
+    const roadXCoords = [];
+    const roadZCoords = [];
+    for(let i = 0; i < GRID; i++) {
+        /* Roads are centered in the ROAD_WIDTH area. Between block i and i+1 */
+        const xCoord = OFFSET + i * STRIDE + BLOCK + (ROAD_WIDTH / 2);
+        roadXCoords.push(xCoord);
+        roadZCoords.push(xCoord); /* Same coords for Z roads */
+    }
+
+    const cars = [];
+    const carPositions = new Float32Array(NUM_CARS * CAR_POINTS_COUNT * 3);
+    const carColors = new Float32Array(NUM_CARS * CAR_POINTS_COUNT * 3);
+
+    /* Generate base car geometry (local points) */
+    const baseCarPoints = [];
+    function generateCarShape() {
+        /* Simple box shape for car body */
+        const bodyW = 1.2, bodyD = 2.5, bodyH = 0.5; /* Width, Depth, Height */
+        for (let i = 0; i < CAR_POINTS_COUNT; i++) {
+            const x = rng(-bodyW/2, bodyW/2);
+            const y = rng(0, bodyH); /* Always above ground (y=0) */
+            const z = rng(-bodyD/2, bodyD/2);
+            baseCarPoints.push(x, y, z);
+        }
+    }
+    generateCarShape();
+
+    /* Initialize cars */
+    let carPointIdx = 0;
+    for (let c = 0; c < NUM_CARS; c++) {
+        const isHorizontal = Math.random() < 0.5; /* Moving along X or Z axis */
+        let currentRoad = isHorizontal ? roadZCoords[Math.floor(rng(0, roadZCoords.length))] : roadXCoords[Math.floor(rng(0, roadXCoords.length))];
+        let currentPos = rng(OFFSET, -OFFSET); /* Random start position along the road */
+        let direction = Math.random() < 0.5 ? 1 : -1; /* Positive or negative direction */
+
+        const car = {
+            id: c,
+            startIdx: carPointIdx,
+            numPoints: CAR_POINTS_COUNT,
+            x: isHorizontal ? currentPos : currentRoad,
+            z: isHorizontal ? currentRoad : currentPos,
+            y: 0.2, /* Slightly above ground */
+            speed: rng(CAR_SPEED_MIN, CAR_SPEED_MAX),
+            direction: direction,
+            isHorizontal: isHorizontal,
+            currentRoad: currentRoad,
+            targeted: false,
+        };
+        cars.push(car);
+
+        /* Populate car point data */
+        const carBaseColor = CAR_COLOR_NORMAL;
+        for (let i = 0; i < CAR_POINTS_COUNT; i++) {
+            carColors[carPointIdx * 3 + 0] = carBaseColor.r;
+            carColors[carPointIdx * 3 + 1] = carBaseColor.g;
+            carColors[carPointIdx * 3 + 2] = carBaseColor.b;
+            carPointIdx++;
+        }
+    }
+
+    const carsGeometry = new THREE.BufferGeometry();
+    carsGeometry.setAttribute('position', new THREE.BufferAttribute(carPositions, 3));
+    carsGeometry.setAttribute('color',    new THREE.BufferAttribute(carColors, 3));
+    const carsMaterial = new THREE.PointsMaterial({
+        size: 0.15, sizeAttenuation: true, vertexColors: true,
+        transparent: false, opacity: 1.0, depthWrite: false,
+    });
+    const carsPoints = new THREE.Points(carsGeometry, carsMaterial);
+    scene.add(carsPoints);
+
+    /* Target Identification System */
+    let targetCar = null;
+    let targetAcquireTime = 0;
+    let targetReleaseTime = 0;
+
+    const targetPanel = document.getElementById('target-panel');
+    const trackingViewportDiv = document.getElementById('tracking-viewport');
+
+    function acquireTarget() {
+        if (targetCar) return; /* Already tracking */
+        const nonTargetedCars = cars.filter(c => !c.targeted);
+        if (nonTargetedCars.length === 0) {
+            /* If all cars targeted (shouldn't happen with current logic) */
+            cars.forEach(c => c.targeted = false); /* Reset all */
+            return;
+        }
+
+        const newTarget = nonTargetedCars[Math.floor(rng(0, nonTargetedCars.length))];
+        targetCar = newTarget;
+        targetCar.targeted = true;
+        targetAcquireTime = new Date().getTime();
+
+        targetPanel.classList.add('visible');
+        trackingViewportDiv.classList.add('visible');
+
+        updateTargetPanel();
+        
+        /* Set car color to red immediately */
+        updateCarColorInGeometry(targetCar, CAR_COLOR_TARGET);
+        flashTargetCarColor(targetCar); /* Flash red for 1s */
+    }
+
+    function flashTargetCarColor(car) {
+        const flashInterval = setInterval(() => {
+            if (!car || !car.targeted) {
+                clearInterval(flashInterval);
+                return;
+            }
+            const timeElapsed = new Date().getTime() - targetAcquireTime;
+            if (timeElapsed > 1000) { /* stop flashing after 1 second */
+                clearInterval(flashInterval);
+                updateCarColorInGeometry(car, CAR_COLOR_TARGET); /* Ensure solid red */
+            } else {
+                const currentColor = carsGeometry.attributes.color.getX(car.startIdx) === CAR_COLOR_TARGET.r ? CAR_COLOR_NORMAL : CAR_COLOR_TARGET;
+                updateCarColorInGeometry(car, currentColor);
+            }
+        }, 100); /* Flash every 100ms */
+    }
+
+    function releaseTarget() {
+        if (!targetCar) return;
+
+        targetCar.targeted = false;
+        updateCarColorInGeometry(targetCar, CAR_COLOR_NORMAL);
+        targetCar = null;
+        targetReleaseTime = new Date().getTime();
+
+        targetPanel.classList.remove('visible');
+        trackingViewportDiv.classList.remove('visible');
+    }
+
+    /* Target Acquisition Loop */
+    let targetTimer = setTimeout(acquireTarget, rng(8000, 12000));
+
+    function updateCarColorInGeometry(car, color) {
+        for (let i = 0; i < car.numPoints; i++) {
+            const idx = car.startIdx + i;
+            carColors[idx * 3 + 0] = color.r;
+            carColors[idx * 3 + 1] = color.g;
+            carColors[idx * 3 + 2] = color.b;
+        }
+        carsGeometry.attributes.color.needsUpdate = true;
+    }
+
+
+    /* HUD update functions */
+    const sysMonitor = document.getElementById('sys-monitor');
+    const netScan = document.getElementById('net-scan');
+
+    let packetIn = 0;
+    let packetOut = 0;
+
+    function updateSysMonitor() {
+        let vehicleCount = String(cars.length).padStart(3, '0');
+        let activeNode = Math.random().toString(16).substring(2, 10).toUpperCase();
+        let uplink = Math.floor(rng(40, 99));
+
+        sysMonitor.innerHTML = `SYS_MONITOR v2.4
+----------------
+VEHICLES    : <span>${vehicleCount}</span>
+ACTIVE_NODE : <span>${activeNode}</span>
+UPLINK      : <span>${uplink}%</span>
+ENCRYPT     : AES-256-GCM`;
+    }
+
+    function updateNetScan() {
+        packetIn += Math.floor(rng(10, 50));
+        packetOut += Math.floor(rng(5, 30));
+        let lat = Math.floor(rng(2, 40));
+
+        netScan.innerHTML = `NET_SCAN // ACTIVE
+PKT_IN  : <span>${packetIn}</span>
+PKT_OUT : <span>${packetOut}</span>
+LAT     : <span>${lat}ms</span>`;
+    }
+
+    function updateTargetPanel() {
+        if (!targetCar) return;
+
+        let speedKmh = Math.floor(targetCar.speed * 100); /* Scale speed to plausible km/h */
+        let threat = Math.random() < 0.3 ? '<span class="red">CRITICAL</span>' : '<span class="red">HIGH</span>';
+        let targetId = 'VH-' + Math.floor(rng(0, 0xFFFF)).toString(16).padStart(4, '0').toUpperCase();
+        
+        let coordX = targetCar.x.toFixed(1);
+        let coordZ = targetCar.z.toFixed(1);
+        let formattedCoords = `${coordX < 0 ? '-' : '+'}${String(Math.abs(coordX)).padStart(5, '0')} ${coordZ < 0 ? '-' : '+'}${String(Math.abs(coordZ)).padStart(5, '0')}`;
+
+        targetPanel.innerHTML = `TARGET IDENTIFIED
+-----------------
+ID      : <span>${targetId}</span>
+SPEED   : <span>${speedKmh} km/h</span>
+COORDS  : <span>${formattedCoords}</span>
+THREAT  : ${threat}
+STATUS  : TRACKING`;
+    }
+
+    setInterval(updateSysMonitor, 2000);
+    setInterval(updateNetScan, 1500);
+    setInterval(() => {
+        if (targetCar && targetPanel.classList.contains('visible')) {
+            updateTargetPanel();
+        }
+    }, 500); /* Target panel updates faster */
+
+    updateSysMonitor();
+    updateNetScan();
+    /* Initial update sets visible at start for panels */
+    sysMonitor.classList.add('visible');
+    netScan.classList.add('visible');
+    /* Target panel becomes visible only when a target is acquired */
+
 
     // ─── Animation loop ───────────────────────────────────────────────────────
-    const positionAttr = geometry.attributes.position;
+    const cityPositionAttr = cityGeometry.attributes.position; /* Renamed */
+    const cityColorAttr = cityGeometry.attributes.color;       /* Renamed */
+    const carPositionAttr = carsGeometry.attributes.position;
+    const carColorAttr = carsGeometry.attributes.color;
+
+
+    const tempVec = new THREE.Vector3(); /* For tracking camera positioning */
 
     function animate() {
         requestAnimationFrame(animate);
 
-        // Update stream points (upward drift)
-        for (const sp of streamPoints) {
-            let y = positionAttr.getY(sp.idx);
-            y += sp.speed;
-            if (y > sp.yTop) {
-                y = sp.yBase;
-            }
-            positionAttr.setY(sp.idx, y);
+        const currentTime = new Date().getTime();
 
-            // Update color based on new height
-            const tNorm = y / MAX_CITY_HEIGHT;
-            const [r, g, b] = heightColor(Math.max(0, tNorm), Math.random() * 0.1);
-            geometry.attributes.color.setXYZ(sp.idx, r, g, b);
+        /* Stream points (city) */
+        for (const sp of streamPoints) {
+            let y = cityPositionAttr.getY(sp.idx);
+            y += sp.speed;
+            if (y > sp.yTop) y = sp.yBase;
+            cityPositionAttr.setY(sp.idx, y);
+            const [r, g, b] = heightColor(Math.max(0, y / MAX_CITY_HEIGHT), Math.random() * 0.1);
+            cityColorAttr.setXYZ(sp.idx, r, g, b);
+        }
+        cityPositionAttr.needsUpdate = true;
+        cityColorAttr.needsUpdate = true;
+
+        /* Car movement */
+        for (let c = 0; c < NUM_CARS; c++) {
+            const car = cars[c];
+
+            if (car.isHorizontal) {
+                car.x += car.speed * car.direction;
+                if (car.x > -OFFSET + (ROAD_WIDTH/2) || car.x < OFFSET - (ROAD_WIDTH/2)) { /* Wrap around city bounds */
+                    car.x = -car.x; /* Reverse direction and position */
+                    car.direction *= -1;
+                }
+            } else {
+                car.z += car.speed * car.direction;
+                if (car.z > -OFFSET + (ROAD_WIDTH/2) || car.z < OFFSET - (ROAD_WIDTH/2)) {
+                    car.z = -car.z; /* Reverse direction and position */
+                    car.direction *= -1;
+                }
+            }
+
+            let carRotation = 0;
+            if (car.isHorizontal) {
+                carRotation = car.direction === 1 ? -Math.PI / 2 : Math.PI / 2; /* East or West */
+            } else {
+                carRotation = car.direction === 1 ? 0 : Math.PI; /* North or South */
+            }
+
+            /* Update car position in geometry buffer */
+            for (let i = 0; i < CAR_POINTS_COUNT; i++) {
+                const baseIdx = i * 3;
+                const localX = baseCarPoints[baseIdx];
+                const localY = baseCarPoints[baseIdx + 1];
+                const localZ = baseCarPoints[baseIdx + 2];
+
+                /* Rotate local points around car's Y axis */
+                const rotatedX = localX * Math.cos(carRotation) - localZ * Math.sin(carRotation);
+                const rotatedZ = localX * Math.sin(carRotation) + localZ * Math.cos(carRotation);
+
+                const globalIdx = (car.startIdx + i) * 3;
+                carPositions[globalIdx + 0] = car.x + rotatedX;
+                carPositions[globalIdx + 1] = car.y + localY;
+                carPositions[globalIdx + 2] = car.z + rotatedZ;
+            }
+        }
+        carPositionAttr.needsUpdate = true;
+
+
+        /* Target logic */
+        if (targetCar && targetAcquireTime && (currentTime - targetAcquireTime > 6000)) { /* Remove target after 6s */
+            releaseTarget();
+            targetTimer = setTimeout(acquireTarget, rng(2000, 4000)); /* Re-acquire after 2-4s cooldown */
+        } else if (!targetCar && currentTime - targetReleaseTime > 2000 && !targetTimer) {
+             targetTimer = setTimeout(acquireTarget, rng(8000, 12000));
         }
 
-        positionAttr.needsUpdate = true;
-        geometry.attributes.color.needsUpdate = true;
 
+        /* Main scene render */
         controls.update();
+
+        renderer.setViewport(0, 0, innerWidth, innerHeight);
+        renderer.setScissor(0, 0, innerWidth, innerHeight);
+        renderer.setScissorTest(false); /* Disable scissor for main render */
         composer.render();
+
+        /* Tracking camera PiP render */
+        if (targetCar) {
+            const viewWidth = 280;
+            const viewHeight = 200;
+            const padding = 14;
+
+            const targetPos = new THREE.Vector3(targetCar.x, targetCar.y + targetCar.numPoints * 0.05, targetCar.z); /* Aim slightly above car */
+            trackCam.lookAt(targetPos);
+
+            /* Position tracking camera behind and above the car */
+            let camOffset = new THREE.Vector3(0, 8, 12); /* 8 units up, 12 units back */
+            let carAngle = 0;
+            if (targetCar.isHorizontal) {
+                carAngle = targetCar.direction === 1 ? -Math.PI / 2 : Math.PI / 2;
+            } else {
+                carAngle = targetCar.direction === 1 ? 0 : Math.PI;
+            }
+            camOffset.applyAxisAngle(new THREE.Vector3(0,1,0), carAngle);
+            trackCam.position.copy(targetPos).add(camOffset);
+
+
+            trackRenderer.setViewport(0, 0, viewWidth, viewHeight); /* Render to tracking canvas's resolution */
+            trackRenderer.clear(); /* Clear only this canvas area */
+            trackRenderer.render(scene, trackCam);
+        }
     }
 
     animate();
@@ -379,7 +742,17 @@
         camera.updateProjectionMatrix();
         renderer.setSize(innerWidth, innerHeight);
         composer.setSize(innerWidth, innerHeight);
+
+        /* Update PiP canvas size, though it's fixed */
+        const trackingViewportDiv = document.getElementById('tracking-viewport');
+        const trackingCanvas = document.getElementById('tracking-canvas');
+        if (trackingViewportDiv && trackingCanvas) {
+            trackRenderer.setSize(trackingViewportDiv.offsetWidth, trackingViewportDiv.offsetHeight);
+            trackCam.aspect = trackingViewportDiv.offsetWidth / trackingViewportDiv.offsetHeight;
+            trackCam.updateProjectionMatrix();
+        }
     });
+
     </script>
 </body>
 </html>
