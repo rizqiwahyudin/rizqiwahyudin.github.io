@@ -452,7 +452,19 @@
 
     // ─── Config ───────────────────────────────────────────────────────────────
     const ZOOM = 16;
-    const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+    // Rotate across mirrors to spread rate limit pressure
+    const OVERPASS_MIRRORS = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    ];
+    let _overpassMirrorIdx = Math.floor(Math.random() * OVERPASS_MIRRORS.length);
+    function getOverpassURL() {
+        const url = OVERPASS_MIRRORS[_overpassMirrorIdx % OVERPASS_MIRRORS.length];
+        _overpassMirrorIdx++;
+        return url;
+    }
+    const OVERPASS_URL = getOverpassURL(); // keep for legacy refs -- actual tile loads call getOverpassURL()
     const FALLBACK_LAT = 56.9496;
     const FALLBACK_LON = 24.1052;
     // VPS backend -- tile server + authenticated proxy endpoints
@@ -1213,7 +1225,7 @@
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
             const buildAbort = new AbortController();
             const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
-            const overpassRes = await fetch(OVERPASS_URL, {
+            const overpassRes = await fetch(getOverpassURL(), {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`,
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
