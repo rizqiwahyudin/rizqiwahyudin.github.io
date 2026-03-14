@@ -921,12 +921,27 @@
 
     // ─── Ground plane mesh (Fix 4B) -- added once at startup ─────────────────
     {
-        const groundGeo = new THREE.PlaneGeometry(2000, 2000);
-        const groundMat = new THREE.MeshBasicMaterial({ color: 0x050a0f, transparent: true, opacity: 0.9 });
-        const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-        groundMesh.rotation.x = -Math.PI / 2; // rotate to lie flat (XZ plane)
-        groundMesh.position.set(0, -0.5, 0);
-        scene.add(groundMesh);
+        // ── Ground point grid (city.html style) ──────────────────────────────
+        // Sparse point grid covering a large area, same aesthetic as city demo
+        {
+            const GSIZE = 3000;  // half-extent in meters
+            const GSTEP = 14;    // spacing between points
+            const gPositions = [];
+            const gColors = [];
+            for (let gx = -GSIZE; gx <= GSIZE; gx += GSTEP) {
+                for (let gz = -GSIZE; gz <= GSIZE; gz += GSTEP) {
+                    gPositions.push(gx, -0.5, gz);
+                    // Subtle dark blue-grey, slightly randomized
+                    const v = 0.06 + Math.random() * 0.04;
+                    gColors.push(v * 0.7, v, v * 1.1);
+                }
+            }
+            const gGeo = new THREE.BufferGeometry();
+            gGeo.setAttribute('position', new THREE.Float32BufferAttribute(gPositions, 3));
+            gGeo.setAttribute('color', new THREE.Float32BufferAttribute(gColors, 3));
+            const gMat = new THREE.PointsMaterial({ size: 0.5, sizeAttenuation: false, vertexColors: true });
+            scene.add(new THREE.Points(gGeo, gMat));
+        }
     }
 
     // ─── GPS dot + ring ───────────────────────────────────────────────────────
@@ -1167,7 +1182,7 @@
                         const wy2 = p0.y + t * (p1.y - p0.y);
                         const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
                         posArr.push(wx + wx2, wallH, wz - wy2);
-                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
+                        colArr.push(Math.min(1, r * 1.15), Math.min(1, g * 1.15), Math.min(1, b * 1.15));
                     }
 
                     // Edge emphasis: wall base strip (y = 0 to 0.5), 2x density, dimmer
@@ -1194,7 +1209,7 @@
                         const py = p0.y + t * (p1.y - p0.y);
                         const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
                         posArr.push(wx + px, h, wz - py);
-                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
+                        colArr.push(Math.min(1, r * 1.15), Math.min(1, g * 1.15), Math.min(1, b * 1.15));
                     }
                 }
             }
