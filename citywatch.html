@@ -2302,6 +2302,18 @@
     fetchAircraft();
     setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
 
+    // ── Tile retry ticker ─────────────────────────────────────────────────────
+    // updateTileManager only runs on GPS updates. If GPS is denied/static,
+    // errored tiles never get retried. This ticker re-triggers the tile manager
+    // every 20s so retries fire even without GPS movement.
+    setInterval(() => {
+        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        // Only retry if there are actually errored tiles with expired backoff
+        const hasRetriable = [...tileCache.values()].some(e => e.error && Date.now() > e.retryAt);
+        if (hasRetriable) updateTileManager(lat, lon);
+    }, 20000);
+
     // ─── Open-Meteo wind particles ────────────────────────────────────────────
     const WIND_PARTICLE_COUNT = 30;
     let windSpeed = 0;       // m/s
@@ -2488,7 +2500,10 @@
 
     function onGPSError(err) {
         console.warn('GPS error:', err.message);
-        document.getElementById('gps-denied').style.display = 'block';
+        // Show briefly then hide -- fallback tiles load regardless
+        const gpsDeniedEl = document.getElementById('gps-denied');
+        gpsDeniedEl.style.display = 'block';
+        setTimeout(() => { gpsDeniedEl.style.display = 'none'; }, 4000);
         gpsError = 'gps_denied';
 
         // Fall back to Riga
