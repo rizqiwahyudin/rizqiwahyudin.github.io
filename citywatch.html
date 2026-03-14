@@ -951,7 +951,7 @@
                         float wave = sin(position.x * 0.018 + uTime * 0.4) * sin(position.z * 0.014 + uTime * 0.28) * 0.6;
                         vec3 pos = vec3(position.x, -0.5 + wave, position.z);
                         gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                        gl_PointSize = 0.8;
+                        gl_PointSize = 2.0;
                     }
                 `,
                 fragmentShader: `
@@ -976,10 +976,11 @@
     const riseData = []; // per-particle: { bx, by, bz, height, speed, phase }
 
     for (let i = 0; i < RISE_COUNT; i++) {
-        riseData.push({ bx: 0, by: 0, bz: 0, height: 10, speed: 0, phase: Math.random() * Math.PI * 2 });
-        riseAlphas[i] = Math.random(); // stagger initial phases
+        // height: -1 flags as "unspawned" so first updateRiseParticles call spawns it
+        riseData.push({ bx: 0, by: 0, bz: 0, height: -1, speed: 0, phase: Math.random() * Math.PI * 2 });
+        riseAlphas[i] = 0;
         risePositions[i * 3]     = 0;
-        risePositions[i * 3 + 1] = 0;
+        risePositions[i * 3 + 1] = -100; // park off-screen until spawned
         risePositions[i * 3 + 2] = 0;
     }
 
@@ -1012,25 +1013,30 @@
 
     // Spawn a particle at a random point on the currently loaded tile buildings
     function respawnRiseParticle(i) {
-        // Pick a random loaded tile
+        // Pick a random loaded tile with completed fade-in
         const entries = [...tileCache.values()].filter(e => e.points && e.fadeComplete);
-        if (entries.length === 0) { riseData[i].height = 0; return; }
+        if (entries.length === 0) {
+            riseData[i].height = -1; // stay unspawned, try again next frame
+            return;
+        }
+        // Try a few random points until we find one on a wall/roof (Y > 1m)
         const entry = entries[Math.floor(Math.random() * entries.length)];
         const pos = entry.points.geometry.getAttribute('position');
         const count = pos.count;
-        if (count === 0) return;
-        const idx = Math.floor(Math.random() * count);
-        const bx = pos.getX(idx);
-        const by = pos.getY(idx);
-        const bz = pos.getZ(idx);
-        // Only spawn on walls/roof (Y > 1m) not ground
-        if (by < 1) { riseData[i].height = 0; return; }
-        riseData[i].bx = bx;
-        riseData[i].by = by;
-        riseData[i].bz = bz;
-        riseData[i].height = by + 4 + Math.random() * 8; // rise 4-12m above spawn
-        riseData[i].speed  = 1.5 + Math.random() * 2.5;  // m/s
-        riseAlphas[i] = 0;
+        if (count < 2) { riseData[i].height = -1; return; }
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const idx = Math.floor(Math.random() * count);
+            const by = pos.getY(idx);
+            if (by < 1.0) continue; // skip ground points
+            riseData[i].bx     = pos.getX(idx);
+            riseData[i].by     = by;
+            riseData[i].bz     = pos.getZ(idx);
+            riseData[i].height = by + 4 + Math.random() * 8; // rise 4-12m above spawn
+            riseData[i].speed  = 1.5 + Math.random() * 2.5;  // m/s
+            riseAlphas[i] = 0;
+            return;
+        }
+        riseData[i].height = -1; // couldn't find a valid point, retry next frame
     }
 
     function updateRiseParticles(delta) {
@@ -1038,11 +1044,17 @@
         const alphaAttr = riseGeo.getAttribute('alpha');
         for (let i = 0; i < RISE_COUNT; i++) {
             const d = riseData[i];
-            if (d.height <= 0) { respawnRiseParticle(i); continue; }
-            riseAlphas[i] = Math.min(1, riseAlphas[i] + delta * d.speed / (d.height - d.by + 0.01));
-            const t = riseAlphas[i];
-            posAttr.setXYZ(i, d.bx, d.by + t * (d.height - d.by), d.bz);
-            if (t >= 1.0) respawnRiseParticle(i);
+            // Unspawned or finished -- try to spawn. Stagger spawning (1 per frame max when unloaded)
+            if (d.height < 0 || riseAlphas[i] >= 1.0) {
+                respawnRiseParticle(i);
+                continue;
+            }
+            // Advance lifecycle
+            const rise = d.height - d.by;
+            if (rise < 0.1) { respawnRiseParticle(i); continue; }
+            riseAlphas[i] = Math.min(1.0, riseAlphas[i] + delta * d.speed / rise);
+            const frac = riseAlphas[i];
+            posAttr.setXYZ(i, d.bx, d.by + frac * rise, d.bz);
         }
         posAttr.needsUpdate   = true;
         alphaAttr.needsUpdate = true;
