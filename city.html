@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>city // point cloud</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+        }
+        #back-btn {
+            position: fixed;
+            top: 14px; left: 14px;
+            font: 14px 'DotGothic16', monospace;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            text-decoration: none;
+            color: rgba(255,255,255,0.35);
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px;
+            padding: 6px 14px;
+            z-index: 10;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.8);
+            border-color: rgba(255,255,255,0.3);
+        }
+        #info {
+            position: fixed;
+            bottom: 14px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255,255,255,0.12);
+            font: 11px 'DotGothic16', monospace;
+            pointer-events: none;
+            z-index: 1;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <a id="back-btn" href="index.html">← back</a>
+    <div id="info">orbit // drag &nbsp;&nbsp; zoom // scroll &nbsp;&nbsp; reset // double-click</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <script>
+    // ─── Simplex noise (2D, inline) ───────────────────────────────────────────
+    const simplex = (() => {
+        const grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+        const perm = new Uint8Array(512);
+        const p = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) p[i] = i;
+        for (let i = 255; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [p[i], p[j]] = [p[j], p[i]];
+        }
+        for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+
+        const F2 = 0.5 * (Math.sqrt(3) - 1);
+        const G2 = (3 - Math.sqrt(3)) / 6;
+
+        function dot2(g, x, y) { return g[0] * x + g[1] * y; }
+
+        return function noise(x, y) {
+            const s = (x + y) * F2;
+            const i = Math.floor(x + s);
+            const j = Math.floor(y + s);
+            const t = (i + j) * G2;
+            const x0 = x - (i - t), y0 = y - (j - t);
+            const [i1, j1] = x0 > y0 ? [1, 0] : [0, 1];
+            const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+            const x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+            const ii = i & 255, jj = j & 255;
+            const gi0 = perm[ii + perm[jj]] % 8;
+            const gi1 = perm[ii + i1 + perm[jj + j1]] % 8;
+            const gi2 = perm[ii + 1 + perm[jj + 1]] % 8;
+            let n0 = 0, n1 = 0, n2 = 0;
+            let t0 = 0.5 - x0*x0 - y0*y0; if (t0 >= 0) { t0 *= t0; n0 = t0*t0*dot2(grad[gi0], x0, y0); }
+            let t1 = 0.5 - x1*x1 - y1*y1; if (t1 >= 0) { t1 *= t1; n1 = t1*t1*dot2(grad[gi1], x1, y1); }
+            let t2 = 0.5 - x2*x2 - y2*y2; if (t2 >= 0) { t2 *= t2; n2 = t2*t2*dot2(grad[gi2], x2, y2); }
+            return 70 * (n0 + n1 + n2); // returns roughly -1..1
+        };
+    })();
+
+    // ─── Scene setup ─────────────────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.FogExp2(0x000000, 0.004);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
+    const INITIAL_CAM = { x: 80, y: 60, z: 80 };
+    camera.position.set(INITIAL_CAM.x, INITIAL_CAM.y, INITIAL_CAM.z);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ReinhardToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    document.body.appendChild(renderer.domElement);
+
+    // ─── Controls ────────────────────────────────────────────────────────────
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.3;
+    controls.minDistance = 20;
+    controls.maxDistance = 300;
+
+    let autoRotateTimer = null;
+    controls.addEventListener('start', () => {
+        controls.autoRotate = false;
+        if (autoRotateTimer) clearTimeout(autoRotateTimer);
+    });
+    controls.addEventListener('end', () => {
+        autoRotateTimer = setTimeout(() => { controls.autoRotate = true; }, 3000);
+    });
+
+    renderer.domElement.addEventListener('dblclick', () => {
+        camera.position.set(INITIAL_CAM.x, INITIAL_CAM.y, INITIAL_CAM.z);
+        controls.target.set(0, 0, 0);
+        controls.update();
+    });
+
+    // ─── Post-processing (bloom) ─────────────────────────────────────────────
+    const composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    const bloomPass = new THREE.UnrealBloomPass(
+        new THREE.Vector2(innerWidth, innerHeight),
+        1.5,   // strength
+        0.4,   // radius
+        0.1    // threshold
+    );
+    composer.addPass(bloomPass);
+
+    // ─── Color by height ─────────────────────────────────────────────────────
+    // Returns [r, g, b] in 0-1 range based on normalized height (0=ground, 1=tallest)
+    function heightColor(t, jitter) {
+        // ground: dark teal #003333
+        // mid: cyan #00ffff
+        // tips: near white with cyan tint #ccffff
+        const j = (jitter - 0.5) * 0.1;
+        let r, g, b;
+        if (t < 0.5) {
+            const s = t * 2; // 0..1
+            r = 0 + s * 0.0;
+            g = 0.2 + s * 0.8;
+            b = 0.2 + s * 0.8;
+        } else {
+            const s = (t - 0.5) * 2; // 0..1
+            r = 0.0 + s * 0.7;
+            g = 1.0;
+            b = 1.0;
+        }
+        return [
+            Math.max(0, Math.min(1, r + j)),
+            Math.max(0, Math.min(1, g + j)),
+            Math.max(0, Math.min(1, b + j))
+        ];
+    }
+
+    // ─── City generation ─────────────────────────────────────────────────────
+    // Grid: 10x10 blocks, block size 9, road width 3, stride 12
+    // Total span: 120 units, centered at origin => offset -60
+    const GRID = 10;
+    const BLOCK = 9;
+    const STRIDE = 12;
+    const OFFSET = -(GRID * STRIDE) / 2;
+    const MAX_CITY_HEIGHT = 40;
+
+    // Buildings are stored as { x, z, w, d, h } in world space
+    const buildings = [];
+
+    function rng(min, max) { return min + Math.random() * (max - min); }
+
+    for (let gi = 0; gi < GRID; gi++) {
+        for (let gj = 0; gj < GRID; gj++) {
+            const bx = OFFSET + gi * STRIDE;
+            const bz = OFFSET + gj * STRIDE;
+
+            // distance from city center -> downtown has taller buildings
+            const dx = (gi - GRID/2 + 0.5) / (GRID/2);
+            const dz = (gj - GRID/2 + 0.5) / (GRID/2);
+            const distFactor = 1 - Math.min(1, Math.sqrt(dx*dx + dz*dz) * 0.8);
+
+            const count = Math.floor(rng(2, 6));
+            for (let k = 0; k < count; k++) {
+                const w = rng(1.2, 3.5);
+                const d = rng(1.2, 3.5);
+                const maxH = 4 + distFactor * (MAX_CITY_HEIGHT - 4);
+                const h = rng(1.5, maxH);
+                const px = bx + rng(0.3, BLOCK - w - 0.3);
+                const pz = bz + rng(0.3, BLOCK - d - 0.3);
+                buildings.push({ x: px, z: pz, w, d, h });
+            }
+        }
+    }
+
+    // ─── Point sampling ──────────────────────────────────────────────────────
+    // We'll collect all positions and colors into flat arrays, then build geometry.
+    // Also track animated point indices for the upward-drift effect.
+
+    const positions = [];
+    const colors = [];
+
+    // Animated stream points: { idx (index into positions /3), yBase, yTop, speed }
+    const streamPoints = [];
+
+    // Sample points on a rectangle defined by two axes and an origin
+    // ax, ay, az: first axis direction * half-extent
+    // bx, by, bz: second axis direction * half-extent
+    // ox, oy, oz: center of rectangle
+    // count: how many points
+    function sampleRect(ox, oy, oz, ax, ay, az, bx2, by2, bz2, count, yMin, yMax, stream) {
+        for (let i = 0; i < count; i++) {
+            const s = (Math.random() - 0.5) * 2;
+            const t = (Math.random() - 0.5) * 2;
+            const px = ox + ax*s + bx2*t;
+            const py = oy + ay*s + by2*t;
+            const pz = oz + az*s + bz2*t;
+
+            const tNorm = (py - 0) / MAX_CITY_HEIGHT;
+            const jitter = Math.random();
+            const [r, g, b] = heightColor(Math.max(0, tNorm), jitter);
+
+            const idx = positions.length / 3;
+            positions.push(px, py, pz);
+            colors.push(r, g, b);
+
+            if (stream) {
+                streamPoints.push({ idx, yBase: yMin, yTop: yMax, speed: rng(0.02, 0.08) });
+            }
+        }
+    }
+
+    // Sample all building faces
+    for (const b of buildings) {
+        const cx = b.x + b.w / 2;
+        const cz = b.z + b.d / 2;
+        const hw = b.w / 2;
+        const hd = b.d / 2;
+        const h = b.h;
+
+        // Density: proportional to surface area
+        const wallArea = 2 * (b.w + b.d) * h;
+        const roofArea = b.w * b.d;
+        const totalArea = wallArea + roofArea;
+        const density = 6; // points per unit^2
+        const total = Math.floor(totalArea * density);
+
+        // Roof (top face, y = h)
+        const roofCount = Math.floor(roofArea * density);
+        sampleRect(cx, h, cz,  hw,0,0,  0,0,hd,  roofCount, h, h, false);
+
+        // Floor (y = 0)
+        sampleRect(cx, 0, cz,  hw,0,0,  0,0,hd,  Math.floor(roofArea * density * 0.3), 0, 0, false);
+
+        // Front wall (z = cz + hd)
+        const frontCount = Math.floor(b.w * h * density);
+        sampleRect(cx, h/2, cz+hd,  hw,0,0,  0,h/2,0,  frontCount, 0, h, false);
+
+        // Back wall
+        sampleRect(cx, h/2, cz-hd,  hw,0,0,  0,h/2,0,  frontCount, 0, h, false);
+
+        // Left wall
+        const sideCount = Math.floor(b.d * h * density);
+        sampleRect(cx-hw, h/2, cz,  0,0,hd,  0,h/2,0,  sideCount, 0, h, false);
+
+        // Right wall
+        sampleRect(cx+hw, h/2, cz,  0,0,hd,  0,h/2,0,  sideCount, 0, h, false);
+
+        // Upward stream points on walls (5% of wall points, tracked for animation)
+        const streamCount = Math.max(1, Math.floor(total * 0.04));
+        for (let i = 0; i < streamCount; i++) {
+            // Place on a random wall
+            const wall = Math.floor(Math.random() * 4);
+            let px, py, pz;
+            py = rng(0, h);
+            if (wall === 0) { px = cx + rng(-hw, hw); pz = cz + hd; }
+            else if (wall === 1) { px = cx + rng(-hw, hw); pz = cz - hd; }
+            else if (wall === 2) { px = cx - hw; pz = cz + rng(-hd, hd); }
+            else { px = cx + hw; pz = cz + rng(-hd, hd); }
+
+            const tNorm = py / MAX_CITY_HEIGHT;
+            const [r, g, b] = heightColor(Math.max(0, tNorm), Math.random());
+            const idx = positions.length / 3;
+            positions.push(px, py, pz);
+            colors.push(r, g, b);
+            streamPoints.push({ idx, yBase: 0, yTop: h, speed: rng(0.03, 0.12) });
+        }
+    }
+
+    // ─── Terrain ─────────────────────────────────────────────────────────────
+    const TERRAIN_SPAN = GRID * STRIDE;
+    const TERRAIN_STEP = 0.8;
+    for (let tx = -TERRAIN_SPAN/2; tx <= TERRAIN_SPAN/2; tx += TERRAIN_STEP) {
+        for (let tz = -TERRAIN_SPAN/2; tz <= TERRAIN_SPAN/2; tz += TERRAIN_STEP) {
+            const ny = simplex(tx * 0.05, tz * 0.05) * 0.4; // very subtle terrain undulation
+            const jitter = Math.random();
+            const [r, g, b] = heightColor(0.05 + Math.random() * 0.05, jitter);
+            positions.push(tx, ny, tz);
+            colors.push(r, g, b);
+        }
+    }
+
+    // ─── Build geometry ───────────────────────────────────────────────────────
+    const geometry = new THREE.BufferGeometry();
+    const posArr = new Float32Array(positions);
+    const colArr = new Float32Array(colors);
+    geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+
+    const material = new THREE.PointsMaterial({
+        size: 0.12,
+        sizeAttenuation: true,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+    });
+
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+
+    // ─── Animation loop ───────────────────────────────────────────────────────
+    const positionAttr = geometry.attributes.position;
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Update stream points (upward drift)
+        for (const sp of streamPoints) {
+            let y = positionAttr.getY(sp.idx);
+            y += sp.speed;
+            if (y > sp.yTop) {
+                y = sp.yBase;
+            }
+            positionAttr.setY(sp.idx, y);
+
+            // Update color based on new height
+            const tNorm = y / MAX_CITY_HEIGHT;
+            const [r, g, b] = heightColor(Math.max(0, tNorm), Math.random() * 0.1);
+            geometry.attributes.color.setXYZ(sp.idx, r, g, b);
+        }
+
+        positionAttr.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+
+        controls.update();
+        composer.render();
+    }
+
+    animate();
+
+    // ─── Resize ───────────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+        composer.setSize(innerWidth, innerHeight);
+    });
+    </script>
+</body>
+</html>

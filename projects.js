@@ -73,6 +73,15 @@ const projects = [
         classification: "canvas // mathematics",
         sim: "fourier.html",
         tags: ["canvas 2d", "fourier series", "epicycles"]
+    },
+    {
+        type: "sim",
+        title: "city",
+        subtitle: "point cloud city",
+        desc: "",
+        classification: "webgl // point cloud",
+        sim: "city.html",
+        tags: ["three.js", "point cloud", "procedural"]
     }
 ];
 
