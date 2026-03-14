@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>citywatch // live map</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            display: block;
+        }
+        .vt323 {
+            font-family: 'DotGothic16', monospace;
+            letter-spacing: 1px;
+            font-size: 11px;
+            line-height: 1.8;
+            color: #ffffff;
+            text-transform: lowercase;
+        }
+        #back-btn {
+            position: fixed;
+            top: 14px; left: 14px;
+            font-size: 14px;
+            text-transform: lowercase;
+            text-decoration: none;
+            color: rgba(255,255,255,0.35);
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px;
+            padding: 6px 14px;
+            z-index: 20;
+            transition: color 0.15s, border-color 0.15s;
+            font-family: 'DotGothic16', monospace;
+        }
+        #back-btn:hover {
+            color: rgba(255,255,255,0.8);
+            border-color: rgba(255,255,255,0.3);
+        }
+        #hint {
+            position: fixed;
+            bottom: 14px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255,255,255,0.25);
+            pointer-events: none;
+            z-index: 20;
+            font-size: 11px;
+            font-family: 'DotGothic16', monospace;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+        }
+        .hud-panel {
+            position: fixed;
+            background: rgba(0,0,0,0.75);
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 8px 10px;
+            z-index: 20;
+            white-space: pre;
+            pointer-events: none;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            line-height: 1.7;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: #ffffff;
+        }
+        .hud-panel span { color: #00ffff; }
+        .hud-panel .warn { color: #ffaa00; }
+        .hud-panel .err { color: #ff2244; }
+        #coords-panel { top: 60px; left: 14px; }
+        #tile-panel { top: 14px; right: 14px; }
+        #gps-denied {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'DotGothic16', monospace;
+            font-size: 13px;
+            letter-spacing: 2px;
+            text-transform: lowercase;
+            color: #ff2244;
+            border: 1px solid #ff2244;
+            background: rgba(0,0,0,0.85);
+            padding: 12px 20px;
+            z-index: 30;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <a id="back-btn" href="index.html">← back</a>
+    <div id="hint" class="vt323">pan // drag &nbsp;&nbsp; zoom // scroll</div>
+    <div id="coords-panel" class="hud-panel"></div>
+    <div id="tile-panel" class="hud-panel"></div>
+    <div id="gps-denied">gps_denied // enable location</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <script>
+    'use strict';
+
+    // ─── Config ───────────────────────────────────────────────────────────────
+    const TILE_SERVER = 'http://95.217.18.164:3456';
+    const ZOOM = 16;
+    const FALLBACK_LAT = 56.9496;
+    const FALLBACK_LON = 24.1052;
+    const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
+
+    // ─── Tile Math ────────────────────────────────────────────────────────────
+    function latLonToTile(lat, lon, z) {
+        const n = Math.pow(2, z);
+        const x = Math.floor((lon + 180) / 360 * n);
+        const latRad = lat * Math.PI / 180;
+        const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+        return { x, y };
+    }
+
+    function tileToBbox(z, x, y) {
+        const n = Math.pow(2, z);
+        const west = x / n * 360 - 180;
+        const east = (x + 1) / n * 360 - 180;
+        const north = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+        const south = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
+        return { south, west, north, east };
+    }
+
+    function tileCenter(z, x, y) {
+        const bbox = tileToBbox(z, x, y);
+        return {
+            lat: (bbox.south + bbox.north) / 2,
+            lon: (bbox.west + bbox.east) / 2,
+        };
+    }
+
+    // Tile width in meters at a given latitude (for zoom 16)
+    function tileWidthMeters(lat) {
+        const n = Math.pow(2, ZOOM);
+        const DEG_TO_RAD = Math.PI / 180;
+        const METERS_PER_DEG = 111320;
+        const lonPerTile = 360 / n;
+        return lonPerTile * Math.cos(lat * DEG_TO_RAD) * METERS_PER_DEG;
+    }
+
+    // ─── Mercator projection (meters from world origin) ───────────────────────
+    // World origin is set once (center of first tile loaded).
+    // All Three.js positions are in meters from this origin.
+    const DEG_TO_RAD = Math.PI / 180;
+    const METERS_PER_DEG_LAT = 111320;
+
+    let worldOriginLat = null;
+    let worldOriginLon = null;
+    let worldOriginFromFallback = false;
+
+    function setWorldOrigin(lat, lon, fromFallback = false) {
+        worldOriginLat = lat;
+        worldOriginLon = lon;
+        worldOriginFromFallback = fromFallback;
+    }
+
+    function latLonToWorld(lat, lon) {
+        // Equirectangular relative to world origin
+        const x = (lon - worldOriginLon) * Math.cos(worldOriginLat * DEG_TO_RAD) * METERS_PER_DEG_LAT;
+        const z = -(lat - worldOriginLat) * METERS_PER_DEG_LAT; // negative: north is -z in Three.js top-down
+        return { x, z };
+    }
+
+    // ─── Scene setup ──────────────────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.FogExp2(0x050810, 0.004);
+
+    // Orthographic camera, top-down
+    const frustumSize = 400; // meters across initially
+    const aspect = window.innerWidth / window.innerHeight;
+    const camera = new THREE.OrthographicCamera(
+        -frustumSize * aspect / 2,
+         frustumSize * aspect / 2,
+         frustumSize / 2,
+        -frustumSize / 2,
+        0.1, 5000
+    );
+    camera.position.set(0, 500, 0);
+    camera.lookAt(0, 0, 0);
+    camera.up.set(0, 0, -1); // north is up on screen
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ReinhardToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    document.body.appendChild(renderer.domElement);
+
+    // ─── Post-processing (bloom) ──────────────────────────────────────────────
+    const composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    const bloomPass = new THREE.UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.2, // strength
+        0.4, // radius
+        0.1  // threshold
+    );
+    composer.addPass(bloomPass);
+
+    // ─── Resize handler ───────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+        const w = window.innerWidth, h = window.innerHeight;
+        const a = w / h;
+        const half = (frustumSize / currentZoom) / 2;
+        camera.left = -half * a;
+        camera.right = half * a;
+        camera.top = half;
+        camera.bottom = -half;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+        composer.setSize(w, h);
+    });
+
+    // ─── Camera pan / zoom state ──────────────────────────────────────────────
+    let currentZoom = 1.0; // multiplier: higher = more zoomed in (smaller frustum)
+    let camTarget = new THREE.Vector3(0, 0, 0); // world XZ center of view
+    let followGPS = true;
+    let panTimer = null;
+
+    // Pan via mouse drag
+    let isDragging = false;
+    let lastMouse = { x: 0, y: 0 };
+
+    renderer.domElement.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        lastMouse = { x: e.clientX, y: e.clientY };
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - lastMouse.x;
+        const dy = e.clientY - lastMouse.y;
+        lastMouse = { x: e.clientX, y: e.clientY };
+        panBy(dx, dy);
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Touch pan
+    let lastTouch = null;
+    renderer.domElement.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+            lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+        e.preventDefault();
+    }, { passive: false });
+
+    renderer.domElement.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && lastTouch) {
+            const dx = e.touches[0].clientX - lastTouch.x;
+            const dy = e.touches[0].clientY - lastTouch.y;
+            lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            panBy(dx, dy);
+        }
+        e.preventDefault();
+    }, { passive: false });
+
+    renderer.domElement.addEventListener('touchend', () => { lastTouch = null; });
+
+    function panBy(screenDx, screenDy) {
+        // Convert screen pixels to world meters
+        const a = window.innerWidth / window.innerHeight;
+        const frustumW = (frustumSize / currentZoom) * a;
+        const frustumH = frustumSize / currentZoom;
+        const metersPerPixelX = frustumW / window.innerWidth;
+        const metersPerPixelY = frustumH / window.innerHeight;
+
+        // In top-down view: screen right = world +X, screen down = world +Z (south)
+        camTarget.x -= screenDx * metersPerPixelX;
+        camTarget.z -= screenDy * metersPerPixelY;
+
+        followGPS = false;
+        if (panTimer) clearTimeout(panTimer);
+        panTimer = setTimeout(() => { followGPS = true; }, 5000);
+    }
+
+    // Scroll wheel zoom
+    renderer.domElement.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        currentZoom = Math.max(0.2, Math.min(10, currentZoom * delta));
+        updateCameraFrustum();
+    }, { passive: false });
+
+    function updateCameraFrustum() {
+        const a = window.innerWidth / window.innerHeight;
+        const half = (frustumSize / currentZoom) / 2;
+        camera.left = -half * a;
+        camera.right = half * a;
+        camera.top = half;
+        camera.bottom = -half;
+        camera.updateProjectionMatrix();
+    }
+
+    function updateCameraPosition() {
+        camera.position.set(camTarget.x, 500, camTarget.z);
+        camera.lookAt(camTarget.x, 0, camTarget.z);
+    }
+
+    // ─── GPS state ────────────────────────────────────────────────────────────
+    let smoothLat = null;
+    let smoothLon = null;
+    let gpsAccuracy = null;
+    let gpsError = null;
+
+    // ─── GPS dot + ring ───────────────────────────────────────────────────────
+    // Single white point (no attenuation)
+    const gpsDotGeo = new THREE.BufferGeometry();
+    gpsDotGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 1, 0], 3));
+    const gpsDotMat = new THREE.PointsMaterial({ color: 0xffffff, size: 8, sizeAttenuation: false });
+    const gpsDot = new THREE.Points(gpsDotGeo, gpsDotMat);
+    gpsDot.visible = false;
+    scene.add(gpsDot);
+
+    // Ring (circle, radius 2, 32 segments)
+    const ringSegments = 32;
+    const ringGeoPositions = [];
+    for (let i = 0; i <= ringSegments; i++) {
+        const angle = (i / ringSegments) * Math.PI * 2;
+        ringGeoPositions.push(Math.cos(angle) * 2, 1, Math.sin(angle) * 2);
+    }
+    const ringGeo = new THREE.BufferGeometry();
+    ringGeo.setAttribute('position', new THREE.Float32BufferAttribute(ringGeoPositions, 3));
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x00ffff });
+    const gpsRing = new THREE.Line(ringGeo, ringMat);
+    gpsRing.visible = false;
+    scene.add(gpsRing);
+
+    function updateGPSIndicator(worldX, worldZ) {
+        gpsDot.position.set(worldX, 1, worldZ);
+        gpsRing.position.set(worldX, 1, worldZ);
+        gpsDot.visible = true;
+        gpsRing.visible = true;
+    }
+
+    // ─── Tile cache + manager ─────────────────────────────────────────────────
+    // Cache: key "z/x/y" -> { points: THREE.Points, loading: bool, error: bool }
+    const tileCache = new Map();
+    const loadingSet = new Set(); // keys currently being fetched
+    let currentTileKeys = new Set(); // the 4 tiles currently desired
+
+    // Returns the 2x2 grid of tile coords around a lat/lon.
+    // Strategy: determine which quadrant of the current tile the user is in,
+    // then pick the 4 tiles that surround that quadrant corner.
+    function get2x2Tiles(lat, lon) {
+        const center = latLonToTile(lat, lon, ZOOM);
+        const bbox = tileToBbox(ZOOM, center.x, center.y);
+        const midLat = (bbox.south + bbox.north) / 2;
+        const midLon = (bbox.west + bbox.east) / 2;
+
+        // Determine offset based on which half of the tile we're in
+        const dx = lon >= midLon ? 0 : -1;  // right half: include tile to right; left half: include tile to left
+        const dy = lat < midLat ? 0 : -1;   // south half: include tile below; north half: include tile above
+        // (y increases southward in slippy map: lower lat = higher y)
+
+        const tiles = [];
+        for (let oy = 0; oy <= 1; oy++) {
+            for (let ox = 0; ox <= 1; ox++) {
+                tiles.push({ x: center.x + dx + ox, y: center.y + dy + oy });
+            }
+        }
+        return tiles;
+    }
+
+    async function loadTile(z, x, y) {
+        const key = `${z}/${x}/${y}`;
+        if (tileCache.has(key) || loadingSet.has(key)) return;
+        loadingSet.add(key);
+
+        // Set world origin from first tile loaded
+        if (worldOriginLat === null) {
+            const c = tileCenter(z, x, y);
+            setWorldOrigin(c.lat, c.lon, worldOriginFromFallback);
+        }
+
+        updateTileHUD();
+
+        try {
+            const res = await fetch(`${TILE_SERVER}/tile/${z}/${x}/${y}`, {
+                headers: { 'Accept-Encoding': 'gzip' },
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const pointCount = parseInt(res.headers.get('X-Point-Count') || '0', 10);
+            const arrayBuffer = await res.arrayBuffer();
+            const floats = new Float32Array(arrayBuffer);
+
+            // Validate: must be multiple of 6
+            if (floats.length % 6 !== 0) {
+                throw new Error(`Invalid float count: ${floats.length} (not multiple of 6)`);
+            }
+
+            const actualCount = floats.length / 6;
+
+            // Build Three.js geometry
+            // Tile-local coords: x=east(m), y=up(m), z_tile=north(m) from tile center
+            // World coords: offset tile center from world origin
+            const tileC = tileCenter(z, x, y);
+            const tileWorldOffset = latLonToWorld(tileC.lat, tileC.lon);
+
+            const positions = new Float32Array(actualCount * 3);
+            const colors = new Float32Array(actualCount * 3);
+
+            for (let i = 0; i < actualCount; i++) {
+                const base = i * 6;
+                const tx = floats[base];     // east meters from tile center
+                const ty = floats[base + 1]; // north meters from tile center (in server: y = north)
+                const tz = floats[base + 2]; // height (z in server = up)
+                const r  = floats[base + 3];
+                const g  = floats[base + 4];
+                const b  = floats[base + 5];
+
+                // Server coordinate system: x=east, y=north, z=up (height)
+                // Three.js world: X=east, Y=up, Z=south (we flip north)
+                positions[i * 3]     = tileWorldOffset.x + tx;
+                positions[i * 3 + 1] = tz;                       // height -> Three.js Y
+                positions[i * 3 + 2] = tileWorldOffset.z - ty;   // north -> Three.js -Z
+
+                colors[i * 3]     = r;
+                colors[i * 3 + 1] = g;
+                colors[i * 3 + 2] = b;
+            }
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.15,
+                sizeAttenuation: true,
+                vertexColors: true,
+            });
+
+            const points = new THREE.Points(geo, mat);
+
+            // Only add to scene if this tile is still wanted
+            // (GPS may have moved to different tiles while we were loading)
+            if (currentTileKeys.has(key)) {
+                scene.add(points);
+                tileCache.set(key, { points, loading: false, error: false, pointCount: actualCount });
+            } else {
+                // Stale tile: dispose immediately
+                geo.dispose();
+                mat.dispose();
+            }
+            loadingSet.delete(key);
+            updateTileHUD();
+
+        } catch (err) {
+            console.error(`Tile ${key} failed:`, err.message);
+            const isOffline = err.message.includes('Failed to fetch') || err.message.includes('NetworkError');
+            tileCache.set(key, { points: null, loading: false, error: true, offline: isOffline, msg: err.message });
+            loadingSet.delete(key);
+            updateTileHUD();
+        }
+    }
+
+    function disposeTile(key) {
+        const entry = tileCache.get(key);
+        if (!entry) return;
+        if (entry.points) {
+            entry.points.geometry.dispose();
+            entry.points.material.dispose();
+            scene.remove(entry.points);
+        }
+        tileCache.delete(key);
+    }
+
+    // Called whenever GPS position updates -- manages the 2x2 tile grid
+    function updateTileManager(lat, lon) {
+        const desired = get2x2Tiles(lat, lon);
+        const desiredKeys = new Set(desired.map(t => `${ZOOM}/${t.x}/${t.y}`));
+
+        // Evict tiles no longer needed (not in desired set, not loading)
+        for (const key of tileCache.keys()) {
+            if (!desiredKeys.has(key)) {
+                disposeTile(key);
+            }
+        }
+        // Also evict from loadingSet if no longer needed (they'll finish but won't be added)
+        // (we just let them finish and then they'll be evicted on next update)
+
+        // Load new tiles
+        for (const t of desired) {
+            const key = `${ZOOM}/${t.x}/${t.y}`;
+            if (!tileCache.has(key) && !loadingSet.has(key)) {
+                loadTile(ZOOM, t.x, t.y);
+            }
+        }
+
+        currentTileKeys = desiredKeys;
+        updateTileHUD();
+    }
+
+    // ─── HUD updates ──────────────────────────────────────────────────────────
+    const coordsPanel = document.getElementById('coords-panel');
+    const tilePanel = document.getElementById('tile-panel');
+
+    function updateCoordsHUD() {
+        if (smoothLat === null) {
+            coordsPanel.innerHTML = 'lat  <span>--</span>\nlon  <span>--</span>\nacc  <span>waiting...</span>';
+            return;
+        }
+        const lat = smoothLat.toFixed(6);
+        const lon = smoothLon.toFixed(6);
+        const acc = gpsAccuracy !== null ? gpsAccuracy.toFixed(0) + 'm' : '--';
+        let html = `lat  <span>${lat}</span>\nlon  <span>${lon}</span>\nacc  <span>${acc}</span>`;
+        if (gpsError) {
+            html += `\n<span class="warn">${gpsError}</span>`;
+        }
+        coordsPanel.innerHTML = html;
+    }
+
+    function updateTileHUD() {
+        const loaded = [...tileCache.values()].filter(e => !e.error && !e.loading).length;
+        const loading = loadingSet.size;
+        const errors = [...tileCache.values()].filter(e => e.error).length;
+        const offline = [...tileCache.values()].some(e => e.offline);
+
+        let html = `tiles  <span>${loaded}/4</span>`;
+        if (loading > 0) {
+            // Show which tiles are loading
+            const loadingKeys = [...loadingSet];
+            for (const k of loadingKeys) {
+                const parts = k.split('/');
+                html += `\n<span class="warn">loading sector ${parts[1]}/${parts[2]}...</span>`;
+            }
+        }
+        if (errors > 0) {
+            if (offline) {
+                html += `\n<span class="err">tile_server_offline</span>`;
+            } else {
+                html += `\n<span class="err">${errors} tile error(s)</span>`;
+            }
+        }
+        tilePanel.innerHTML = html;
+    }
+
+    // ─── GPS watch ────────────────────────────────────────────────────────────
+    function onGPSPosition(pos) {
+        const rawLat = pos.coords.latitude;
+        const rawLon = pos.coords.longitude;
+        gpsAccuracy = pos.coords.accuracy;
+
+        if (smoothLat === null) {
+            smoothLat = rawLat;
+            smoothLon = rawLon;
+        } else {
+            smoothLat = 0.8 * smoothLat + SMOOTH_ALPHA * rawLat;
+            smoothLon = 0.8 * smoothLon + SMOOTH_ALPHA * rawLon;
+        }
+
+        // If world origin was set from fallback tiles and GPS is now available,
+        // reset the world origin so tiles load relative to user's actual position
+        if (worldOriginFromFallback) {
+            worldOriginLat = null;
+            worldOriginLon = null;
+            worldOriginFromFallback = false;
+            // Dispose all existing fallback tiles to force reload at correct offset
+            for (const key of [...tileCache.keys()]) {
+                disposeTile(key);
+            }
+        }
+
+        updateCoordsHUD();
+        updateTileManager(smoothLat, smoothLon);
+
+        if (followGPS && worldOriginLat !== null) {
+            const wp = latLonToWorld(smoothLat, smoothLon);
+            camTarget.set(wp.x, 0, wp.z);
+        }
+    }
+
+    function onGPSError(err) {
+        console.warn('GPS error:', err.message);
+        document.getElementById('gps-denied').style.display = 'block';
+        gpsError = 'gps_denied';
+
+        // Fall back to Riga
+        if (smoothLat === null) {
+            smoothLat = FALLBACK_LAT;
+            smoothLon = FALLBACK_LON;
+            if (worldOriginLat === null) worldOriginFromFallback = true;
+            updateCoordsHUD();
+            updateTileManager(smoothLat, smoothLon);
+        }
+    }
+
+    if ('geolocation' in navigator) {
+        navigator.geolocation.watchPosition(onGPSPosition, onGPSError, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0,
+        });
+        // If GPS hasn't reported in 5s, load fallback tiles so the map is visible
+        setTimeout(() => {
+            if (smoothLat === null) {
+                console.log('GPS timeout -- loading fallback tiles for Riga');
+                smoothLat = FALLBACK_LAT;
+                smoothLon = FALLBACK_LON;
+                // Mark that the world origin will be set from fallback
+                if (worldOriginLat === null) worldOriginFromFallback = true;
+                updateTileManager(FALLBACK_LAT, FALLBACK_LON);
+            }
+        }, 5000);
+    } else {
+        onGPSError(new Error('Geolocation not available'));
+    }
+
+    // ─── Animation loop ───────────────────────────────────────────────────────
+    let clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const t = clock.getElapsedTime();
+
+        // GPS ring pulse: scale 1.0 -> 1.5 -> 1.0, period 2s
+        if (gpsRing.visible) {
+            const pulse = 1.0 + 0.25 * (1 - Math.cos(Math.PI * t));
+            gpsRing.scale.set(pulse, pulse, pulse);
+        }
+
+        // Update GPS dot position if we have a position
+        if (smoothLat !== null && worldOriginLat !== null) {
+            const wp = latLonToWorld(smoothLat, smoothLon);
+            updateGPSIndicator(wp.x, wp.z);
+
+            if (followGPS) {
+                camTarget.set(wp.x, 0, wp.z);
+            }
+        }
+
+        updateCameraPosition();
+        composer.render();
+    }
+
+    animate();
+
+    // Initial HUD state
+    updateCoordsHUD();
+    updateTileHUD();
+
+    </script>
+</body>
+</html>

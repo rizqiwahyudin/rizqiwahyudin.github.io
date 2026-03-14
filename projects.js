@@ -82,6 +82,15 @@ const projects = [
         classification: "webgl // point cloud",
         sim: "city.html",
         tags: ["three.js", "point cloud", "procedural"]
+    },
+    {
+        type: "sim",
+        title: "citywatch",
+        subtitle: "real-time navigation // riga",
+        desc: "",
+        classification: "webgl // navigation",
+        sim: "citywatch.html",
+        tags: ["three.js", "osm", "gps", "real-time"]
     }
 ];
 
