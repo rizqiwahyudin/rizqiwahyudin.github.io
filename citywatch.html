@@ -1178,23 +1178,15 @@
     // Strategy: determine which quadrant of the current tile the user is in,
     // then pick the 4 tiles that surround that quadrant corner.
     function get2x2Tiles(lat, lon) {
+        // Center tile + immediate east/south/southeast neighbors.
+        // Aligned with get5x5Tiles center so toggling surveillance hits the same tiles.
         const center = latLonToTile(lat, lon, ZOOM);
-        const bbox = tileToBbox(ZOOM, center.x, center.y);
-        const midLat = (bbox.south + bbox.north) / 2;
-        const midLon = (bbox.west + bbox.east) / 2;
-
-        // Determine offset based on which half of the tile we're in
-        const dx = lon >= midLon ? 0 : -1;  // right half: include tile to right; left half: include tile to left
-        const dy = lat < midLat ? 0 : -1;   // south half: include tile below; north half: include tile above
-        // (y increases southward in slippy map: lower lat = higher y)
-
-        const tiles = [];
-        for (let oy = 0; oy <= 1; oy++) {
-            for (let ox = 0; ox <= 1; ox++) {
-                tiles.push({ x: center.x + dx + ox, y: center.y + dy + oy });
-            }
-        }
-        return tiles;
+        return [
+            { x: center.x,     y: center.y     },
+            { x: center.x + 1, y: center.y     },
+            { x: center.x,     y: center.y + 1 },
+            { x: center.x + 1, y: center.y + 1 },
+        ];
     }
 
     // Returns a 5x5 grid of tile coords centered on the tile containing lat/lon.
@@ -1600,14 +1592,25 @@
         const desired = surveillanceOn ? get5x5Tiles(lat, lon) : get2x2Tiles(lat, lon);
         const desiredKeys = new Set(desired.map(t => `${ZOOM}/${t.x}/${t.y}`));
 
-        // Evict tiles no longer needed (not in desired set, not loading)
-        for (const key of tileCache.keys()) {
-            if (!desiredKeys.has(key)) {
-                disposeTile(key);
+        // Hide tiles outside desired set but keep them in cache -- they'll be instantly
+        // visible again if surveillance is toggled back on without re-fetching.
+        // Only hard-evict tiles that are very far away (outside 7x7 around current center).
+        const center = latLonToTile(lat, lon, ZOOM);
+        for (const [key, entry] of tileCache.entries()) {
+            if (desiredKeys.has(key)) {
+                // Show desired tiles
+                if (entry.points) entry.points.visible = true;
+            } else if (entry.points) {
+                // Hide non-desired but keep cached
+                entry.points.visible = false;
+                // Evict if too far (outside 7x7 = 3 tiles from center in any direction)
+                const parts = key.split('/');
+                const tx = parseInt(parts[1]), ty = parseInt(parts[2]);
+                if (Math.abs(tx - center.x) > 3 || Math.abs(ty - center.y) > 3) {
+                    disposeTile(key);
+                }
             }
         }
-        // Also evict from loadingSet if no longer needed (they'll finish but won't be added)
-        // (we just let them finish and then they'll be evicted on next update)
 
         // Set desired keys BEFORE enqueuing so drainTileQueue can check them
         currentTileKeys = desiredKeys;
