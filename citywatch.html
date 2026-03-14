@@ -1265,6 +1265,126 @@
         updateTileHUD();
 
         try {
+            // ── Try VPS binary tile first ────────────────────────────────────
+            const VPS_URL = 'http://95.216.156.168:3456';
+            let vpsLoaded = false;
+            try {
+                const vpsRes = await fetch(`${VPS_URL}/tile/${z}/${x}/${y}`, {
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (vpsRes.ok) {
+                    const raw = await vpsRes.arrayBuffer();
+                    const view = new DataView(raw);
+                    // Verify CW01 magic
+                    const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+                    if (magic === 'CW01') {
+                        const pointCount = view.getUint32(4, true);
+                        const streamCount = view.getUint32(8, true);
+                        const tileCenterLat = view.getFloat32(12, true);
+                        const tileCenterLon = view.getFloat32(16, true);
+
+                        // Set world origin from VPS tile center if not yet set
+                        if (worldOriginLat === null) {
+                            setWorldOrigin(tileCenterLat, tileCenterLon, false);
+                        }
+
+                        const tileWorldOffset = latLonToWorld(tileCenterLat, tileCenterLon);
+
+                        // Points start at byte 24, 6 float32 per point (x,y,z,r,g,b)
+                        const HEADER_BYTES = 24;
+                        const POINT_STRIDE = 6;
+                        const posArr = new Float32Array(pointCount * 3);
+                        const colArr = new Float32Array(pointCount * 3);
+                        const origColArr = new Float32Array(pointCount * 3);
+                        const tileStreamPoints = [];
+
+                        for (let i = 0; i < pointCount; i++) {
+                            const base = HEADER_BYTES + i * POINT_STRIDE * 4;
+                            const px = view.getFloat32(base + 0, true);
+                            const py = view.getFloat32(base + 4, true);
+                            const pz = view.getFloat32(base + 8, true);
+                            const pr = view.getFloat32(base + 12, true);
+                            const pg = view.getFloat32(base + 16, true);
+                            const pb = view.getFloat32(base + 20, true);
+                            // Offset by tile world position
+                            posArr[i * 3 + 0] = px + tileWorldOffset.x;
+                            posArr[i * 3 + 1] = py;
+                            posArr[i * 3 + 2] = pz + tileWorldOffset.z;
+                            colArr[i * 3 + 0] = pr;
+                            colArr[i * 3 + 1] = pg;
+                            colArr[i * 3 + 2] = pb;
+                            origColArr[i * 3 + 0] = pr;
+                            origColArr[i * 3 + 1] = pg;
+                            origColArr[i * 3 + 2] = pb;
+                        }
+
+                        // Parse stream particles
+                        const STREAM_OFFSET = HEADER_BYTES + pointCount * POINT_STRIDE * 4;
+                        for (let s = 0; s < streamCount; s++) {
+                            const base = STREAM_OFFSET + s * 16;
+                            const idx = view.getUint32(base, true);
+                            const yBase = view.getFloat32(base + 4, true);
+                            const yTop = view.getFloat32(base + 8, true);
+                            const speed = view.getFloat32(base + 12, true);
+                            tileStreamPoints.push({ idx, yBase, yTop, speed });
+                        }
+
+                        const positions = posArr;
+                        const animColors = new Float32Array(pointCount * 3); // start at 0 for fade-in
+
+                        const geo = new THREE.BufferGeometry();
+                        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
+
+                        const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
+                        const mat = new THREE.PointsMaterial({
+                            size: isPerspectiveMode ? 0.32 : 0.28,
+                            sizeAttenuation: isPerspectiveMode,
+                            vertexColors: true,
+                        });
+
+                        const points = new THREE.Points(geo, mat);
+
+                        if (currentTileKeys.has(key)) {
+                            scene.add(points);
+                            const origY = new Float32Array(pointCount);
+                            for (let i = 0; i < pointCount; i++) origY[i] = positions[i * 3 + 1];
+
+                            tileCache.set(key, {
+                                points,
+                                loading: false,
+                                error: false,
+                                pointCount,
+                                origColors: origColArr,
+                                origY,
+                                streamPoints: tileStreamPoints,
+                                streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
+                                loadStartTime: performance.now(),
+                                fadeComplete: false,
+                                regenStartTime: null,
+                                tileCenterX: tileWorldOffset.x,
+                                tileCenterZ: tileWorldOffset.z,
+                                tileRadius: 350,
+                                vpsLoaded: true,
+                            });
+                            if (routeState.active && routeState.waypoints.length > 0) {
+                                applyFocusModeTile(key);
+                            }
+                        } else {
+                            geo.dispose();
+                            mat.dispose();
+                        }
+                        loadingSet.delete(key);
+                        updateTileHUD();
+                        vpsLoaded = true;
+                    }
+                }
+            } catch (vpsErr) {
+                // VPS failed -- fall through to Overpass
+                console.warn(`VPS tile ${key} failed: ${vpsErr.message}, falling back to Overpass`);
+            }
+            if (vpsLoaded) return;
+
             // ── Fetch OSM data from Overpass (buildings + roads combined) ───
             const bbox = tileToBbox(z, x, y);
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
