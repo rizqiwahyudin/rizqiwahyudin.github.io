@@ -809,9 +809,23 @@
     btnBirdseye.addEventListener('click', () => setCameraMode('birdseye'));
     btnFollowme.addEventListener('click', () => setCameraMode('followme'));
     btnAnchor.addEventListener('click', () => setCameraMode('anchor'));
-    btnAnchorMe.addEventListener('click', () => setAnchorSubMode('me'));
+    btnAnchorMe.addEventListener('click', () => {
+        setAnchorSubMode('me');
+        if (smoothLat !== null && worldOriginLat !== null) {
+            const wp = latLonToWorld(smoothLat, smoothLon);
+            anchorControls.target.set(wp.x, 0, wp.z);
+            anchorControls.update();
+        }
+    });
     btnAnchorDest.addEventListener('click', () => {
-        if (!btnAnchorDest.disabled) setAnchorSubMode('dest');
+        if (!btnAnchorDest.disabled) {
+            setAnchorSubMode('dest');
+            if (routeState.active && routeState.destLat !== null && worldOriginLat !== null) {
+                const dp = latLonToWorld(routeState.destLat, routeState.destLon);
+                anchorControls.target.set(dp.x, 0, dp.z);
+                anchorControls.update();
+            }
+        }
     });
     btnAnchorPlane.addEventListener('click', () => {
         if (btnAnchorPlane.disabled) return;
@@ -1039,6 +1053,7 @@
     function updateStreamParticles() {
         for (const entry of tileCache.values()) {
             if (!entry.points || !entry.fadeComplete || !entry.streamPoints || entry.streamPoints.length === 0) continue;
+            if (!entry.points.visible) continue;
             const posAttr = entry.points.geometry.getAttribute('position');
             const colAttr = entry.points.geometry.getAttribute('color');
             for (const sp of entry.streamPoints) {
@@ -1170,11 +1185,11 @@
         updateTileHUD();
 
         try {
-            // ── Fetch OSM data from Overpass ────────────────────────────────
+            // ── Fetch OSM data from Overpass (buildings + roads combined) ───
             const bbox = tileToBbox(z, x, y);
-            const query = `[out:json][timeout:25];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
+            const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
             const buildAbort = new AbortController();
-            const buildTimeout = setTimeout(() => buildAbort.abort(), 30000); // 30s timeout for building fetch
+            const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
             const overpassRes = await fetch(OVERPASS_URL, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`,
@@ -1331,7 +1346,7 @@
             // skipping points inside building footprints.
             {
                 const GROUND_Y = -0.2;
-                const GRID_SPACING = 8; // meters
+                const GRID_SPACING = 20; // meters
                 // Tile bounding box in local coords (relative to tileWorldOffset)
                 const latSpanM = (bbox.north - bbox.south) * METERS_PER_DEG_LAT;
                 const lonSpanM = (bbox.east - bbox.west) * METERS_PER_DEG_LON;
@@ -1342,9 +1357,10 @@
 
                 for (let gx = gridMinX; gx <= gridMaxX; gx += GRID_SPACING) {
                     for (let gy = gridMinY; gy <= gridMaxY; gy += GRID_SPACING) {
-                        // Check against all building footprints
+                        // Check against building footprints (capped to avoid O(n*m) blowup)
+                        const fpsToCheck = buildingFootprints.slice(0, Math.min(buildingFootprints.length, 25));
                         let insideBuilding = false;
-                        for (const fp of buildingFootprints) {
+                        for (const fp of fpsToCheck) {
                             if (pointInPolygon(gx, gy, fp)) { insideBuilding = true; break; }
                         }
                         if (!insideBuilding) {
@@ -1355,30 +1371,11 @@
                 }
             }
 
-            // ── Fetch roads for this tile and append to posArr/colArr ────────
+            // ── Process roads from the same osmData ──────────────────────────
             try {
-                const roadAbort = new AbortController();
-                const roadTimeout = setTimeout(() => roadAbort.abort(), 20000);
-                const roadQuery = `[out:json][timeout:20];(way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
-                const roadRes = await fetch(OVERPASS_URL, {
-                    method: 'POST',
-                    body: `data=${encodeURIComponent(roadQuery)}`,
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    signal: roadAbort.signal,
-                });
-                clearTimeout(roadTimeout);
-                if (roadRes.ok) {
-                    const roadData = await roadRes.json();
-                    const roadWays = roadData.elements.filter(e => e.type === 'way' && e.tags && e.tags.highway);
-                    console.log(`[citywatch] tile ${key}: road fetch got ${roadData.elements.length} elements, ${roadWays.length} road ways`);
+                const roadWays = osmData.elements.filter(e => e.type === 'way' && e.tags && e.tags.highway);
 
-                    // Build node lookup for road data
-                    const roadNodes = {};
-                    for (const el of roadData.elements) {
-                        if (el.type === 'node') roadNodes[el.id] = { lat: el.lat, lon: el.lon };
-                    }
-
-                    for (const el of roadWays) {
+                for (const el of roadWays) {
                         const hwType = el.tags.highway;
                         const nodeIds = el.nodes;
                         if (!nodeIds || nodeIds.length < 2) continue;
@@ -1386,7 +1383,7 @@
                         // Convert node coords to local XY (same reference as buildings)
                         const roadPts = [];
                         for (const nid of nodeIds) {
-                            const nd = roadNodes[nid];
+                            const nd = nodes[nid];
                             if (!nd) continue;
                             const rx = (nd.lon - tileC.lon) * METERS_PER_DEG_LON;
                             const ry = (nd.lat - tileC.lat) * METERS_PER_DEG_LAT;
@@ -1448,7 +1445,6 @@
                             }
                         }
                     }
-                }
             } catch (roadErr) {
                 // Road fetch failure is non-fatal -- continue with buildings only
                 console.warn(`Road fetch for tile ${key} failed:`, roadErr.message);
@@ -1490,6 +1486,7 @@
                     pointCount: actualCount,
                     origColors,       // full-brightness colors (base, before focus dim)
                     streamPoints: tileStreamPoints, // rising stream particles for this tile
+                    streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
                     loadStartTime: performance.now(), // for fade-in animation
                     fadeComplete: false,
                 });
@@ -1598,6 +1595,7 @@
         }
 
         for (let i = 0; i < count; i++) {
+            if (entry.streamIndices && entry.streamIndices.has(i)) continue;
             const wx = posArr[i * 3];
             const wz = posArr[i * 3 + 2];
 
@@ -1639,6 +1637,12 @@
     let aircraftPoints = null;
     let aircraftCount = 0;
 
+    // Pre-allocated buffers for aircraft geometry (avoid per-frame allocation)
+    const AC_MAX = 50;
+    const AC_PTS = 9;
+    let acPosArr = new Float32Array(AC_MAX * AC_PTS * 3);
+    let acColArr = new Float32Array(AC_MAX * AC_PTS * 3);
+
     // Interpolation data: [{icao24, prevX, prevY, prevZ, targetX, targetY, targetZ, updateTime}]
     const aircraftData = new Map(); // icao24 -> state
 
@@ -1650,61 +1654,48 @@
     function buildAircraftGeometry() {
         if (!aircraftPoints) return;
         const states = [...aircraftData.values()];
-        if (states.length === 0) {
-            aircraftPoints.visible = false;
-            return;
-        }
-        aircraftPoints.visible = layerAircraft && states.length > 0;
-
-        // Each aircraft gets 8 points: center + 4 arm tips + 2 diagonal tips + vertical spike (cross pattern)
-        const CROSS_OFFSETS = [
-            [0, 0, 0],
-            [6, 0, 0], [-6, 0, 0],
-            [0, 0, 6], [0, 0, -6],
-            [4, 0, 4], [-4, 0, -4],
-            [0, 4, 0], // vertical spike
-        ];
-        const totalPoints = states.length * CROSS_OFFSETS.length;
-        const posArr = new Float32Array(totalPoints * 3);
-        const colArr = new Float32Array(totalPoints * 3);
-
+        if (states.length === 0) { aircraftPoints.visible = false; return; }
+        aircraftPoints.visible = layerAircraft;
+        const CROSS = [[0,0,0],[6,0,0],[-6,0,0],[0,0,6],[0,0,-6],[4,0,4],[-4,0,-4],[-4,0,4],[0,6,0]];
+        const nowMs = performance.now();
         let idx = 0;
         for (const ac of states) {
+            if (idx >= AC_MAX * AC_PTS) break;
+            const staleness = (nowMs - (ac.lastSeenMs || nowMs)) / 1000;
+            const fade = staleness < 15 ? 1.0 : Math.max(0, 1.0 - (staleness - 15) / 45);
             const cx = ac.currentX, cy = ac.currentY, cz = ac.currentZ;
-            for (const [dx, dy, dz] of CROSS_OFFSETS) {
-                posArr[idx * 3]     = cx + dx;
-                posArr[idx * 3 + 1] = cy + dy;
-                posArr[idx * 3 + 2] = cz + dz;
-                // Bright white-blue tint
-                colArr[idx * 3]     = 0.7;
-                colArr[idx * 3 + 1] = 0.85;
-                colArr[idx * 3 + 2] = 1.0;
+            for (const [dx, dy, dz] of CROSS) {
+                acPosArr[idx*3]   = cx + dx;
+                acPosArr[idx*3+1] = cy + dy;
+                acPosArr[idx*3+2] = cz + dz;
+                acColArr[idx*3]   = 0.7 * fade;
+                acColArr[idx*3+1] = 0.85 * fade;
+                acColArr[idx*3+2] = 1.0 * fade;
                 idx++;
             }
         }
-
         const geo = aircraftPoints.geometry;
-        geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-        geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
         geo.getAttribute('position').needsUpdate = true;
         geo.getAttribute('color').needsUpdate = true;
-        geo.computeBoundingSphere(); // required for frustum culling to work correctly
+        geo.setDrawRange(0, idx);
+        geo.computeBoundingSphere();
     }
 
     function initAircraftPoints() {
         const geo = new THREE.BufferGeometry();
-        // Start with an empty geometry
-        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
-        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
+        geo.setAttribute('position', new THREE.BufferAttribute(acPosArr, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(acColArr, 3));
+        geo.setDrawRange(0, 0);
         const mat = new THREE.PointsMaterial({
-            size: 4,
+            size: 6,
             sizeAttenuation: false,
             vertexColors: true,
             fog: false,
-            depthTest: false,
+            depthWrite: false,
         });
         aircraftPoints = new THREE.Points(geo, mat);
         aircraftPoints.visible = false;
+        aircraftPoints.renderOrder = 999;
         aircraftPoints.frustumCulled = false; // never cull -- aircraft can be far from origin
         scene.add(aircraftPoints);
     }
@@ -1720,13 +1711,22 @@
         const cam = cameraMode === 'birdseye' ? camera :
                     cameraMode === 'followme' ? followCam : anchorCam;
 
+        // Ensure camera matrices are current before projecting
+        cam.updateMatrixWorld();
+        cam.updateProjectionMatrix();
+
         const labels = [];
         for (const [icao, ac] of aircraftData.entries()) {
             const pos = new THREE.Vector3(ac.currentX, ac.currentY, ac.currentZ);
             pos.project(cam);
+            // Filter points outside NDC depth range (works for both ortho and perspective)
+            if (pos.z > 1.1 || pos.z < -1.1) continue;
+            // For orthographic camera, also reject points that are far off-screen laterally
+            if (cameraMode === 'birdseye') {
+                if (pos.x < -1.2 || pos.x > 1.2 || pos.y < -1.2 || pos.y > 1.2) continue;
+            }
             const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
             const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
-            if (pos.z > 1) continue;
             const cs = ac.callsign || icao;
             labels.push(`<span style="position:absolute;left:${sx+8}px;top:${sy}px;font-family:'DotGothic16',monospace;font-size:9px;color:#33ccff;letter-spacing:1px;text-transform:lowercase;white-space:nowrap;">${cs}</span>`);
         }
@@ -1862,7 +1862,12 @@
                 entry.points.visible = false;
             } else {
                 entry.points.visible = true;
-                for (let j = 0; j < len; j++) arr[j] = src[j] * factor;
+                for (let j = 0; j < len / 3; j++) {
+                    if (entry.streamIndices && entry.streamIndices.has(j)) continue;
+                    arr[j*3]   = src[j*3]   * factor;
+                    arr[j*3+1] = src[j*3+1] * factor;
+                    arr[j*3+2] = src[j*3+2] * factor;
+                }
                 colorAttr.needsUpdate = true;
             }
         }
@@ -2220,6 +2225,13 @@
 
                 if (aircraftData.has(icao24)) {
                     const ac = aircraftData.get(icao24);
+                    // Compute velocity before updating target
+                    const dtMs = Date.now() - (ac.lastSeenMs || Date.now());
+                    if (dtMs > 500) {
+                        ac.vx = (ww.x - ac.targetX) / (dtMs / 1000);
+                        ac.vz = (ww.z - ac.targetZ) / (dtMs / 1000);
+                    }
+                    ac.lastSeenMs = Date.now();
                     // Store previous as interpolation source
                     ac.prevX = ac.currentX;
                     ac.prevY = ac.currentY;
@@ -2236,6 +2248,9 @@
                         currentX: ww.x, currentY: rawY, currentZ: ww.z,
                         updateTime: now,
                         callsign,
+                        lastSeenMs: Date.now(),
+                        vx: 0,
+                        vz: 0,
                     });
                 }
                 // Push trail position on every update
@@ -2243,9 +2258,9 @@
                 seen.add(icao24);
             }
 
-            // Remove aircraft no longer in response
-            for (const icao of aircraftData.keys()) {
-                if (!seen.has(icao)) {
+            // Evict aircraft not seen for 45s (keep for dead-reckoning during gaps)
+            for (const [icao, ac] of aircraftData.entries()) {
+                if (!seen.has(icao) && Date.now() - (ac.lastSeenMs || 0) > 45000) {
                     aircraftData.delete(icao);
                     aircraftTrails.delete(icao);
                 }
@@ -2273,6 +2288,12 @@
             ac.currentX = ac.prevX + (ac.targetX - ac.prevX) * t;
             ac.currentY = ac.prevY + (ac.targetY - ac.prevY) * t;
             ac.currentZ = ac.prevZ + (ac.targetZ - ac.prevZ) * t;
+            // Dead-reckoning: extrapolate beyond last known position using velocity
+            if (elapsed > AIRCRAFT_UPDATE_INTERVAL && ac.vx !== undefined) {
+                const extraSec = Math.min((elapsed - AIRCRAFT_UPDATE_INTERVAL) / 1000, 60);
+                ac.currentX = ac.targetX + ac.vx * extraSec;
+                ac.currentZ = ac.targetZ + ac.vz * extraSec;
+            }
         }
         buildAircraftGeometry(); // updates buffer with current interpolated positions
     }
@@ -2295,9 +2316,11 @@
     const WIND_AREA = 300; // ±300m from origin
 
     function randomWindParticle(i) {
-        windParticlePos[i * 3]     = (Math.random() - 0.5) * WIND_AREA * 2;
-        windParticlePos[i * 3 + 1] = 0.5 + Math.random() * 2.5; // y: 0.5 to 3
-        windParticlePos[i * 3 + 2] = (Math.random() - 0.5) * WIND_AREA * 2;
+        const ox = (smoothLat !== null && worldOriginLat !== null) ? latLonToWorld(smoothLat, smoothLon).x : 0;
+        const oz = (smoothLat !== null && worldOriginLat !== null) ? latLonToWorld(smoothLat, smoothLon).z : 0;
+        windParticlePos[i*3]   = ox + (Math.random() - 0.5) * WIND_AREA * 2;
+        windParticlePos[i*3+1] = 0.5 + Math.random() * 2.5;
+        windParticlePos[i*3+2] = oz + (Math.random() - 0.5) * WIND_AREA * 2;
     }
 
     for (let i = 0; i < WIND_PARTICLE_COUNT; i++) randomWindParticle(i);
