@@ -115,8 +115,8 @@
     'use strict';
 
     // ─── Config ───────────────────────────────────────────────────────────────
-    const TILE_SERVER = 'http://95.217.18.164:3456';
     const ZOOM = 16;
+    const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
     const FALLBACK_LAT = 56.9496;
     const FALLBACK_LON = 24.1052;
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
@@ -396,53 +396,120 @@
         updateTileHUD();
 
         try {
-            const res = await fetch(`${TILE_SERVER}/tile/${z}/${x}/${y}`, {
-                headers: { 'Accept-Encoding': 'gzip' },
+            // ── Fetch OSM data from Overpass ────────────────────────────────
+            const bbox = tileToBbox(z, x, y);
+            const query = `[out:json][timeout:25];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
+            const overpassRes = await fetch(OVERPASS_URL, {
+                method: 'POST',
+                body: `data=${encodeURIComponent(query)}`,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             });
+            if (!overpassRes.ok) throw new Error(`Overpass HTTP ${overpassRes.status}`);
+            const osmData = await overpassRes.json();
 
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}`);
+            // ── Parse nodes ─────────────────────────────────────────────────
+            const nodes = {};
+            for (const el of osmData.elements) {
+                if (el.type === 'node') nodes[el.id] = { lat: el.lat, lon: el.lon };
             }
 
-            const pointCount = parseInt(res.headers.get('X-Point-Count') || '0', 10);
-            const arrayBuffer = await res.arrayBuffer();
-            const floats = new Float32Array(arrayBuffer);
-
-            // Validate: must be multiple of 6
-            if (floats.length % 6 !== 0) {
-                throw new Error(`Invalid float count: ${floats.length} (not multiple of 6)`);
-            }
-
-            const actualCount = floats.length / 6;
-
-            // Build Three.js geometry
-            // Tile-local coords: x=east(m), y=up(m), z_tile=north(m) from tile center
-            // World coords: offset tile center from world origin
+            // ── Process buildings → points ──────────────────────────────────
             const tileC = tileCenter(z, x, y);
             const tileWorldOffset = latLonToWorld(tileC.lat, tileC.lon);
+            const METERS_PER_DEG_LAT = 111320;
+            const METERS_PER_DEG_LON = Math.cos(tileC.lat * Math.PI / 180) * 111320;
+            const MAX_HEIGHT = 40;
+            const DENSITY = 3; // points per m²
 
-            const positions = new Float32Array(actualCount * 3);
-            const colors = new Float32Array(actualCount * 3);
+            const posArr = [], colArr = [];
 
-            for (let i = 0; i < actualCount; i++) {
-                const base = i * 6;
-                const tx = floats[base];     // east meters from tile center
-                const ty = floats[base + 1]; // north meters from tile center (in server: y = north)
-                const tz = floats[base + 2]; // height (z in server = up)
-                const r  = floats[base + 3];
-                const g  = floats[base + 4];
-                const b  = floats[base + 5];
-
-                // Server coordinate system: x=east, y=north, z=up (height)
-                // Three.js world: X=east, Y=up, Z=south (we flip north)
-                positions[i * 3]     = tileWorldOffset.x + tx;
-                positions[i * 3 + 1] = tz;                       // height -> Three.js Y
-                positions[i * 3 + 2] = tileWorldOffset.z - ty;   // north -> Three.js -Z
-
-                colors[i * 3]     = r;
-                colors[i * 3 + 1] = g;
-                colors[i * 3 + 2] = b;
+            function heightColor(t) {
+                const j = (Math.random() - 0.5) * 0.1;
+                let r, g, b;
+                if (t < 0.5) { const s = t * 2; r = 0; g = 0.2 + s * 0.8; b = 0.2 + s * 0.8; }
+                else { const s = (t - 0.5) * 2; r = s * 0.7; g = 1.0; b = 1.0; }
+                return [Math.max(0,Math.min(1,r+j)), Math.max(0,Math.min(1,g+j)), Math.max(0,Math.min(1,b+j))];
             }
+
+            function getHeight(tags) {
+                if (tags.height) return parseFloat(tags.height) || 8;
+                if (tags['building:levels']) return parseFloat(tags['building:levels']) * 3.5;
+                const t = tags.building || '';
+                if (t === 'residential') return 10;
+                if (t === 'commercial' || t === 'retail') return 15;
+                if (t === 'industrial' || t === 'warehouse') return 8;
+                if (t === 'church' || t === 'cathedral') return 20;
+                return 8;
+            }
+
+            function sampleFace(ax, ay, az, bx, by, bz, cx, cy, cz, count, h) {
+                for (let i = 0; i < count; i++) {
+                    const s = Math.random(), tt = Math.random();
+                    const px = ax + s * bx + tt * cx;
+                    const py = ay + s * by + tt * cy;
+                    const pz = az + s * bz + tt * cz;
+                    const [r, g, b] = heightColor(Math.max(0, py / MAX_HEIGHT));
+                    posArr.push(px, py, pz);
+                    colArr.push(r, g, b);
+                }
+            }
+
+            for (const el of osmData.elements) {
+                if (el.type !== 'way' || !el.tags || !el.tags.building) continue;
+                const nodeIds = el.nodes;
+                if (!nodeIds || nodeIds.length < 3) continue;
+
+                // Convert footprint to local meters relative to tileWorldOffset
+                const footprint = [];
+                for (const nid of nodeIds) {
+                    const nd = nodes[nid];
+                    if (!nd) continue;
+                    const ex = (nd.lon - tileC.lon) * METERS_PER_DEG_LON;
+                    const ey = (nd.lat - tileC.lat) * METERS_PER_DEG_LAT;
+                    footprint.push({ x: ex, y: ey });
+                }
+                if (footprint.length < 3) continue;
+
+                const h = getHeight(el.tags);
+                const wx = tileWorldOffset.x;
+                const wz = tileWorldOffset.z;
+
+                // Sample roof and walls
+                // Roof: random points inside polygon (bounding box sample)
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (const p of footprint) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+                const area = (maxX - minX) * (maxY - minY);
+                const roofCount = Math.max(4, Math.floor(area * DENSITY * 0.5));
+                for (let i = 0; i < roofCount; i++) {
+                    const rx = minX + Math.random() * (maxX - minX);
+                    const ry = minY + Math.random() * (maxY - minY);
+                    const [r, g, b] = heightColor(h / MAX_HEIGHT);
+                    posArr.push(wx + rx, h, wz - ry);
+                    colArr.push(r, g, b);
+                }
+
+                // Walls: sample along each edge
+                for (let i = 0; i < footprint.length - 1; i++) {
+                    const p0 = footprint[i], p1 = footprint[i + 1];
+                    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                    const wallCount = Math.max(2, Math.floor(edgeLen * h * DENSITY * 0.4));
+                    for (let j = 0; j < wallCount; j++) {
+                        const t = Math.random();
+                        const wallH = Math.random() * h;
+                        const wx2 = p0.x + t * (p1.x - p0.x);
+                        const wy2 = p0.y + t * (p1.y - p0.y);
+                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT);
+                        posArr.push(wx + wx2, wallH, wz - wy2);
+                        colArr.push(r, g, b);
+                    }
+                }
+            }
+
+            const actualCount = posArr.length / 3;
+            if (actualCount === 0) throw new Error('No buildings in tile');
+
+            const positions = new Float32Array(posArr);
+            const colors = new Float32Array(colArr);
 
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
