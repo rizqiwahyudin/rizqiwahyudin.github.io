@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>city // point cloud</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -20,11 +20,12 @@
             display: block;
         }
         .vt323 {
-            font-family: 'VT323', monospace;
+            font-family: 'DotGothic16', monospace;
             letter-spacing: 1px;
             font-size: 11px;
             line-height: 1.8;
-            color: #00ff88; /* Green */
+            color: #ffffff;
+            text-transform: lowercase;
         }
         #back-btn {
             position: fixed;
@@ -59,42 +60,44 @@
         .hud-panel {
             position: fixed;
             background: rgba(0, 0, 0, 0.75);
-            border: 1px solid rgba(0, 255, 136, 0.25);
-            padding: 8px 10px; /* Slightly smaller padding */
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 8px 10px;
             z-index: 20;
             white-space: pre;
             opacity: 0;
             transition: opacity 0.5s ease-in-out;
             pointer-events: none;
+            font-family: 'DotGothic16', monospace;
+            font-size: 10px;
+            line-height: 1.7;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: #ffffff;
         }
         .hud-panel.visible {
             opacity: 1;
             pointer-events: auto;
         }
         .hud-panel span {
-            color: #00ffff; /* Cyan */
+            color: #00ffff;
         }
         .hud-panel .red {
-            color: #ff2244; /* Red for alerts */
+            color: #ff2244;
         }
 
         #sys-monitor {
             top: 60px;
             left: 14px;
-            width: 180px;
-            height: 90px;
         }
         #net-scan {
             bottom: 40px;
             left: 14px;
-            width: 180px;
-            height: 90px;
         }
         #target-panel {
             top: 14px;
             right: 14px;
-            padding: 6px 8px; /* Slightly smaller padding */
-            font-size: 12px; /* Slightly smaller font */
+            padding: 6px 8px;
+            font-size: 10px;
         }
 
         /* Tracking Camera Viewport */
@@ -102,28 +105,39 @@
             position: fixed;
             bottom: 14px;
             right: 14px;
-            width: 240px; /* Smaller */
-            height: 180px; /* Smaller */
-            border: 1px solid #00ff88;
+            width: 240px;
+            height: 180px;
+            border: none;
             z-index: 20;
-            border-image: linear-gradient(to right, #00ff88 1px, transparent 1px) 1;
-            border-image-source: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='180'><line x1='0' y1='1' x2='8' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='0' x2='1' y2='8' stroke='%2300ff88' stroke-width='2'/><line x1='232' y1='1' x2='240' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='239' y1='0' x2='239' y2='8' stroke='%2300ff88' stroke-width='2'/><line x1='0' y1='179' x2='8' y2='179' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='172' x2='1' y2='180' stroke='%2300ff88' stroke-width='2'/><line x1='232' y1='179' x2='240' y2='179' stroke='%2300ff88' stroke-width='2'/><line x1='239' y1='172' x2='239' y2='180' stroke='%2300ff88' stroke-width='2'/></svg>");
-            border-image-slice: 1;
-            border-image-repeat: stretch;
-            background: transparent; /* Changed to transparent as we're rendering to main canvas */
+            background: transparent;
             overflow: hidden;
-            display: none; /* Hidden by default */
+            display: none;
         }
         #tracking-viewport.visible {
             display: block;
         }
+        /* White corner brackets drawn with pseudo-elements + box-shadow trick via child divs */
+        #tracking-corner-tl, #tracking-corner-tr,
+        #tracking-corner-bl, #tracking-corner-br {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-color: #ffffff;
+            border-style: solid;
+            z-index: 22;
+        }
+        #tracking-corner-tl { top: 0; left: 0; border-width: 2px 0 0 2px; }
+        #tracking-corner-tr { top: 0; right: 0; border-width: 2px 2px 0 0; }
+        #tracking-corner-bl { bottom: 0; left: 0; border-width: 0 0 2px 2px; }
+        #tracking-corner-br { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
         #tracking-label {
             position: absolute;
             top: 4px;
-            left: 4px;
-            font-family: 'VT323', monospace;
+            left: 14px;
+            font-family: 'DotGothic16', monospace;
             font-size: 9px;
-            color: #00ff88;
+            color: #ffffff;
+            text-transform: lowercase;
             z-index: 21;
         }
         #target-overlay-text {
@@ -137,8 +151,10 @@
             top: 0; left: 0;
             width: 100vw;
             height: 100vh;
-            pointer-events: none; /* Crucial to allow mouse interaction with Three.js canvas */
+            pointer-events: none;
             z-index: 20;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
         }
     </style>
 </head>
@@ -151,9 +167,13 @@
     <div id="net-scan" class="hud-panel vt323"></div>
     <div id="target-panel" class="hud-panel vt323"></div>
 
-    <!-- Tracking Viewport (for aesthetic border only, rendering happens on main canvas) -->
+    <!-- Tracking Viewport (border/corners only, rendering happens on main canvas via scissor) -->
     <div id="tracking-viewport">
-        <div id="tracking-label" class="vt323">CAM_01 // TRACKING</div>
+        <div id="tracking-corner-tl"></div>
+        <div id="tracking-corner-tr"></div>
+        <div id="tracking-corner-bl"></div>
+        <div id="tracking-corner-br"></div>
+        <div id="tracking-label">cam_01 // tracking</div>
     </div>
     
     <canvas id="overlay-canvas"></canvas>
@@ -754,36 +774,50 @@
             renderer.setScissorTest(false); // Disable scissor after PiP render
             renderer.autoClear = true; // Restore autoClear for next frame (important if composer doesn't handle it)
 
-            /* 2D Overlay drawing */
+            /* 2D Overlay: circle around target + line to PiP */
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            
-            // Project target car's 3D position to 2D screen coordinates
-            projectVector.set(targetCar.x, targetCar.y + 1.0, targetCar.z); // Slightly above car
-            projectVector.project(camera); // Project to normalized device coordinates
 
-            // Convert to screen coordinates
-            const x = (projectVector.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-projectVector.y * 0.5 + 0.5) * window.innerHeight;
+            // Pixelated rendering: disable smoothing
+            overlayCtx.imageSmoothingEnabled = false;
 
-            // Draw circle around target car
+            // Project target car's 3D position to 2D screen
+            projectVector.set(targetCar.x, targetCar.y + 1.0, targetCar.z);
+            projectVector.project(camera);
+
+            const x = Math.round((projectVector.x * 0.5 + 0.5) * window.innerWidth);
+            const y = Math.round((-projectVector.y * 0.5 + 0.5) * window.innerHeight);
+
+            // Pixelated circle: draw as a stepped polygon approximation
+            const radius = 20;
+            const steps = 16; // low step count = blocky/pixelated look
             overlayCtx.beginPath();
-            overlayCtx.arc(x, y, 20, 0, Math.PI * 2, false);
-            overlayCtx.strokeStyle = '#00ff88';
+            for (let s = 0; s <= steps; s++) {
+                const angle = (s / steps) * Math.PI * 2;
+                const cx = Math.round(x + Math.cos(angle) * radius);
+                const cy = Math.round(y + Math.sin(angle) * radius);
+                if (s === 0) overlayCtx.moveTo(cx, cy);
+                else overlayCtx.lineTo(cx, cy);
+            }
+            overlayCtx.closePath();
+            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
             overlayCtx.lineWidth = 1;
-            overlayCtx.setLineDash([5, 5]); // Dashed line
+            overlayCtx.setLineDash([3, 3]);
             overlayCtx.stroke();
 
-            // Draw line to tracking viewport
-            const pipX = window.innerWidth - viewWidth - padding + viewWidth / 2;
-            const pipY = padding + viewHeight / 2; // Center of PiP viewport
+            // Line from circle to PiP viewport top-left corner area
+            const pipX = window.innerWidth - viewWidth - padding;
+            const pipY = padding;
             overlayCtx.beginPath();
             overlayCtx.moveTo(x, y);
-            overlayCtx.lineTo(pipX, pipY);
-            overlayCtx.strokeStyle = '#00ff88';
+            overlayCtx.lineTo(Math.round(pipX + 20), Math.round(pipY + 20));
+            overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
             overlayCtx.lineWidth = 1;
-            overlayCtx.setLineDash([5, 5]);
+            overlayCtx.setLineDash([4, 4]);
             overlayCtx.stroke();
-            overlayCtx.setLineDash([]); // Reset to solid
+            overlayCtx.setLineDash([]);
+        } else {
+            // No target -- clear any lingering overlay
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         }
     }
 
