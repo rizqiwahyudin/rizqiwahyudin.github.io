@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>city // point cloud</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -17,9 +17,10 @@
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
+            display: block;
         }
-        .dotgothic {
-            font-family: 'DotGothic16', monospace;
+        .vt323 {
+            font-family: 'VT323', monospace;
             letter-spacing: 1px;
             font-size: 11px;
             line-height: 1.8;
@@ -59,16 +60,16 @@
             position: fixed;
             background: rgba(0, 0, 0, 0.75);
             border: 1px solid rgba(0, 255, 136, 0.25);
-            padding: 10px 12px;
+            padding: 8px 10px; /* Slightly smaller padding */
             z-index: 20;
             white-space: pre;
             opacity: 0;
             transition: opacity 0.5s ease-in-out;
-            pointer-events: none; /* Allow interaction with canvas / controls */
+            pointer-events: none;
         }
         .hud-panel.visible {
             opacity: 1;
-            pointer-events: auto; /* Allow interaction when visible */
+            pointer-events: auto;
         }
         .hud-panel span {
             color: #00ffff; /* Cyan */
@@ -80,16 +81,20 @@
         #sys-monitor {
             top: 60px;
             left: 14px;
+            width: 180px;
+            height: 90px;
         }
         #net-scan {
             bottom: 40px;
             left: 14px;
+            width: 180px;
+            height: 90px;
         }
         #target-panel {
             top: 14px;
             right: 14px;
-            padding: 8px 10px;
-            font-size: 13px;
+            padding: 6px 8px; /* Slightly smaller padding */
+            font-size: 12px; /* Slightly smaller font */
         }
 
         /* Tracking Camera Viewport */
@@ -97,29 +102,26 @@
             position: fixed;
             bottom: 14px;
             right: 14px;
-            width: 280px;
-            height: 200px;
+            width: 240px; /* Smaller */
+            height: 180px; /* Smaller */
             border: 1px solid #00ff88;
             z-index: 20;
             border-image: linear-gradient(to right, #00ff88 1px, transparent 1px) 1;
-            border-image-source: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='200'><line x1='0' y1='1' x2='10' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='0' x2='1' y2='10' stroke='%2300ff88' stroke-width='2'/><line x1='270' y1='1' x2='280' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='279' y1='0' x2='279' y2='10' stroke='%2300ff88' stroke-width='2'/><line x1='0' y1='199' x2='10' y2='199' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='190' x2='1' y2='200' stroke='%2300ff88' stroke-width='2'/><line x1='270' y1='199' x2='280' y2='199' stroke='%2300ff88' stroke-width='2'/><line x1='279' y1='190' x2='279' y2='200' stroke='%2300ff88' stroke-width='2'/></svg>");
+            border-image-source: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='180'><line x1='0' y1='1' x2='8' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='0' x2='1' y2='8' stroke='%2300ff88' stroke-width='2'/><line x1='232' y1='1' x2='240' y2='1' stroke='%2300ff88' stroke-width='2'/><line x1='239' y1='0' x2='239' y2='8' stroke='%2300ff88' stroke-width='2'/><line x1='0' y1='179' x2='8' y2='179' stroke='%2300ff88' stroke-width='2'/><line x1='1' y1='172' x2='1' y2='180' stroke='%2300ff88' stroke-width='2'/><line x1='232' y1='179' x2='240' y2='179' stroke='%2300ff88' stroke-width='2'/><line x1='239' y1='172' x2='239' y2='180' stroke='%2300ff88' stroke-width='2'/></svg>");
             border-image-slice: 1;
             border-image-repeat: stretch;
-            background: black; /* To show the tracking canvas */
+            background: transparent; /* Changed to transparent as we're rendering to main canvas */
             overflow: hidden;
             display: none; /* Hidden by default */
         }
         #tracking-viewport.visible {
             display: block;
         }
-        #tracking-canvas {
-            display: block;
-        }
         #tracking-label {
             position: absolute;
             top: 4px;
             left: 4px;
-            font-family: 'DotGothic16', monospace;
+            font-family: 'VT323', monospace;
             font-size: 9px;
             color: #00ff88;
             z-index: 21;
@@ -128,23 +130,33 @@
             color: #00ff88;
             font-size: 13px;
         }
+
+        /* Overlay Canvas for connecting line and circle */
+        #overlay-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none; /* Crucial to allow mouse interaction with Three.js canvas */
+            z-index: 20;
+        }
     </style>
 </head>
 <body>
-    <a id="back-btn" href="index.html" class="dotgothic">← back</a>
-    <div id="info" class="dotgothic">orbit // drag &nbsp;&nbsp; zoom // scroll &nbsp;&nbsp; reset // double-click</div>
+    <a id="back-btn" href="index.html" class="vt323">← back</a>
+    <div id="info" class="vt323">orbit // drag &nbsp;&nbsp; zoom // scroll &nbsp;&nbsp; reset // double-click</div>
 
     <!-- HUD Panels -->
-    <div id="sys-monitor" class="hud-panel dotgothic"></div>
-    <div id="net-scan" class="hud-panel dotgothic"></div>
-    <div id="target-panel" class="hud-panel dotgothic"></div>
+    <div id="sys-monitor" class="hud-panel vt323"></div>
+    <div id="net-scan" class="hud-panel vt323"></div>
+    <div id="target-panel" class="hud-panel vt323"></div>
 
-    <!-- Tracking Viewport -->
+    <!-- Tracking Viewport (for aesthetic border only, rendering happens on main canvas) -->
     <div id="tracking-viewport">
-        <canvas id="tracking-canvas"></canvas>
-        <div id="tracking-label" class="dotgothic">CAM_01 // TRACKING</div>
+        <div id="tracking-label" class="vt323">CAM_01 // TRACKING</div>
     </div>
-
+    
+    <canvas id="overlay-canvas"></canvas>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -214,13 +226,8 @@
     document.body.appendChild(renderer.domElement);
 
     /* Tracking camera (for PiP view) */
-    const trackingCanvas = document.getElementById('tracking-canvas');
-    const trackCam = new THREE.PerspectiveCamera(75, 280 / 200, 0.1, 200); /* Fixed aspect ratio for PiP */
-    const trackRenderer = new THREE.WebGLRenderer({ antialias: false, canvas: trackingCanvas });
-    trackRenderer.setSize(280, 200);
-    trackRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    trackRenderer.setClearColor(0x000000); // Clear color for the tracking view
-
+    const trackCam = new THREE.PerspectiveCamera(75, 240 / 180, 0.1, 200); /* Adjusted for smaller PiP */
+    
     // ─── Controls ────────────────────────────────────────────────────────────
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -282,8 +289,8 @@
     // ─── City generation ─────────────────────────────────────────────────────
     const GRID = 10;
     const BLOCK = 9;
-    const ROAD_WIDTH = 3; /* New constant */
-    const STRIDE = BLOCK + ROAD_WIDTH; /* New constant */
+    const ROAD_WIDTH = 3; 
+    const STRIDE = BLOCK + ROAD_WIDTH; 
     const OFFSET = -(GRID * STRIDE) / 2;
     const MAX_CITY_HEIGHT = 40;
 
@@ -310,8 +317,8 @@
     }
 
     // ─── Point sampling (City) ───────────────────────────────────────────────
-    const cityPositions = []; /* Renamed from 'positions' */
-    const cityColors = [];    /* Renamed from 'colors' */
+    const cityPositions = []; 
+    const cityColors = [];    
     const streamPoints = [];
 
     function sampleRect(ox, oy, oz, ax, ay, az, bx2, by2, bz2, count, yMin, yMax, stream, isCar = false) {
@@ -333,7 +340,7 @@
                 [r, g, b] = heightColor(Math.max(0, tNorm), jitter);
             }
 
-            const idx = cityPositions.length / 3; /* Uses cityPositions */
+            const idx = cityPositions.length / 3; 
             cityPositions.push(px, py, pz);
             cityColors.push(r, g, b);
 
@@ -385,35 +392,37 @@
     }
 
     // ─── Build geometry (City) ────────────────────────────────────────────────
-    const cityGeometry = new THREE.BufferGeometry(); /* Renamed from 'geometry' */
+    const cityGeometry = new THREE.BufferGeometry(); 
     cityGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cityPositions), 3));
     cityGeometry.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(cityColors), 3));
 
-    const cityMaterial = new THREE.PointsMaterial({ /* Renamed from 'material' */
+    const cityMaterial = new THREE.PointsMaterial({ 
         size: 0.12, sizeAttenuation: true, vertexColors: true,
         transparent: true, opacity: 0.9, depthWrite: false,
     });
 
-    const cityPoints = new THREE.Points(cityGeometry, cityMaterial); /* Renamed from 'points' */
+    const cityPoints = new THREE.Points(cityGeometry, cityMaterial); 
     scene.add(cityPoints);
 
     // ─── Car System ───────────────────────────────────────────────────────────
     const NUM_CARS = 30;
     const CAR_POINTS_COUNT = 50;
-    const CAR_SPEED_MIN = 0.3;
-    const CAR_SPEED_MAX = 0.6;
+    const CAR_SPEED_MIN = 0.05; // Slightly slower cars
+    const CAR_SPEED_MAX = 0.15;
     const CAR_COLOR_NORMAL = new THREE.Color(0.95, 0.95, 0.95); /* White */
     const CAR_COLOR_TARGET = new THREE.Color(1.0, 0.1, 0.1);    /* Red */
 
 
     /* Road network setup */
-    const roadXCoords = [];
-    const roadZCoords = [];
+    const roadXCoords = []; // Z for horizontal roads
+    const roadZCoords = []; // X for vertical roads
+    const MIN_CITY_COORD = OFFSET - ROAD_WIDTH / 2;
+    const MAX_CITY_COORD = -OFFSET + ROAD_WIDTH / 2;
+
     for(let i = 0; i < GRID; i++) {
-        /* Roads are centered in the ROAD_WIDTH area. Between block i and i+1 */
-        const xCoord = OFFSET + i * STRIDE + BLOCK + (ROAD_WIDTH / 2);
-        roadXCoords.push(xCoord);
-        roadZCoords.push(xCoord); /* Same coords for Z roads */
+        const coord = OFFSET + i * STRIDE + BLOCK + (ROAD_WIDTH / 2);
+        roadXCoords.push(coord); // For cars moving along X, this is Z
+        roadZCoords.push(coord); // For cars moving along Z, this is X
     }
 
     const cars = [];
@@ -423,11 +432,10 @@
     /* Generate base car geometry (local points) */
     const baseCarPoints = [];
     function generateCarShape() {
-        /* Simple box shape for car body */
-        const bodyW = 1.2, bodyD = 2.5, bodyH = 0.5; /* Width, Depth, Height */
+        const bodyW = 1.2, bodyD = 2.5, bodyH = 0.5; 
         for (let i = 0; i < CAR_POINTS_COUNT; i++) {
             const x = rng(-bodyW/2, bodyW/2);
-            const y = rng(0, bodyH); /* Always above ground (y=0) */
+            const y = rng(0, bodyH); 
             const z = rng(-bodyD/2, bodyD/2);
             baseCarPoints.push(x, y, z);
         }
@@ -437,34 +445,43 @@
     /* Initialize cars */
     let carPointIdx = 0;
     for (let c = 0; c < NUM_CARS; c++) {
-        const isHorizontal = Math.random() < 0.5; /* Moving along X or Z axis */
-        let currentRoad = isHorizontal ? roadZCoords[Math.floor(rng(0, roadZCoords.length))] : roadXCoords[Math.floor(rng(0, roadXCoords.length))];
-        let currentPos = rng(OFFSET, -OFFSET); /* Random start position along the road */
-        let direction = Math.random() < 0.5 ? 1 : -1; /* Positive or negative direction */
+        const isHorizontal = Math.random() < 0.5; 
+        let currentRoadCoord;
+        let startPos;
+
+        if (isHorizontal) {
+            currentRoadCoord = roadZCoords[Math.floor(rng(0, roadZCoords.length))];
+            startPos = rng(MIN_CITY_COORD, MAX_CITY_COORD);
+        } else {
+            currentRoadCoord = roadXCoords[Math.floor(rng(0, roadXCoords.length))];
+            startPos = rng(MIN_CITY_COORD, MAX_CITY_COORD);
+        }
+
+        let direction = Math.random() < 0.5 ? 1 : -1; 
 
         const car = {
             id: c,
             startIdx: carPointIdx,
             numPoints: CAR_POINTS_COUNT,
-            x: isHorizontal ? currentPos : currentRoad,
-            z: isHorizontal ? currentRoad : currentPos,
-            y: 0.2, /* Slightly above ground */
+            x: isHorizontal ? startPos : currentRoadCoord,
+            z: isHorizontal ? currentRoadCoord : startPos,
+            y: 0.2, 
             speed: rng(CAR_SPEED_MIN, CAR_SPEED_MAX),
             direction: direction,
             isHorizontal: isHorizontal,
-            currentRoad: currentRoad,
+            currentRoadCoord: currentRoadCoord,
             targeted: false,
         };
         cars.push(car);
 
-        /* Populate car point data */
         const carBaseColor = CAR_COLOR_NORMAL;
         for (let i = 0; i < CAR_POINTS_COUNT; i++) {
-            carColors[carPointIdx * 3 + 0] = carBaseColor.r;
-            carColors[carPointIdx * 3 + 1] = carBaseColor.g;
-            carColors[carPointIdx * 3 + 2] = carBaseColor.b;
-            carPointIdx++;
+            const globalColorIdx = (carPointIdx + i) * 3;
+            carColors[globalColorIdx + 0] = carBaseColor.r;
+            carColors[globalColorIdx + 1] = carBaseColor.g;
+            carColors[globalColorIdx + 2] = carBaseColor.b;
         }
+        carPointIdx += CAR_POINTS_COUNT;
     }
 
     const carsGeometry = new THREE.BufferGeometry();
@@ -477,7 +494,19 @@
     const carsPoints = new THREE.Points(carsGeometry, carsMaterial);
     scene.add(carsPoints);
 
-    /* Target Identification System */
+    // ─── Overlay Canvas for 2D graphics (target circle/line) ──────────────────
+    const overlayCanvas = document.getElementById('overlay-canvas');
+    const overlayCtx = overlayCanvas.getContext('2d');
+    function updateOverlayCanvasSize() {
+        overlayCanvas.width = window.innerWidth;
+        overlayCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', updateOverlayCanvasSize);
+    updateOverlayCanvasSize(); // Initial set
+
+    const projectVector = new THREE.Vector3();
+
+    // ─── Target Identification System ─────────────────────────────────────────
     let targetCar = null;
     let targetAcquireTime = 0;
     let targetReleaseTime = 0;
@@ -486,11 +515,10 @@
     const trackingViewportDiv = document.getElementById('tracking-viewport');
 
     function acquireTarget() {
-        if (targetCar) return; /* Already tracking */
+        if (targetCar) return; 
         const nonTargetedCars = cars.filter(c => !c.targeted);
         if (nonTargetedCars.length === 0) {
-            /* If all cars targeted (shouldn't happen with current logic) */
-            cars.forEach(c => c.targeted = false); /* Reset all */
+            cars.forEach(c => c.targeted = false); 
             return;
         }
 
@@ -504,26 +532,26 @@
 
         updateTargetPanel();
         
-        /* Set car color to red immediately */
         updateCarColorInGeometry(targetCar, CAR_COLOR_TARGET);
-        flashTargetCarColor(targetCar); /* Flash red for 1s */
+        flashTargetCarColor(targetCar); 
     }
 
     function flashTargetCarColor(car) {
+        const flashStartTime = new Date().getTime();
         const flashInterval = setInterval(() => {
             if (!car || !car.targeted) {
                 clearInterval(flashInterval);
                 return;
             }
-            const timeElapsed = new Date().getTime() - targetAcquireTime;
-            if (timeElapsed > 1000) { /* stop flashing after 1 second */
+            const timeElapsed = new Date().getTime() - flashStartTime;
+            if (timeElapsed > 1000) { 
                 clearInterval(flashInterval);
-                updateCarColorInGeometry(car, CAR_COLOR_TARGET); /* Ensure solid red */
+                updateCarColorInGeometry(car, CAR_COLOR_TARGET); 
             } else {
-                const currentColor = carsGeometry.attributes.color.getX(car.startIdx) === CAR_COLOR_TARGET.r ? CAR_COLOR_NORMAL : CAR_COLOR_TARGET;
+                const currentColor = carColors[car.startIdx * 3] === CAR_COLOR_TARGET.r ? CAR_COLOR_NORMAL : CAR_COLOR_TARGET;
                 updateCarColorInGeometry(car, currentColor);
             }
-        }, 100); /* Flash every 100ms */
+        }, 100); 
     }
 
     function releaseTarget() {
@@ -538,15 +566,15 @@
         trackingViewportDiv.classList.remove('visible');
     }
 
-    /* Target Acquisition Loop */
-    let targetTimer = setTimeout(acquireTarget, rng(8000, 12000));
+    /* Target Acquisition Loop - Reduced timing */
+    let targetTimer = setTimeout(acquireTarget, rng(3000, 5000)); // Initial acquisition after 3-5s
 
     function updateCarColorInGeometry(car, color) {
         for (let i = 0; i < car.numPoints; i++) {
-            const idx = car.startIdx + i;
-            carColors[idx * 3 + 0] = color.r;
-            carColors[idx * 3 + 1] = color.g;
-            carColors[idx * 3 + 2] = color.b;
+            const globalColorIdx = (car.startIdx + i) * 3;
+            carColors[globalColorIdx + 0] = color.r;
+            carColors[globalColorIdx + 1] = color.g;
+            carColors[globalColorIdx + 2] = color.b;
         }
         carsGeometry.attributes.color.needsUpdate = true;
     }
@@ -564,12 +592,7 @@
         let activeNode = Math.random().toString(16).substring(2, 10).toUpperCase();
         let uplink = Math.floor(rng(40, 99));
 
-        sysMonitor.innerHTML = `SYS_MONITOR v2.4
-----------------
-VEHICLES    : <span>${vehicleCount}</span>
-ACTIVE_NODE : <span>${activeNode}</span>
-UPLINK      : <span>${uplink}%</span>
-ENCRYPT     : AES-256-GCM`;
+        sysMonitor.innerHTML = `SYS_MONITOR v2.4\n----------------\nVEHICLES    : <span>${vehicleCount}</span>\nACTIVE_NODE : <span>${activeNode}</span>\nUPLINK      : <span>${uplink}%</span>\nENCRYPT     : AES-256-GCM`;
     }
 
     function updateNetScan() {
@@ -577,30 +600,21 @@ ENCRYPT     : AES-256-GCM`;
         packetOut += Math.floor(rng(5, 30));
         let lat = Math.floor(rng(2, 40));
 
-        netScan.innerHTML = `NET_SCAN // ACTIVE
-PKT_IN  : <span>${packetIn}</span>
-PKT_OUT : <span>${packetOut}</span>
-LAT     : <span>${lat}ms</span>`;
+        netScan.innerHTML = `NET_SCAN // ACTIVE\nPKT_IN  : <span>${packetIn}</span>\nPKT_OUT : <span>${packetOut}</span>\nLAT     : <span>${lat}ms</span>`;
     }
 
     function updateTargetPanel() {
         if (!targetCar) return;
 
-        let speedKmh = Math.floor(targetCar.speed * 100); /* Scale speed to plausible km/h */
+        let speedKmh = Math.floor(targetCar.speed * 100); 
         let threat = Math.random() < 0.3 ? '<span class="red">CRITICAL</span>' : '<span class="red">HIGH</span>';
         let targetId = 'VH-' + Math.floor(rng(0, 0xFFFF)).toString(16).padStart(4, '0').toUpperCase();
         
         let coordX = targetCar.x.toFixed(1);
         let coordZ = targetCar.z.toFixed(1);
-        let formattedCoords = `${coordX < 0 ? '-' : '+'}${String(Math.abs(coordX)).padStart(5, '0')} ${coordZ < 0 ? '-' : '+'}${String(Math.abs(coordZ)).padStart(5, '0')}`;
+        let formattedCoords = `${coordX < 0 ? '-' : '+'}${String(Math.abs(Math.floor(coordX*10))).padStart(4, '0')/10} ${coordZ < 0 ? '-' : '+'}${String(Math.abs(Math.floor(coordZ*10))).padStart(4, '0')/10}`;
 
-        targetPanel.innerHTML = `TARGET IDENTIFIED
------------------
-ID      : <span>${targetId}</span>
-SPEED   : <span>${speedKmh} km/h</span>
-COORDS  : <span>${formattedCoords}</span>
-THREAT  : ${threat}
-STATUS  : TRACKING`;
+        targetPanel.innerHTML = `TARGET IDENTIFIED\n-----------------\nID      : <span>${targetId}</span>\nSPEED   : <span>${speedKmh} km/h</span>\nCOORDS  : <span>${formattedCoords}</span>\nTHREAT  : ${threat}\nSTATUS  : TRACKING`;
     }
 
     setInterval(updateSysMonitor, 2000);
@@ -609,24 +623,21 @@ STATUS  : TRACKING`;
         if (targetCar && targetPanel.classList.contains('visible')) {
             updateTargetPanel();
         }
-    }, 500); /* Target panel updates faster */
+    }, 500); 
 
     updateSysMonitor();
     updateNetScan();
-    /* Initial update sets visible at start for panels */
     sysMonitor.classList.add('visible');
     netScan.classList.add('visible');
-    /* Target panel becomes visible only when a target is acquired */
 
 
     // ─── Animation loop ───────────────────────────────────────────────────────
-    const cityPositionAttr = cityGeometry.attributes.position; /* Renamed */
-    const cityColorAttr = cityGeometry.attributes.color;       /* Renamed */
+    const cityPositionAttr = cityGeometry.attributes.position;
+    const cityColorAttr = cityGeometry.attributes.color;       
     const carPositionAttr = carsGeometry.attributes.position;
     const carColorAttr = carsGeometry.attributes.color;
-
-
-    const tempVec = new THREE.Vector3(); /* For tracking camera positioning */
+    
+    const trackCamFar = 100; // Far clipping plane for tracking cam
 
     function animate() {
         requestAnimationFrame(animate);
@@ -645,39 +656,43 @@ STATUS  : TRACKING`;
         cityPositionAttr.needsUpdate = true;
         cityColorAttr.needsUpdate = true;
 
-        /* Car movement */
+        /* Car movement and wrapping logic */
+        const cityBoundsMin = OFFSET - (ROAD_WIDTH / 2);
+        const cityBoundsMax = -OFFSET + (ROAD_WIDTH / 2);
+        const cityRange = cityBoundsMax - cityBoundsMin;
+
         for (let c = 0; c < NUM_CARS; c++) {
             const car = cars[c];
 
             if (car.isHorizontal) {
                 car.x += car.speed * car.direction;
-                if (car.x > -OFFSET + (ROAD_WIDTH/2) || car.x < OFFSET - (ROAD_WIDTH/2)) { /* Wrap around city bounds */
-                    car.x = -car.x; /* Reverse direction and position */
-                    car.direction *= -1;
+                if (car.x > cityBoundsMax) {
+                    car.x = cityBoundsMin + (car.x - cityBoundsMax); 
+                } else if (car.x < cityBoundsMin) {
+                    car.x = cityBoundsMax - (cityBoundsMin - car.x); 
                 }
             } else {
                 car.z += car.speed * car.direction;
-                if (car.z > -OFFSET + (ROAD_WIDTH/2) || car.z < OFFSET - (ROAD_WIDTH/2)) {
-                    car.z = -car.z; /* Reverse direction and position */
-                    car.direction *= -1;
+                if (car.z > cityBoundsMax) {
+                    car.z = cityBoundsMin + (car.z - cityBoundsMax); 
+                } else if (car.z < cityBoundsMin) {
+                    car.z = cityBoundsMax - (cityBoundsMin - car.z); 
                 }
             }
 
             let carRotation = 0;
             if (car.isHorizontal) {
-                carRotation = car.direction === 1 ? -Math.PI / 2 : Math.PI / 2; /* East or West */
+                carRotation = car.direction === 1 ? -Math.PI / 2 : Math.PI / 2; 
             } else {
-                carRotation = car.direction === 1 ? 0 : Math.PI; /* North or South */
+                carRotation = car.direction === 1 ? 0 : Math.PI; 
             }
 
-            /* Update car position in geometry buffer */
             for (let i = 0; i < CAR_POINTS_COUNT; i++) {
                 const baseIdx = i * 3;
                 const localX = baseCarPoints[baseIdx];
                 const localY = baseCarPoints[baseIdx + 1];
                 const localZ = baseCarPoints[baseIdx + 2];
 
-                /* Rotate local points around car's Y axis */
                 const rotatedX = localX * Math.cos(carRotation) - localZ * Math.sin(carRotation);
                 const rotatedZ = localX * Math.sin(carRotation) + localZ * Math.cos(carRotation);
 
@@ -691,46 +706,84 @@ STATUS  : TRACKING`;
 
 
         /* Target logic */
-        if (targetCar && targetAcquireTime && (currentTime - targetAcquireTime > 6000)) { /* Remove target after 6s */
+        if (targetCar && targetAcquireTime && (currentTime - targetAcquireTime > 5000)) { // Release after 5s
             releaseTarget();
-            targetTimer = setTimeout(acquireTarget, rng(2000, 4000)); /* Re-acquire after 2-4s cooldown */
+            targetTimer = setTimeout(acquireTarget, rng(2000, 4000)); // Re-acquire after 2-4s cooldown
         } else if (!targetCar && currentTime - targetReleaseTime > 2000 && !targetTimer) {
-             targetTimer = setTimeout(acquireTarget, rng(8000, 12000));
+             targetTimer = setTimeout(acquireTarget, rng(3000, 5000)); // New acquisition 3-5s
         }
 
+        renderer.autoClear = true; // Ensure main render clears everything
 
         /* Main scene render */
-        controls.update();
-
         renderer.setViewport(0, 0, innerWidth, innerHeight);
-        renderer.setScissor(0, 0, innerWidth, innerHeight);
-        renderer.setScissorTest(false); /* Disable scissor for main render */
-        composer.render();
+        composer.render(); // Renders main scene with bloom
 
         /* Tracking camera PiP render */
         if (targetCar) {
-            const viewWidth = 280;
-            const viewHeight = 200;
-            const padding = 14;
+            const viewWidth = 240;
+            const viewHeight = 180;
+            const padding = 14; 
 
-            const targetPos = new THREE.Vector3(targetCar.x, targetCar.y + targetCar.numPoints * 0.05, targetCar.z); /* Aim slightly above car */
-            trackCam.lookAt(targetPos);
+            const targetCarWorldPos = new THREE.Vector3(targetCar.x, targetCar.y, targetCar.z);
+            trackCam.position.copy(targetCarWorldPos);
 
-            /* Position tracking camera behind and above the car */
-            let camOffset = new THREE.Vector3(0, 8, 12); /* 8 units up, 12 units back */
+            let camOffset = new THREE.Vector3(0, 8, 12); // 8 units up, 12 units back
             let carAngle = 0;
             if (targetCar.isHorizontal) {
-                carAngle = targetCar.direction === 1 ? -Math.PI / 2 : Math.PI / 2;
+                carAngle = targetCar.direction === 1 ? -Math.PI / 2 : Math.PI / 2; 
             } else {
                 carAngle = targetCar.direction === 1 ? 0 : Math.PI;
             }
             camOffset.applyAxisAngle(new THREE.Vector3(0,1,0), carAngle);
-            trackCam.position.copy(targetPos).add(camOffset);
+            trackCam.position.copy(targetCarWorldPos).add(camOffset);
+            trackCam.lookAt(targetCarWorldPos);
+            trackCam.far = trackCamFar; // Set far plane dynamically if needed
+            trackCam.updateProjectionMatrix();
 
+            // Set viewport and scissor for PiP
+            renderer.setScissorTest(true);
+            renderer.setScissor(innerWidth - viewWidth - padding, padding, viewWidth, viewHeight);
+            renderer.setViewport(innerWidth - viewWidth - padding, padding, viewWidth, viewHeight);
+            
+            const originalFog = scene.fog; // Store original fog
+            scene.fog = null; // Disable fog for clear PiP render
+            renderer.render(scene, trackCam);
+            scene.fog = originalFog; // Restore fog
 
-            trackRenderer.setViewport(0, 0, viewWidth, viewHeight); /* Render to tracking canvas's resolution */
-            trackRenderer.clear(); /* Clear only this canvas area */
-            trackRenderer.render(scene, trackCam);
+            renderer.setScissorTest(false); // Disable scissor after PiP render
+            renderer.autoClear = true; // Restore autoClear for next frame (important if composer doesn't handle it)
+
+            /* 2D Overlay drawing */
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            
+            // Project target car's 3D position to 2D screen coordinates
+            projectVector.set(targetCar.x, targetCar.y + 1.0, targetCar.z); // Slightly above car
+            projectVector.project(camera); // Project to normalized device coordinates
+
+            // Convert to screen coordinates
+            const x = (projectVector.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-projectVector.y * 0.5 + 0.5) * window.innerHeight;
+
+            // Draw circle around target car
+            overlayCtx.beginPath();
+            overlayCtx.arc(x, y, 20, 0, Math.PI * 2, false);
+            overlayCtx.strokeStyle = '#00ff88';
+            overlayCtx.lineWidth = 1;
+            overlayCtx.setLineDash([5, 5]); // Dashed line
+            overlayCtx.stroke();
+
+            // Draw line to tracking viewport
+            const pipX = window.innerWidth - viewWidth - padding + viewWidth / 2;
+            const pipY = padding + viewHeight / 2; // Center of PiP viewport
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(x, y);
+            overlayCtx.lineTo(pipX, pipY);
+            overlayCtx.strokeStyle = '#00ff88';
+            overlayCtx.lineWidth = 1;
+            overlayCtx.setLineDash([5, 5]);
+            overlayCtx.stroke();
+            overlayCtx.setLineDash([]); // Reset to solid
         }
     }
 
@@ -743,14 +796,9 @@ STATUS  : TRACKING`;
         renderer.setSize(innerWidth, innerHeight);
         composer.setSize(innerWidth, innerHeight);
 
-        /* Update PiP canvas size, though it's fixed */
-        const trackingViewportDiv = document.getElementById('tracking-viewport');
-        const trackingCanvas = document.getElementById('tracking-canvas');
-        if (trackingViewportDiv && trackingCanvas) {
-            trackRenderer.setSize(trackingViewportDiv.offsetWidth, trackingViewportDiv.offsetHeight);
-            trackCam.aspect = trackingViewportDiv.offsetWidth / trackingViewportDiv.offsetHeight;
-            trackCam.updateProjectionMatrix();
-        }
+        trackCam.aspect = 240 / 180; // keep fixed aspect for PiP
+        trackCam.updateProjectionMatrix();
+        updateOverlayCanvasSize();
     });
 
     </script>
