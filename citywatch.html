@@ -155,6 +155,62 @@
             text-align: right;
         }
 
+        /* ── Camera mode switcher ── */
+        #cam-mode-panel {
+            position: fixed;
+            top: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 25;
+            display: flex;
+            align-items: center;
+            gap: 0;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            pointer-events: all;
+        }
+        .cam-mode-btn {
+            font-family: 'DotGothic16', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: none;
+            border-right: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.5);
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        .cam-mode-btn:last-child { border-right: none; }
+        .cam-mode-btn:hover { color: rgba(255,255,255,0.85); }
+        .cam-mode-btn.active { color: #00ffff; }
+
+        /* ── Minimap ── */
+        #minimap-container {
+            position: fixed;
+            bottom: 14px;
+            right: 14px;
+            width: 160px;
+            height: 160px;
+            z-index: 25;
+            border: 1px solid rgba(255,255,255,0.4);
+            display: none;
+            pointer-events: none;
+        }
+        #minimap-label {
+            position: absolute;
+            top: 4px;
+            left: 6px;
+            font-family: 'DotGothic16', monospace;
+            font-size: 9px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            color: rgba(255,255,255,0.55);
+            pointer-events: none;
+            z-index: 1;
+        }
+
         /* ── Turn-by-turn panel ── */
         #turn-panel {
             position: fixed;
@@ -189,6 +245,17 @@
     <div id="coords-panel" class="hud-panel"></div>
     <div id="tile-panel" class="hud-panel"></div>
     <div id="gps-denied">gps_denied // enable location</div>
+
+    <!-- Camera mode switcher -->
+    <div id="cam-mode-panel">
+        <button class="cam-mode-btn active" id="btn-birdseye">bird's eye</button>
+        <button class="cam-mode-btn" id="btn-followme">follow me</button>
+    </div>
+
+    <!-- Minimap (bottom-right, follow-me mode only) -->
+    <div id="minimap-container">
+        <span id="minimap-label">minimap</span>
+    </div>
 
     <!-- Turn-by-turn instruction (shows above route input when route active) -->
     <div id="turn-panel"></div>
@@ -314,6 +381,90 @@
     );
     composer.addPass(bloomPass);
 
+    // ─── Follow-me (perspective) camera ──────────────────────────────────────
+    const followCam = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+    followCam.position.set(0, 25, 40);
+    followCam.lookAt(0, 0, -20);
+
+    // Smooth follow-me camera state (lerp targets)
+    const followCamPos = new THREE.Vector3();   // current lerped position
+    const followCamTarget = new THREE.Vector3(); // current lerped look-at point
+    let followCamInitialized = false;
+
+    // ─── Minimap orthographic camera ─────────────────────────────────────────
+    const minimapSize = 200; // frustum half-size in meters
+    const minimapCamera = new THREE.OrthographicCamera(
+        -minimapSize, minimapSize,
+         minimapSize, -minimapSize,
+        0.1, 2000
+    );
+    minimapCamera.position.set(0, 500, 0);
+    minimapCamera.lookAt(0, 0, 0);
+    minimapCamera.up.set(0, 0, -1); // north up
+
+    // ─── Camera mode state ────────────────────────────────────────────────────
+    // 'birdseye' | 'followme'
+    let cameraMode = 'birdseye';
+
+    // Transition state: animate from bird's eye to follow-me over 1.5s
+    const CAM_TRANSITION_DURATION = 1.5;
+    let camTransition = null; // null when not animating
+    // camTransition = { startPos, startTarget, endPos, endTarget, elapsed }
+
+    const minimapContainer = document.getElementById('minimap-container');
+    const btnBirdseye = document.getElementById('btn-birdseye');
+    const btnFollowme = document.getElementById('btn-followme');
+
+    function setCameraMode(mode) {
+        if (mode === cameraMode) return;
+        const prev = cameraMode;
+        cameraMode = mode;
+
+        btnBirdseye.classList.toggle('active', mode === 'birdseye');
+        btnFollowme.classList.toggle('active', mode === 'followme');
+
+        if (mode === 'followme') {
+            minimapContainer.style.display = 'block';
+            document.getElementById('hint').textContent = 'follow-me mode';
+
+            // Kick off transition from current ortho camera position
+            // Convert ortho camera's world XZ to a 3D start position
+            const startPos = new THREE.Vector3(camTarget.x, 25, camTarget.z + 40);
+            const startTarget = new THREE.Vector3(camTarget.x, 0, camTarget.z - 20);
+
+            // Compute desired follow-me end position based on current GPS
+            const { targetPos, targetLookAt } = computeFollowCamTarget();
+
+            if (!followCamInitialized) {
+                // No GPS movement history yet -- snap to start
+                followCamPos.copy(startPos);
+                followCamTarget.copy(startTarget);
+                followCamInitialized = true;
+            }
+
+            camTransition = {
+                startPos: followCamPos.clone(),
+                startTarget: followCamTarget.clone(),
+                endPos: targetPos,
+                endTarget: targetLookAt,
+                elapsed: 0,
+            };
+
+            // Update render pass to use followCam
+            composer.passes[0].camera = followCam;
+        } else {
+            // Back to bird's eye
+            minimapContainer.style.display = 'none';
+            document.getElementById('hint').textContent = "pan // drag \u00a0\u00a0 zoom // scroll";
+            camTransition = null;
+            composer.passes[0].camera = camera;
+            followGPS = true;
+        }
+    }
+
+    btnBirdseye.addEventListener('click', () => setCameraMode('birdseye'));
+    btnFollowme.addEventListener('click', () => setCameraMode('followme'));
+
     // ─── Resize handler ───────────────────────────────────────────────────────
     window.addEventListener('resize', () => {
         const w = window.innerWidth, h = window.innerHeight;
@@ -324,6 +475,8 @@
         camera.top = half;
         camera.bottom = -half;
         camera.updateProjectionMatrix();
+        followCam.aspect = w / h;
+        followCam.updateProjectionMatrix();
         renderer.setSize(w, h);
         composer.setSize(w, h);
     });
@@ -420,6 +573,59 @@
     let smoothLon = null;
     let gpsAccuracy = null;
     let gpsError = null;
+
+    // ─── GPS position history (for direction of travel) ───────────────────────
+    // Ring buffer of recent world-space positions, max 10 entries
+    const GPS_HISTORY_MAX = 10;
+    const gpsHistory = []; // [{x, z, time}]
+    // Last known heading (unit vector {x, z}) -- persisted when speed < 0.3 m/s
+    let lastHeadingX = 0;
+    let lastHeadingZ = -1; // default: facing north (-Z is north in Three.js)
+
+    function pushGPSHistory(worldX, worldZ) {
+        gpsHistory.push({ x: worldX, z: worldZ, time: performance.now() });
+        if (gpsHistory.length > GPS_HISTORY_MAX) gpsHistory.shift();
+        // Recompute heading from oldest to newest with speed gate
+        if (gpsHistory.length >= 2) {
+            const oldest = gpsHistory[0];
+            const newest = gpsHistory[gpsHistory.length - 1];
+            const dx = newest.x - oldest.x;
+            const dz = newest.z - oldest.z;
+            const dt = (newest.time - oldest.time) / 1000; // seconds
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const speed = dt > 0 ? dist / dt : 0; // m/s
+            if (speed >= 0.3 && dist > 0.01) {
+                lastHeadingX = dx / dist;
+                lastHeadingZ = dz / dist;
+            }
+            // If speed < 0.3 m/s, keep lastHeadingX/Z unchanged
+        }
+    }
+
+    // Returns {targetPos: Vector3, targetLookAt: Vector3} for the follow-me camera
+    // based on current GPS position and heading.
+    function computeFollowCamTarget() {
+        if (smoothLat === null || worldOriginLat === null) {
+            // No GPS yet -- use origin with default heading
+            const targetPos = new THREE.Vector3(0 - lastHeadingX * 40, 25, 0 - lastHeadingZ * 40);
+            const targetLookAt = new THREE.Vector3(lastHeadingX * 20, 0, lastHeadingZ * 20);
+            return { targetPos, targetLookAt };
+        }
+        const wp = latLonToWorld(smoothLat, smoothLon);
+        // Camera position: 40m behind user (opposite to heading), 25m above
+        const targetPos = new THREE.Vector3(
+            wp.x - lastHeadingX * 40,
+            25,
+            wp.z - lastHeadingZ * 40
+        );
+        // Look-at point: 20m ahead of user along heading, at ground level
+        const targetLookAt = new THREE.Vector3(
+            wp.x + lastHeadingX * 20,
+            0,
+            wp.z + lastHeadingZ * 20
+        );
+        return { targetPos, targetLookAt };
+    }
 
     // ─── GPS dot + ring ───────────────────────────────────────────────────────
     // Single white point (no attenuation)
@@ -759,9 +965,13 @@
         updateCoordsHUD();
         updateTileManager(smoothLat, smoothLon);
 
-        if (followGPS && worldOriginLat !== null) {
+        if (worldOriginLat !== null) {
             const wp = latLonToWorld(smoothLat, smoothLon);
-            camTarget.set(wp.x, 0, wp.z);
+            pushGPSHistory(wp.x, wp.z);
+
+            if (followGPS) {
+                camTarget.set(wp.x, 0, wp.z);
+            }
         }
     }
 
@@ -1115,10 +1325,12 @@
 
     // ─── Animation loop ───────────────────────────────────────────────────────
     let clock = new THREE.Clock();
+    let _lastAnimTime = 0;
 
     function animate() {
         requestAnimationFrame(animate);
-        const t = clock.getElapsedTime();
+        const delta = clock.getDelta();   // seconds since last frame
+        const t = clock.elapsedTime;      // total elapsed (updated by getDelta)
 
         // GPS ring pulse: scale 1.0 -> 1.5 -> 1.0, period 2s
         if (gpsRing.visible) {
@@ -1142,7 +1354,7 @@
             const wp = latLonToWorld(smoothLat, smoothLon);
             updateGPSIndicator(wp.x, wp.z);
 
-            if (followGPS) {
+            if (cameraMode === 'birdseye' && followGPS) {
                 camTarget.set(wp.x, 0, wp.z);
             }
 
@@ -1150,8 +1362,67 @@
             updateTurnPanel();
         }
 
-        updateCameraPosition();
+        if (cameraMode === 'birdseye') {
+            // Bird's eye: standard ortho camera update
+            updateCameraPosition();
+        } else {
+            // Follow-me: update perspective camera with lerp
+            const { targetPos, targetLookAt } = computeFollowCamTarget();
+
+            if (camTransition !== null) {
+                // Animated transition from bird's eye to follow-me
+                camTransition.elapsed += delta;
+                const rawT = Math.min(camTransition.elapsed / CAM_TRANSITION_DURATION, 1.0);
+                // Smooth ease: smoothstep
+                const tt = rawT * rawT * (3 - 2 * rawT);
+
+                followCamPos.lerpVectors(camTransition.startPos, camTransition.endPos, tt);
+                followCamTarget.lerpVectors(camTransition.startTarget, camTransition.endTarget, tt);
+
+                if (rawT >= 1.0) {
+                    camTransition = null; // transition done
+                }
+            } else {
+                // Steady-state follow: smooth lerp each frame (alpha 0.05)
+                const LERP_ALPHA = 0.05;
+                followCamPos.lerp(targetPos, LERP_ALPHA);
+                followCamTarget.lerp(targetLookAt, LERP_ALPHA);
+            }
+
+            followCam.position.copy(followCamPos);
+            followCam.lookAt(followCamTarget);
+            followCamInitialized = true;
+        }
+
+        // ── Main render ────────────────────────────────────────────────────────
+        // Restore full viewport for the composer pass
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
         composer.render();
+
+        // ── Minimap render (follow-me mode only, after composer) ───────────────
+        if (cameraMode === 'followme' && smoothLat !== null && worldOriginLat !== null) {
+            const wp = latLonToWorld(smoothLat, smoothLon);
+
+            // Position minimap camera directly above GPS position
+            minimapCamera.position.set(wp.x, 500, wp.z);
+            minimapCamera.lookAt(wp.x, 0, wp.z);
+
+            const MM = 160; // minimap pixel size
+            const pixelRatio = renderer.getPixelRatio();
+            const vpX = window.innerWidth - MM - 14;
+            const vpY = 14; // 14px from bottom in CSS; renderer coords are bottom-left
+            // renderer viewport Y=0 is bottom of canvas
+            const vpXpx = Math.round(vpX * pixelRatio);
+            const vpYpx = Math.round(vpY * pixelRatio);
+            const MMpx = Math.round(MM * pixelRatio);
+
+            renderer.setScissorTest(true);
+            renderer.setScissor(vpXpx, vpYpx, MMpx, MMpx);
+            renderer.setViewport(vpXpx, vpYpx, MMpx, MMpx);
+            renderer.render(scene, minimapCamera);
+            renderer.setScissorTest(false);
+        }
     }
 
     animate();
