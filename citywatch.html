@@ -1421,7 +1421,7 @@
             if (!currentTileKeys.has(t.key) || tileCache.has(t.key) || loadingSet.has(t.key)) continue;
             tileActiveCount++;
             loadTile(t.z, t.x, t.y).finally(() => {
-                tileActiveCount--;
+                tileActiveCount = Math.max(0, tileActiveCount - 1); // clamp to 0 (reset may have zeroed it)
                 drainTileQueue(); // process next in queue
             });
         }
@@ -3109,10 +3109,18 @@
         worldOriginLat = null;
         worldOriginLon = null;
         worldOriginFromFallback = false;
-        // Clear all tiles
+        // Clear all tiles and the load queue.
+        // Reset tileActiveCount to 0 so new tiles start immediately.
+        // In-flight loadTile() promises will still call tileActiveCount-- when
+        // they finish, potentially going negative, but drainTileQueue guards on
+        // tileActiveCount < TILE_CONCURRENCY so negatives are harmless (they
+        // allow up to TILE_CONCURRENCY slots, same as normal). The generation
+        // check (sceneGeneration === myGeneration) ensures stale results are discarded.
         for (const key of [...tileCache.keys()]) disposeTile(key);
         tileCache.clear();
         loadingSet.clear();
+        tileQueue.length = 0;    // discard stale queued tiles for old location
+        tileActiveCount = 0;     // reset concurrency counter so new tiles start immediately
         // Reset position and world origin immediately so beacon + camera work before tiles load
         smoothLat = lat;
         smoothLon = lon;
