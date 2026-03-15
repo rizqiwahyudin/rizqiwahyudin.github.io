@@ -1431,19 +1431,14 @@
     // Strategy: determine which quadrant of the current tile the user is in,
     // then pick the 4 tiles that surround that quadrant corner.
     function get2x2Tiles(lat, lon) {
-        // Pick the 4 tiles that surround your position based on which
-        // quadrant of the center tile you're standing in.
+        // 3x3 grid centered on the tile containing lat/lon.
+        // Stable regardless of GPS jitter -- center tile only changes when the user
+        // crosses a tile boundary, so desiredKeys stays consistent across GPS updates.
         const center = latLonToTile(lat, lon, ZOOM);
-        const bbox = tileToBbox(ZOOM, center.x, center.y);
-        const midLat = (bbox.south + bbox.north) / 2;
-        const midLon = (bbox.west + bbox.east) / 2;
-        // Offset toward the side you're closest to
-        const dx = lon >= midLon ? 0 : -1;
-        const dy = lat < midLat ? 0 : -1; // y increases southward in slippy tiles
         const tiles = [];
-        for (let oy = 0; oy <= 1; oy++) {
-            for (let ox = 0; ox <= 1; ox++) {
-                tiles.push({ x: center.x + dx + ox, y: center.y + dy + oy });
+        for (let oy = -1; oy <= 1; oy++) {
+            for (let ox = -1; ox <= 1; ox++) {
+                tiles.push({ x: center.x + ox, y: center.y + oy });
             }
         }
         return tiles;
@@ -3002,7 +2997,7 @@
         const loading = loadingSet.size;
         const errors = [...tileCache.values()].filter(e => e.error).length;
         const offline = [...tileCache.values()].some(e => e.offline);
-        const tileTarget = surveillanceOn ? 25 : 4;
+        const tileTarget = surveillanceOn ? 25 : 9;
 
         let html = `tiles     <span>${loaded}/${tileTarget}</span>`;
         if (loading > 0) {
