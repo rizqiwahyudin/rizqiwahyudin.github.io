@@ -2661,7 +2661,7 @@
         const lon = smoothLon !== null ? smoothLon : 24.1052;
         // latLonToWorld needs worldOriginLat set -- skip if not ready
         if (worldOriginLat === null) return;
-        const D = 1.5; // ~150km radius -- catches all aircraft in the region
+        const D = 1.1; // ~120km radius
         // Route through VPS proxy (OAuth2 authenticated, higher rate limits)
         const url = `${VPS_URL}/proxy/aircraft?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&r=${D}`;
         try {
@@ -2691,12 +2691,17 @@
                 const baroAlt   = state[7];
                 const onGround  = state[8];
 
-                if (lon2 === null || lat2 === null || onGround) continue;
+                if (lon2 === null || lat2 === null) continue;
 
                 const ww = latLonToWorld(lat2, lon2);
-                // Scale altitude: compress so low-altitude (100m) → y≈15, cruise (10000m) → y≈120
-                // Formula: log scale keeps all altitudes in a visible range
-                const rawY = baroAlt !== null ? Math.max(15, Math.log(baroAlt + 1) * 12) : 60;
+                let rawY;
+
+                if (onGround) {
+                    rawY = 1.0;
+                } else {
+                    const calculatedY = baroAlt !== null ? Math.log(baroAlt + 1) * 12 : 60;
+                    rawY = Math.max(15.0, calculatedY);
+                }
 
                 if (aircraftData.has(icao24)) {
                     const ac = aircraftData.get(icao24);
