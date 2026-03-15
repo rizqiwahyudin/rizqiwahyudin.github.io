@@ -462,6 +462,65 @@
         }
         #zoom-indicator span { color: #00ffff; }
 
+        /* ── Transit search panel ── */
+        #transit-search-panel {
+            position: fixed;
+            bottom: 152px;
+            left: 14px;
+            z-index: 25;
+            display: none;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+            background: rgba(0,0,0,0.82);
+            border: 1px solid rgba(255,255,255,0.22);
+            padding: 7px 10px;
+            pointer-events: all;
+        }
+        #transit-search-input-container {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #transit-search-input {
+            font-family: 'DotGothic16', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #ffffff;
+            width: 80px;
+            caret-color: #00ffff;
+        }
+        #transit-search-input::placeholder { color: rgba(255,255,255,0.3); }
+        #transit-search-btn, #transit-search-clear-btn {
+            font-family: 'DotGothic16', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: lowercase;
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #ffffff;
+            padding: 2px 8px;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        #transit-search-btn:hover { border-color: #00ffff; color: #00ffff; }
+        #transit-search-clear-btn {
+            border-color: rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.4);
+            display: none;
+            padding: 2px 6px;
+        }
+        #transit-search-clear-btn:hover { border-color: #ff2244; color: #ff2244; }
+        #transit-search-results {
+            margin-top: 4px;
+            font-size: 10px;
+            color: rgba(255,255,255,0.5);
+        }
+
         /* ── Transit sidebar (SL real-time) ── */
         #transit-sidebar {
             display: none;
@@ -534,6 +593,13 @@
         <label class="layer-toggle"><input type="checkbox" id="layer-traffic"> traffic</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
     </div>
+        <!-- Transit search panel -->
+    <div id="transit-search-panel">
+        <input id="transit-search-input" type="text" placeholder="line..." autocomplete="off" spellcheck="false" />
+        <button id="transit-search-btn">find</button>
+        <button id="transit-search-clear-btn" title="clear search">×</button>
+    </div>
+
     <button id="surveillance-btn">surveillance // off</button>
     <button id="regen-btn" title="regenerate city">regen</button>
 
@@ -2291,11 +2357,13 @@
     let transitFocused = null;             // focused vehicleId or null
     let transitShapePoints = null;         // THREE.Points for focused vehicle shape
     let transitPollInterval = null;        // setInterval handle
+    let transitSearchResults = new Set();  // route_ids from search
 
     const surveillanceBtn  = document.getElementById('surveillance-btn');
     const layerPanel       = document.getElementById('layer-panel');
     const zoomIndicator    = document.getElementById('zoom-indicator');
     const zoomLevelLabel   = document.getElementById('zoom-level-label');
+    const transitSearchPanel = document.getElementById('transit-search-panel');
 
     // ─── Regen animation ─────────────────────────────────────────────────────
     const REGEN_DURATION = 2200; // ms per tile
@@ -2511,6 +2579,7 @@
         layerTransit = cbTransit.checked;
         updateSurveillanceLayers();
         if (layerTransit) {
+            transitSearchPanel.style.display = 'flex';
             // Start SL real-time polling
             pollSLTransitVehicles(); // initial fetch
             if (!transitPollInterval) {
@@ -2518,6 +2587,7 @@
             }
             for (const obj of transitVehicleObjects.values()) obj.points.visible = true;
         } else {
+            transitSearchPanel.style.display = 'none';
             // Stop polling, hide all
             if (transitPollInterval) { clearInterval(transitPollInterval); transitPollInterval = null; }
             for (const obj of transitVehicleObjects.values()) obj.points.visible = false;
@@ -2649,6 +2719,65 @@
     }
 
     fetchAirportData();
+
+    const transitSearchInput = document.getElementById('transit-search-input');
+    const transitSearchBtn = document.getElementById('transit-search-btn');
+    const transitSearchClearBtn = document.getElementById('transit-search-clear-btn');
+
+    transitSearchBtn.addEventListener('click', () => {
+        searchTransitLine(transitSearchInput.value);
+    });
+    transitSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') searchTransitLine(transitSearchInput.value);
+    });
+    transitSearchClearBtn.addEventListener('click', clearTransitSearch);
+
+    async function searchTransitLine(line) {
+        if (!line.trim()) return;
+        try {
+            const res = await fetch(`${VPS_URL}/proxy/transit-search?line=${encodeURIComponent(line)}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            transitSearchResults.clear();
+            if (data.routes) {
+                for (const route of data.routes) {
+                    transitSearchResults.add(route.routeId);
+                }
+            }
+            highlightSearchedVehicles();
+            transitSearchClearBtn.style.display = 'inline-block';
+        } catch(e) {
+            console.error('Transit search failed:', e);
+        }
+    }
+
+    function clearTransitSearch() {
+        transitSearchInput.value = '';
+        transitSearchClearBtn.style.display = 'none';
+        transitSearchResults.clear();
+        // Reset all vehicle colors
+        for (const vehicle of transitVehicleObjects.values()) {
+            const colorAttr = vehicle.points.geometry.getAttribute('color');
+            const origColor = vehicle.color;
+            for (let i = 0; i < colorAttr.count; i++) {
+                colorAttr.setXYZ(i, origColor[0], origColor[1], origColor[2]);
+            }
+            colorAttr.needsUpdate = true;
+        }
+    }
+
+    function highlightSearchedVehicles() {
+        for (const vehicle of transitVehicleObjects.values()) {
+            const isMatch = transitSearchResults.has(vehicle.routeId);
+            const colorAttr = vehicle.points.geometry.getAttribute('color');
+            const origColor = vehicle.color;
+            const targetColor = isMatch ? [1.0, 1.0, 1.0] : [origColor[0] * 0.3, origColor[1] * 0.3, origColor[2] * 0.3];
+            for (let i = 0; i < colorAttr.count; i++) {
+                colorAttr.setXYZ(i, targetColor[0], targetColor[1], targetColor[2]);
+            }
+            colorAttr.needsUpdate = true;
+        }
+    }
 
     // ─── Transit: real-time SL vehicles via VPS ──────────────────────────────
     // Simulated transit removed. Real vehicle positions from GTFS-RT via VPS.
@@ -3660,6 +3789,9 @@
                 // Update stored tripId
                 const obj = transitVehicleObjects.get(v.id);
                 if (obj) obj.tripId = v.tripId;
+            }
+            if (transitSearchResults.size > 0) {
+                highlightSearchedVehicles();
             }
         } catch (e) {
             // Network error: silent
