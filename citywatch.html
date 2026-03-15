@@ -3120,7 +3120,6 @@
         tileCache.clear();
         loadingSet.clear();
         tileQueue.length = 0;    // discard stale queued tiles for old location
-        tileActiveCount = 0;     // reset concurrency counter so new tiles start immediately
         // Reset position and world origin immediately so beacon + camera work before tiles load
         smoothLat = lat;
         smoothLon = lon;
