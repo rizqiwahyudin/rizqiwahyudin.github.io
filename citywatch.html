@@ -568,6 +568,8 @@
     <script>
     'use strict';
 
+    let tileLoadController = new AbortController();
+
     // ─── Config ───────────────────────────────────────────────────────────────
     const ZOOM = 16;
     // Cloudflare Worker proxy -- caches Overpass responses at the edge
@@ -1476,7 +1478,7 @@
             let vpsLoaded = false;
             try {
                 const vpsRes = await fetch(`${TILE_VPS_URL}/tile/${z}/${x}/${y}`, {
-                    signal: AbortSignal.timeout(8000),
+                    signal: tileLoadController.signal,
                 });
                 if (vpsRes.ok) {
                     const raw = await vpsRes.arrayBuffer();
@@ -1606,7 +1608,7 @@
                         method: 'POST',
                         body: encodedQuery,
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        signal: buildAbort.signal,
+                        signal: tileLoadController.signal,
                     });
                     if (overpassRes.status === 429) { lastErr = new Error('rate_limited'); continue; }
                     if (overpassRes.status === 504 || overpassRes.status === 502) { lastErr = new Error('server_overloaded'); continue; }
@@ -3097,13 +3099,53 @@
     // ─── GPS Override: resetScene, apply, revert ─────────────────────────────
 
     function clearTransit() {
-        if (transitPoints) { transitPoints.geometry.dispose(); transitPoints.material.dispose(); scene.remove(transitPoints); transitPoints = null; }
-        for (const line of transitRouteLines) { line.geometry.dispose(); line.material.dispose(); scene.remove(line); }
-        transitRouteLines.length = 0;
-        transitVehicles.length = 0;
+        // Stop the background polling timer that causes the crash.
+        if (transitPollInterval) {
+            clearInterval(transitPollInterval);
+            transitPollInterval = null;
+        }
+
+        // Dispose of all active vehicle point objects.
+        for (const obj of transitVehicleObjects.values()) {
+            if (obj.points) {
+                scene.remove(obj.points);
+                obj.points.geometry.dispose();
+                obj.points.material.dispose();
+            }
+        }
+        transitVehicleObjects.clear();
+
+        // Dispose of the focused vehicle's route shape.
+        if (transitShapePoints) {
+            scene.remove(transitShapePoints);
+            transitShapePoints.geometry.dispose();
+            transitShapePoints.material.dispose();
+            transitShapePoints = null;
+        }
+
+        // Reset focused state and hide the UI.
+        transitFocused = null;
+        document.getElementById('transit-sidebar').classList.remove('visible');
+
+        // Cleanup for obsolete properties from older versions.
+        if (typeof transitPoints !== 'undefined' && transitPoints) {
+            scene.remove(transitPoints);
+            transitPoints.geometry.dispose();
+            transitPoints.material.dispose();
+            transitPoints = null;
+        }
+        if (typeof transitRouteLines !== 'undefined') {
+            for (const line of transitRouteLines) { scene.remove(line); line.geometry.dispose(); line.material.dispose(); }
+            transitRouteLines.length = 0;
+        }
     }
 
     function resetScene(lat, lon) {
+        // Abort all in-flight requests from the PREVIOUS city.
+        tileLoadController.abort();
+        // Create a NEW controller for the new scene's requests.
+        tileLoadController = new AbortController();
+
         sceneGeneration++;
         // Null world origin -- first tile load will reset it
         worldOriginLat = null;
@@ -3120,6 +3162,7 @@
         tileCache.clear();
         loadingSet.clear();
         tileQueue.length = 0;    // discard stale queued tiles for old location
+        tileActiveCount = 0;     // reset concurrency counter so new tiles start immediately
         // Reset position and world origin immediately so beacon + camera work before tiles load
         smoothLat = lat;
         smoothLon = lon;
