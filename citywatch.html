@@ -2650,160 +2650,10 @@
 
     fetchAirportData();
 
-    // ─── Transit: route corridors from VPS + simulated vehicles ──────────────
-    // Rigas Satiksme publishes only static GTFS (no real-time feed).
-    // VPS /proxy/transit returns 5 key route GeoJSON LineStrings.
-    // We draw those as dotted corridors and simulate vehicle positions on them.
-    let transitRouteLines = []; // THREE.Line objects for route corridors
-    let transitPoints = null;
-    const transitVehicles = [];
-
-    async function fetchTransitRoutes() {
-        // VPS transit routes are Riga-specific -- skip if not in Riga area (~80km)
-        const tLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const tLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
-        const distFromRiga = Math.hypot(tLat - 56.9496, tLon - 24.1052);
-        if (distFromRiga > 0.8) return; // outside ~80km of Riga center
-        try {
-            const res = await fetch(`${VPS_URL}/proxy/transit`, { signal: AbortSignal.timeout(8000) });
-            if (!res.ok) return;
-            const geojson = await res.json();
-
-            // Wait for world origin
-            if (worldOriginLat === null) return;
-
-            for (const feature of geojson.features || []) {
-                const coords = feature.geometry && feature.geometry.coordinates;
-                if (!coords || coords.length < 2) continue;
-
-                const pts = [];
-                for (const [lon, lat] of coords) {
-                    const w = latLonToWorld(lat, lon);
-                    pts.push(new THREE.Vector3(w.x, 0.5, w.z));
-                }
-
-                // Color from feature properties
-                const hex = feature.properties.color || '#00ffff';
-                const color = new THREE.Color(hex);
-
-                const geo = new THREE.BufferGeometry().setFromPoints(pts);
-                const mat = new THREE.LineDashedMaterial({
-                    color,
-                    dashSize: 8,
-                    gapSize: 4,
-                    linewidth: 1,
-                    opacity: 0.55,
-                    transparent: true,
-                });
-                const line = new THREE.Line(geo, mat);
-                line.computeLineDistances();
-                line.visible = layerTransit;
-                scene.add(line);
-                transitRouteLines.push(line);
-            }
-        } catch (e) {
-            // Transit route corridors are cosmetic -- ignore failures
-        }
-    }
-
-    // Generate transit stops around the current GPS position (location-agnostic)
-    function getTransitStops() {
-        const cLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const cLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
-        const offsets = [
-            [0, 0], [-0.004, -0.009], [0.006, 0.009], [-0.009, 0.012],
-            [0.009, -0.013], [-0.005, 0.013], [0.013, 0.005],
-            [0.007, -0.004], [-0.013, -0.004], [0.004, 0.015],
-        ];
-        return offsets.map(([dLat, dLon]) => [cLat + dLat, cLon + dLon]);
-    }
-
-    function initTransit() {
-        // Wait for world origin
-        const waitOrigin = () => new Promise(r => {
-            const c = () => { if (worldOriginLat !== null) r(); else setTimeout(c, 400); };
-            c();
-        });
-        waitOrigin().then(() => {
-            // Create 20 vehicles, each assigned a route between two random stops
-            const TRANSIT_STOPS = getTransitStops();
-            for (let v = 0; v < 20; v++) {
-                const a = Math.floor(Math.random() * TRANSIT_STOPS.length);
-                let b = Math.floor(Math.random() * TRANSIT_STOPS.length);
-                while (b === a) b = Math.floor(Math.random() * TRANSIT_STOPS.length);
-                const wa = latLonToWorld(TRANSIT_STOPS[a][0], TRANSIT_STOPS[a][1]);
-                const wb = latLonToWorld(TRANSIT_STOPS[b][0], TRANSIT_STOPS[b][1]);
-                const dist = Math.hypot(wb.x - wa.x, wb.z - wa.z);
-                const speed = 30000 / 3600; // 30 km/h in m/s
-                const duration = dist / speed; // seconds to complete route
-                transitVehicles.push({
-                    ax: wa.x, az: wa.z,
-                    bx: wb.x, bz: wb.z,
-                    t: Math.random(), // start at random point in route
-                    duration,
-                    forward: true,
-                });
-            }
-            buildTransitGeometry();
-        });
-    }
-
-    function buildTransitGeometry() {
-        if (transitVehicles.length === 0) return;
-        // 4 points per vehicle (small cross cluster), cyan
-        const posArr = new Float32Array(transitVehicles.length * 4 * 3);
-        const colArr = new Float32Array(transitVehicles.length * 4 * 3);
-        const OFFSETS = [[0,0],[1.5,0],[-1.5,0],[0,1.5]];
-
-        let idx = 0;
-        for (const v of transitVehicles) {
-            const cx = v.ax + v.t * (v.bx - v.ax);
-            const cz = v.az + v.t * (v.bz - v.az);
-            for (const [ox, oz] of OFFSETS) {
-                posArr[idx * 3]     = cx + ox;
-                posArr[idx * 3 + 1] = 0.3;
-                posArr[idx * 3 + 2] = cz + oz;
-                colArr[idx * 3]     = 0.0;
-                colArr[idx * 3 + 1] = 0.9;
-                colArr[idx * 3 + 2] = 0.9;
-                idx++;
-            }
-        }
-
-        if (!transitPoints) {
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
-            const mat = new THREE.PointsMaterial({ size: 3.5, sizeAttenuation: false, vertexColors: true });
-            transitPoints = new THREE.Points(geo, mat);
-            transitPoints.visible = false;
-            scene.add(transitPoints);
-        } else {
-            transitPoints.geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-            transitPoints.geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
-            transitPoints.geometry.getAttribute('position').needsUpdate = true;
-        }
-    }
-
-    function updateTransit(delta) {
-        if (transitVehicles.length === 0 || !transitPoints || !transitPoints.visible) return;
-        const speed = 30000 / 3600; // m/s
-        for (const v of transitVehicles) {
-            const dt = delta / v.duration;
-            if (v.forward) {
-                v.t += dt;
-                if (v.t >= 1.0) { v.t = 1.0; v.forward = false; }
-            } else {
-                v.t -= dt;
-                if (v.t <= 0.0) { v.t = 0.0; v.forward = true; }
-            }
-        }
-        buildTransitGeometry();
-    }
-
-    initTransit();
-    // Load Riga transit route corridors from VPS (after world origin is ready)
-    setTimeout(fetchTransitRoutes, 2000);
+    // ─── Transit: real-time SL vehicles via VPS ──────────────────────────────
+    // Simulated transit removed. Real vehicle positions from GTFS-RT via VPS.
+    let transitRouteLines = []; // kept for clearTransit() compatibility
+    let transitPoints = null;   // kept for clearTransit() compatibility
 
     async function fetchAircraft() {
         // Use GPS if available, fallback to Riga center
@@ -3288,7 +3138,6 @@
         updateTileManager(lat, lon);
         // Re-fetch location-relative data
         fetchAirportData();
-        initTransit();
     }
 
     function applyGpsOverride(lat, lon) {
@@ -3883,9 +3732,6 @@
                 onLODChange(newLOD);
             }
         }
-
-        // ── Transit vehicle update (simulated Riga) ───────────────────────────
-        updateTransit(delta);
 
         // ── SL Real-Time Transit lerp update ──────────────────────────────────
         if (transitVehicleObjects.size > 0 && worldOriginLat !== null) {
