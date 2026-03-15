@@ -1257,8 +1257,6 @@
         camTarget.z -= screenDy * metersPerPixelY;
 
         followGPS = false;
-        if (panTimer) clearTimeout(panTimer);
-        panTimer = setTimeout(() => { followGPS = true; }, 5000);
     }
 
     // Scroll wheel zoom
