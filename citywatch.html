@@ -1430,7 +1430,7 @@
     // Returns the 2x2 grid of tile coords around a lat/lon.
     // Strategy: determine which quadrant of the current tile the user is in,
     // then pick the 4 tiles that surround that quadrant corner.
-    function get2x2Tiles(lat, lon) {
+    function get3x3Tiles(lat, lon) {
         // 3x3 grid centered on the tile containing lat/lon.
         // Stable regardless of GPS jitter -- center tile only changes when the user
         // crosses a tile boundary, so desiredKeys stays consistent across GPS updates.
@@ -1983,7 +1983,7 @@
     // Called whenever GPS position updates -- manages the tile grid
     // Surveillance OFF: 2x2 grid (4 tiles); Surveillance ON: 5x5 grid (25 tiles)
     function updateTileManager(lat, lon) {
-        const desired = surveillanceOn ? get5x5Tiles(lat, lon) : get2x2Tiles(lat, lon);
+        const desired = surveillanceOn ? get5x5Tiles(lat, lon) : get3x3Tiles(lat, lon);
         const desiredKeys = new Set(desired.map(t => `${ZOOM}/${t.x}/${t.y}`));
 
         // Hide tiles outside desired set but keep them in cache -- they'll be instantly
