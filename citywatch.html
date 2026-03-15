@@ -1218,6 +1218,9 @@
         camera.lookAt(camTarget.x, 0, camTarget.z);
     }
 
+    let lastRealLat = null;
+    let lastRealLon = null;
+
     // ─── GPS state ────────────────────────────────────────────────────────────
     let smoothLat = null;
     let smoothLon = null;
@@ -3031,16 +3034,12 @@
 
     // ─── GPS watch ────────────────────────────────────────────────────────────
     function onGPSPosition(pos) {
-        // Override active: suppress GPS updates
+        // ALWAYS store the last known REAL coordinates from the device.
+        lastRealLat = pos.coords.latitude;
+        lastRealLon = pos.coords.longitude;
+
+        // Override active: suppress map updates, but keep capturing real GPS.
         if (gpsOverrideActive) return;
-        // Revert pending: use this real position to reset scene
-        if (gpsRevertPending) {
-            gpsRevertPending = false;
-            resetScene(pos.coords.latitude, pos.coords.longitude);
-            const input = document.getElementById('gps-override-input');
-            if (input) input.placeholder = 'lat, lon';
-            return;
-        }
 
         const rawLat = pos.coords.latitude;
         const rawLon = pos.coords.longitude;
@@ -3201,13 +3200,17 @@
         gpsOverrideActive = false;
         gpsOverrideLat = null;
         gpsOverrideLon = null;
-        gpsRevertPending = true;
-        // Update UI
+
+        // Update UI immediately.
         const btn = document.getElementById('gps-override-btn');
         if (btn) btn.classList.remove('active');
         const input = document.getElementById('gps-override-input');
-        if (input) { input.value = ''; input.placeholder = 'waiting for gps...'; }
-        // resetScene fires on next watchPosition callback (gpsRevertPending check)
+        if (input) { input.value = ''; input.placeholder = 'lat, lon'; }
+
+        // If we have a real position, reset immediately. Otherwise, do nothing.
+        if (lastRealLat !== null && lastRealLon !== null) {
+            resetScene(lastRealLat, lastRealLon);
+        }
     }
 
     if ('geolocation' in navigator) {
