@@ -2514,7 +2514,7 @@
             // Start SL real-time polling
             pollSLTransitVehicles(); // initial fetch
             if (!transitPollInterval) {
-                transitPollInterval = setInterval(pollSLTransitVehicles, 5000); // Poll every 5s
+                transitPollInterval = setInterval(pollSLTransitVehicles, 15000);
             }
             for (const obj of transitVehicleObjects.values()) obj.points.visible = true;
         } else {
@@ -2781,6 +2781,10 @@
     // Start aircraft fetch interval
     fetchAircraft();
     setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
+
+    // Start SL real-time transit poll
+    pollSLTransitVehicles();
+    setInterval(pollSLTransitVehicles, 5000);
 
     // ── Tile retry ticker ─────────────────────────────────────────────────────
     // updateTileManager only runs on GPS updates. If GPS is denied/static,
