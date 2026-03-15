@@ -3534,7 +3534,7 @@
     async function pollSLTransitVehicles() {
         if (worldOriginLat === null) return;
         try {
-            const res = await fetch('http://95.216.156.168:3456/proxy/transit-vehicles', {
+            const res = await fetch(`${VPS_URL}/proxy/transit-vehicles`, {
                 signal: AbortSignal.timeout(12000),
             });
             if (!res.ok) return;
@@ -3626,7 +3626,7 @@
         const obj = transitVehicleObjects.get(vehicleId);
         if (!obj) return;
         try {
-            const res = await fetch(`http://95.216.156.168:3456/proxy/transit-trip?tripId=${encodeURIComponent(obj.tripId)}`, {
+            const res = await fetch(`${VPS_URL}/proxy/transit-trip?tripId=${encodeURIComponent(obj.tripId)}`, {
                 signal: AbortSignal.timeout(8000),
             });
             if (!res.ok) return;
