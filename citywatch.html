@@ -461,6 +461,29 @@
             display: none;
         }
         #zoom-indicator span { color: #00ffff; }
+
+        /* ── Transit sidebar (SL real-time) ── */
+        #transit-sidebar {
+            display: none;
+            position: fixed;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 200px;
+            background: rgba(8,14,18,0.92);
+            border-left: 1px solid rgba(51,204,255,0.2);
+            padding: 16px 12px;
+            font-family: 'DotGothic16', monospace;
+            color: rgba(255,255,255,0.7);
+            font-size: 12px;
+            z-index: 100;
+        }
+        #transit-sidebar.visible { display: block; }
+        #transit-sidebar-line { font-size: 16px; color: #33ccff; margin-bottom: 4px; }
+        #transit-sidebar-headsign { color: rgba(255,255,255,0.4); margin-bottom: 12px; font-size: 11px; }
+        #transit-sidebar-stops .stop-row { margin-bottom: 8px; display: flex; justify-content: space-between; }
+        #transit-sidebar-stops .stop-name { color: rgba(255,255,255,0.6); }
+        #transit-sidebar-stops .stop-eta { color: #33ccff; }
     </style>
 </head>
 <body>
@@ -513,6 +536,13 @@
     </div>
     <button id="surveillance-btn">surveillance // off</button>
     <button id="regen-btn" title="regenerate city">regen</button>
+
+    <!-- Transit info sidebar (SL real-time) -->
+    <div id="transit-sidebar">
+        <div id="transit-sidebar-line"></div>
+        <div id="transit-sidebar-headsign"></div>
+        <div id="transit-sidebar-stops"></div>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -1107,6 +1137,44 @@
     }, { passive: false });
 
     renderer.domElement.addEventListener('touchend', () => { lastTouch = null; });
+
+    // ─── Transit vehicle tap/click handler ────────────────────────────────────
+    // Quick tap (no pan) -> raycast against all transit vehicle point clouds
+    let _pointerDownPos = null;
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+        _pointerDownPos = { x: e.clientX, y: e.clientY };
+    });
+    renderer.domElement.addEventListener('pointerup', (e) => {
+        if (!_pointerDownPos) return;
+        const dx = e.clientX - _pointerDownPos.x;
+        const dy = e.clientY - _pointerDownPos.y;
+        _pointerDownPos = null;
+        // Only treat as tap if minimal movement
+        if (Math.hypot(dx, dy) > 8) return;
+        if (!layerTransit || transitVehicleObjects.size === 0) return;
+        if (worldOriginLat === null) return;
+
+        // Build normalized device coords
+        const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+        const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+        const raycaster = new THREE.Raycaster();
+        raycaster.params.Points.threshold = 8;
+        const activeCam = cameraMode === 'birdseye' ? camera :
+                          cameraMode === 'followme' ? followCam : anchorCam;
+        raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), activeCam);
+
+        let bestDist = Infinity;
+        let bestId = null;
+        for (const [id, obj] of transitVehicleObjects.entries()) {
+            if (!obj.points.visible) continue;
+            const hits = raycaster.intersectObject(obj.points);
+            if (hits.length > 0 && hits[0].distance < bestDist) {
+                bestDist = hits[0].distance;
+                bestId = id;
+            }
+        }
+        if (bestId) focusTransitVehicle(bestId);
+    });
 
     function panBy(screenDx, screenDy) {
         // Convert screen pixels to world meters
@@ -2218,6 +2286,12 @@
     let layerTraffic = false;
     let layerWeather = true;
 
+    // ─── SL Real-Time Transit State ───────────────────────────────────────────
+    let transitVehicleObjects = new Map(); // vehicleId -> {points, prevLat, prevLon, targetLat, targetLon, lerpT, color}
+    let transitFocused = null;             // focused vehicleId or null
+    let transitShapePoints = null;         // THREE.Points for focused vehicle shape
+    let transitPollInterval = null;        // setInterval handle
+
     const surveillanceBtn  = document.getElementById('surveillance-btn');
     const layerPanel       = document.getElementById('layer-panel');
     const zoomIndicator    = document.getElementById('zoom-indicator');
@@ -2436,6 +2510,27 @@
     cbTransit.addEventListener('change', () => {
         layerTransit = cbTransit.checked;
         updateSurveillanceLayers();
+        if (layerTransit) {
+            // Start SL real-time polling
+            pollSLTransitVehicles();
+            if (!transitPollInterval) {
+                transitPollInterval = setInterval(pollSLTransitVehicles, 15000);
+            }
+            for (const obj of transitVehicleObjects.values()) obj.points.visible = true;
+        } else {
+            // Stop polling, hide all
+            if (transitPollInterval) { clearInterval(transitPollInterval); transitPollInterval = null; }
+            for (const obj of transitVehicleObjects.values()) obj.points.visible = false;
+            // Also clear focused state
+            transitFocused = null;
+            document.getElementById('transit-sidebar').classList.remove('visible');
+            if (transitShapePoints) {
+                scene.remove(transitShapePoints);
+                transitShapePoints.geometry.dispose();
+                transitShapePoints.material.dispose();
+                transitShapePoints = null;
+            }
+        }
     });
     cbTraffic.addEventListener('change', () => {
         layerTraffic = cbTraffic.checked;
@@ -3567,6 +3662,172 @@
         routeInput.value = '';
     });
 
+    // ─── SL Transit vehicle rectangle helper ─────────────────────────────────
+    // Returns Float32Array of 24*3 floats for a 4x6 grid (8m x 3m) at world pos wx,wz
+    function buildVehicleRectangle(bearing, wx, wz) {
+        const W = 1.5, L = 4.0;
+        const pts = new Float32Array(24 * 3);
+        const angle = bearing * Math.PI / 180;
+        let idx = 0;
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 4; j++) {
+                const lx = -L + i * (2 * L / 5);
+                const lz = -W + j * (2 * W / 3);
+                pts[idx++] = wx + lx * Math.cos(angle) - lz * Math.sin(angle);
+                pts[idx++] = 0.8;
+                pts[idx++] = wz + lx * Math.sin(angle) + lz * Math.cos(angle);
+            }
+        }
+        return pts;
+    }
+
+    // ─── SL Transit vehicle poll and render ──────────────────────────────────
+    async function pollSLTransitVehicles() {
+        if (worldOriginLat === null) return;
+        try {
+            const res = await fetch('http://95.216.156.168:3456/proxy/transit-vehicles', {
+                signal: AbortSignal.timeout(12000),
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            const vehicles = data.vehicles || [];
+            const nowIds = new Set(vehicles.map(v => v.id));
+
+            // Remove stale vehicles
+            for (const [id, obj] of transitVehicleObjects.entries()) {
+                if (!nowIds.has(id)) {
+                    scene.remove(obj.points);
+                    obj.points.geometry.dispose();
+                    obj.points.material.dispose();
+                    transitVehicleObjects.delete(id);
+                }
+            }
+
+            // Add or update vehicles
+            for (const v of vehicles) {
+                if (!v.lat || !v.lon) continue;
+                if (transitVehicleObjects.has(v.id)) {
+                    const obj = transitVehicleObjects.get(v.id);
+                    // Store prev target, set new target, reset lerp
+                    obj.prevLat = obj.targetLat;
+                    obj.prevLon = obj.targetLon;
+                    obj.targetLat = v.lat;
+                    obj.targetLon = v.lon;
+                    obj.bearing = v.bearing || 0;
+                    obj.lerpT = 0;
+                } else {
+                    // New vehicle: create THREE.Points with 24 points
+                    const geo = new THREE.BufferGeometry();
+                    const posArr = new Float32Array(24 * 3);
+                    const colArr = new Float32Array(24 * 3);
+                    const cr = v.color[0], cg = v.color[1], cb = v.color[2];
+                    for (let i = 0; i < 24; i++) {
+                        colArr[i * 3]     = cr;
+                        colArr[i * 3 + 1] = cg;
+                        colArr[i * 3 + 2] = cb;
+                    }
+                    geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+                    geo.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+                    const mat = new THREE.PointsMaterial({
+                        size: 2.5,
+                        sizeAttenuation: true,
+                        vertexColors: true,
+                        depthWrite: false,
+                    });
+                    const points = new THREE.Points(geo, mat);
+                    points.visible = layerTransit;
+                    points.frustumCulled = false;
+                    scene.add(points);
+                    transitVehicleObjects.set(v.id, {
+                        points,
+                        prevLat: v.lat,
+                        prevLon: v.lon,
+                        targetLat: v.lat,
+                        targetLon: v.lon,
+                        bearing: v.bearing || 0,
+                        lerpT: 1, // new vehicles start at final position
+                        tripId: v.tripId,
+                        color: v.color,
+                    });
+                }
+                // Update stored tripId
+                const obj = transitVehicleObjects.get(v.id);
+                if (obj) obj.tripId = v.tripId;
+            }
+        } catch (e) {
+            // Network error: silent
+        }
+    }
+
+    // ─── Transit sidebar ──────────────────────────────────────────────────────
+    async function focusTransitVehicle(vehicleId) {
+        // Toggle off if already focused
+        if (transitFocused === vehicleId) {
+            transitFocused = null;
+            document.getElementById('transit-sidebar').classList.remove('visible');
+            if (transitShapePoints) {
+                scene.remove(transitShapePoints);
+                transitShapePoints.geometry.dispose();
+                transitShapePoints.material.dispose();
+                transitShapePoints = null;
+            }
+            return;
+        }
+        transitFocused = vehicleId;
+        const obj = transitVehicleObjects.get(vehicleId);
+        if (!obj) return;
+        try {
+            const res = await fetch(`http://95.216.156.168:3456/proxy/transit-trip?tripId=${encodeURIComponent(obj.tripId)}`, {
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+
+            // Populate sidebar
+            const sidebar = document.getElementById('transit-sidebar');
+            const cr = Math.round(data.color[0] * 255), cg = Math.round(data.color[1] * 255), cb = Math.round(data.color[2] * 255);
+            document.getElementById('transit-sidebar-line').textContent = data.line || '??';
+            document.getElementById('transit-sidebar-line').style.color = `rgb(${cr},${cg},${cb})`;
+            document.getElementById('transit-sidebar-headsign').textContent = data.headsign || '';
+            const stopsEl = document.getElementById('transit-sidebar-stops');
+            stopsEl.innerHTML = (data.nextStops || []).map(s =>
+                `<div class="stop-row"><span class="stop-name">${s.name}</span><span class="stop-eta">${s.etaMinutes}min</span></div>`
+            ).join('');
+            sidebar.classList.add('visible');
+
+            // Draw route shape
+            if (transitShapePoints) {
+                scene.remove(transitShapePoints);
+                transitShapePoints.geometry.dispose();
+                transitShapePoints.material.dispose();
+                transitShapePoints = null;
+            }
+            if (data.shape && data.shape.length > 1 && worldOriginLat !== null) {
+                const shapePts = new Float32Array(data.shape.length * 3);
+                const shapeCols = new Float32Array(data.shape.length * 3);
+                const sr = data.color[0] * 0.6, sg = data.color[1] * 0.6, sbv = data.color[2] * 0.6;
+                for (let i = 0; i < data.shape.length; i++) {
+                    const wp = latLonToWorld(data.shape[i][0], data.shape[i][1]);
+                    shapePts[i * 3]     = wp.x;
+                    shapePts[i * 3 + 1] = 0.3;
+                    shapePts[i * 3 + 2] = wp.z;
+                    shapeCols[i * 3]     = sr;
+                    shapeCols[i * 3 + 1] = sg;
+                    shapeCols[i * 3 + 2] = sbv;
+                }
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.BufferAttribute(shapePts, 3));
+                sgeo.setAttribute('color', new THREE.BufferAttribute(shapeCols, 3));
+                const smat = new THREE.PointsMaterial({ size: 1.2, sizeAttenuation: false, vertexColors: true, depthWrite: false });
+                transitShapePoints = new THREE.Points(sgeo, smat);
+                transitShapePoints.frustumCulled = false;
+                scene.add(transitShapePoints);
+            }
+        } catch (e) {
+            // Silent on error
+        }
+    }
+
     // ─── Animation loop ───────────────────────────────────────────────────────
     let clock = new THREE.Clock();
     let _lastAnimTime = 0;
@@ -3623,8 +3884,25 @@
             }
         }
 
-        // ── Transit vehicle update ─────────────────────────────────────────────
+        // ── Transit vehicle update (simulated Riga) ───────────────────────────
         updateTransit(delta);
+
+        // ── SL Real-Time Transit lerp update ──────────────────────────────────
+        if (transitVehicleObjects.size > 0 && worldOriginLat !== null) {
+            for (const obj of transitVehicleObjects.values()) {
+                if (obj.lerpT < 1.0) {
+                    obj.lerpT = Math.min(1.0, obj.lerpT + delta / 15);
+                }
+                const lat = obj.prevLat + (obj.targetLat - obj.prevLat) * obj.lerpT;
+                const lon = obj.prevLon + (obj.targetLon - obj.prevLon) * obj.lerpT;
+                const wp = latLonToWorld(lat, lon);
+                const pts = buildVehicleRectangle(obj.bearing, wp.x, wp.z);
+                const posAttr = obj.points.geometry.getAttribute('position');
+                posAttr.array.set(pts);
+                posAttr.needsUpdate = true;
+                obj.points.geometry.computeBoundingSphere();
+            }
+        }
 
         // ── Aircraft interpolation ─────────────────────────────────────────────
         if (aircraftData.size > 0) {
