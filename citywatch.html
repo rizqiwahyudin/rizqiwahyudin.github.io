@@ -1062,7 +1062,10 @@
     }
 
     btnBirdseye.addEventListener('click', () => setCameraMode('birdseye'));
-    btnFollowme.addEventListener('click', () => setCameraMode('followme'));
+    btnFollowme.addEventListener('click', () => {
+        setCameraMode('followme');
+        followGPS = true;
+    });
     btnAnchor.addEventListener('click', () => setCameraMode('anchor'));
 
     // ─── GPS override UI wiring ───────────────────────────────────────────────
