@@ -1477,10 +1477,10 @@
 
         try {
             // ── Try VPS binary tile first ────────────────────────────────────
-            const VPS_URL = 'http://95.216.156.168:3456';
+            const TILE_VPS_URL = CF_WORKER; // use CF Worker for HTTPS tile proxy
             let vpsLoaded = false;
             try {
-                const vpsRes = await fetch(`${VPS_URL}/tile/${z}/${x}/${y}`, {
+                const vpsRes = await fetch(`${TILE_VPS_URL}/tile/${z}/${x}/${y}`, {
                     signal: AbortSignal.timeout(8000),
                 });
                 if (vpsRes.ok) {
@@ -3118,9 +3118,10 @@
         for (const key of [...tileCache.keys()]) disposeTile(key);
         tileCache.clear();
         loadingSet.clear();
-        // Reset position
+        // Reset position and world origin immediately so beacon + camera work before tiles load
         smoothLat = lat;
         smoothLon = lon;
+        setWorldOrigin(lat, lon, false);
         // Reset camera state so bird's-eye doesn't wander to old world coords
         camTarget.set(0, 0, 0);
         followGPS = true;
