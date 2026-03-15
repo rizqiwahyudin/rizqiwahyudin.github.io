@@ -3791,7 +3791,7 @@
         if (transitVehicleObjects.size > 0 && worldOriginLat !== null) {
             for (const obj of transitVehicleObjects.values()) {
                 if (obj.lerpT < 1.0) {
-                    obj.lerpT = Math.min(1.0, obj.lerpT + delta / 15);
+                    obj.lerpT = Math.min(1.0, obj.lerpT + delta / 5);
                 }
                 const lat = obj.prevLat + (obj.targetLat - obj.prevLat) * obj.lerpT;
                 const lon = obj.prevLon + (obj.targetLon - obj.prevLon) * obj.lerpT;
