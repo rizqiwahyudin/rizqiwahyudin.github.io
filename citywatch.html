@@ -2354,7 +2354,7 @@
     let layerWeather = true;
 
     // ─── SL Real-Time Transit State ───────────────────────────────────────────
-    let transitVehicleObjects = new Map(); // vehicleId -> {points, prevLat, prevLon, targetLat, targetLon, lerpT, color}
+    let transitVehicleObjects = new Map(); // vehicleId -> {points, fixLat, fixLon, fixTime, bearing, speed, tripId, color}
     let transitFocused = null;             // focused vehicleId or null
     let transitShapePoints = null;         // THREE.Points for focused vehicle shape
     let transitPollInterval = null;        // setInterval handle
@@ -3718,6 +3718,18 @@
         return pts;
     }
 
+    // ─── SL Transit dead reckoning utility ───────────────────────────────────
+    // Projects a position forward from a fix using bearing (degrees CW from north)
+    // and speed (m/s). Caps at 120s so stale vehicles don't drift off to infinity.
+    function deadReckonLatLon(fixLat, fixLon, bearing, speedMs, elapsedSec) {
+        const dt = Math.min(elapsedSec, 120);
+        const distM = speedMs * dt;
+        const bearingRad = bearing * Math.PI / 180;
+        const dLat = (distM * Math.cos(bearingRad)) / 111320;
+        const dLon = (distM * Math.sin(bearingRad)) / (111320 * Math.cos(fixLat * Math.PI / 180));
+        return { lat: fixLat + dLat, lon: fixLon + dLon };
+    }
+
     // ─── SL Transit vehicle poll and render ──────────────────────────────────
     async function pollSLTransitVehicles() {
         if (worldOriginLat === null) return;
@@ -3745,13 +3757,12 @@
                 if (!v.lat || !v.lon) continue;
                 if (transitVehicleObjects.has(v.id)) {
                     const obj = transitVehicleObjects.get(v.id);
-                    // Store prev target, set new target, reset lerp
-                    obj.prevLat = obj.targetLat;
-                    obj.prevLon = obj.targetLon;
-                    obj.targetLat = v.lat;
-                    obj.targetLon = v.lon;
+                    // Anchor a new dead reckoning fix; extrapolation restarts from here
+                    obj.fixLat = v.lat;
+                    obj.fixLon = v.lon;
+                    obj.fixTime = Date.now();
                     obj.bearing = v.bearing || 0;
-                    obj.lerpT = 0;
+                    obj.speed = v.speed || 0;
                 } else {
                     // New vehicle: create THREE.Points with 24 points
                     const geo = new THREE.BufferGeometry();
@@ -3777,12 +3788,11 @@
                     scene.add(points);
                     transitVehicleObjects.set(v.id, {
                         points,
-                        prevLat: v.lat,
-                        prevLon: v.lon,
-                        targetLat: v.lat,
-                        targetLon: v.lon,
+                        fixLat: v.lat,
+                        fixLon: v.lon,
+                        fixTime: Date.now(),
                         bearing: v.bearing || 0,
-                        lerpT: 1, // new vehicles start at final position
+                        speed: v.speed || 0,
                         tripId: v.tripId,
                         color: v.color,
                     });
@@ -3924,14 +3934,14 @@
             }
         }
 
-        // ── SL Real-Time Transit lerp update ──────────────────────────────────
+        // ── SL Real-Time Transit dead reckoning update ────────────────────────
+        // Extrapolates vehicle position forward from the last GPS fix using
+        // bearing and speed, so smooth motion continues between 60s poll cycles.
         if (transitVehicleObjects.size > 0 && worldOriginLat !== null) {
-            for (const obj of transitVehicleObjects.values()) {
-                if (obj.lerpT < 1.0) {
-                    obj.lerpT = Math.min(1.0, obj.lerpT + delta / 5);
-                }
-                const lat = obj.prevLat + (obj.targetLat - obj.prevLat) * obj.lerpT;
-                const lon = obj.prevLon + (obj.targetLon - obj.prevLon) * obj.lerpT;
+            for (const [id, obj] of transitVehicleObjects.entries()) {
+                if (!obj.points.visible) continue;
+                const elapsedSec = (Date.now() - obj.fixTime) / 1000;
+                const { lat, lon } = deadReckonLatLon(obj.fixLat, obj.fixLon, obj.bearing, obj.speed, elapsedSec);
                 const wp = latLonToWorld(lat, lon);
                 const pts = buildVehicleRectangle(obj.bearing, wp.x, wp.z);
                 const posAttr = obj.points.geometry.getAttribute('position');
