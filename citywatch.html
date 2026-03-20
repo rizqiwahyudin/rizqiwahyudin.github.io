@@ -589,6 +589,7 @@
     <div id="zoom-indicator">zoom // <span id="zoom-level-label">street</span></div>
     <div id="layer-panel">
         <label class="layer-toggle"><input type="checkbox" id="layer-aircraft" checked> aircraft</label>
+        <label class="layer-toggle"><input type="checkbox" id="layer-cameras" checked> cameras</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-transit"> transit</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-traffic"> traffic</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
@@ -2344,6 +2345,7 @@
     let surveillanceOn = false;
     let currentLOD = 'street'; // 'street' | 'district' | 'city' | 'overview'
     let layerAircraft = true;
+    let layerCameras = true;
     let layerTransit = false;
     let layerTraffic = false;
     let layerWeather = true;
@@ -2429,6 +2431,7 @@
 
     regenBtn.addEventListener('click', triggerRegen);
     const cbAircraft       = document.getElementById('layer-aircraft');
+    const cbCameras        = document.getElementById('layer-cameras');
     const cbTransit        = document.getElementById('layer-transit');
     const cbTraffic        = document.getElementById('layer-traffic');
     const cbWeather        = document.getElementById('layer-weather');
@@ -2492,6 +2495,7 @@
             aircraftTrailLines.visible = false;
             if (airportPoints) airportPoints.visible = false;
             if (transitPoints) transitPoints.visible = false;
+            if (cameraPoints) cameraPoints.visible = layerCameras;
             return;
         }
 
@@ -2521,6 +2525,9 @@
         // Transit: vehicles + route corridors (street LOD only)
         if (transitPoints) transitPoints.visible = layerTransit && (newLOD === 'street');
         for (const line of transitRouteLines) line.visible = layerTransit && (newLOD === 'street');
+
+        // Cameras: visible at street and district LOD
+        if (cameraPoints) cameraPoints.visible = layerCameras && (newLOD === 'street' || newLOD === 'district');
     }
 
     function updateSurveillanceLayers() {
@@ -2530,6 +2537,7 @@
             aircraftTrailLines.visible = false;
             if (airportPoints) airportPoints.visible = false;
             if (transitPoints) transitPoints.visible = false;
+            if (cameraPoints) cameraPoints.visible = layerCameras;
             return;
         }
         // Apply current LOD rules with current layer flags
@@ -2539,6 +2547,7 @@
         if (airportPoints) airportPoints.visible = (currentLOD !== 'street');
         if (transitPoints) transitPoints.visible = layerTransit && (currentLOD === 'street');
         for (const line of transitRouteLines) line.visible = layerTransit && (currentLOD === 'street');
+        if (cameraPoints) cameraPoints.visible = layerCameras && (currentLOD === 'street' || currentLOD === 'district');
     }
 
     surveillanceBtn.addEventListener('click', () => {
@@ -2569,6 +2578,11 @@
 
     cbAircraft.addEventListener('change', () => {
         layerAircraft = cbAircraft.checked;
+        updateSurveillanceLayers();
+    });
+    cbCameras.addEventListener('change', () => {
+        layerCameras = cbCameras.checked;
+        if (layerCameras && !cameraPoints) fetchSurveillanceCameras();
         updateSurveillanceLayers();
     });
     cbTransit.addEventListener('change', () => {
@@ -3118,6 +3132,184 @@
     // Traffic updates every 5 minutes (incidents don't change fast)
     setInterval(() => { if (layerTraffic) fetchTraffic(); }, 5 * 60 * 1000);
 
+    // ─── OSM Surveillance Cameras ─────────────────────────────────────────────
+    let cameraPoints = null;
+    let cameraCount = 0;
+
+    function buildCameraGeometry(cameras) {
+        const positions = [];
+        const colors    = [];
+
+        const CAM_Y = 4.5;
+        const CONE_RANGE = 25;
+        const CONE_FOV_DEG = 70;
+        const CONE_RINGS = 5;
+        const CONE_PTS_PER_RING = 8;
+        const DOME_RANGE = 18;
+        const DOME_RINGS = 4;
+        const DOME_PTS_PER_RING = 10;
+
+        for (const cam of cameras) {
+            const wp = latLonToWorld(cam.lat, cam.lon);
+            const cx = wp.x, cz = wp.z;
+
+            // Camera body: bright red dot
+            positions.push(cx, CAM_Y, cz);
+            colors.push(1.0, 0.15, 0.1);
+            // Small cross around the camera dot for visibility
+            const ARM = 1.2;
+            for (const [dx, dz] of [[ARM,0],[-ARM,0],[0,ARM],[0,-ARM]]) {
+                positions.push(cx + dx, CAM_Y, cz + dz);
+                colors.push(0.9, 0.12, 0.08);
+            }
+
+            const isDome = cam.type === 'dome' || cam.type === 'panning';
+            const hasDirection = cam.direction !== null && !isDome;
+
+            if (hasDirection) {
+                // Directional cone: fan of points in the camera's facing direction
+                const dirRad = cam.direction * Math.PI / 180;
+                const halfFov = (CONE_FOV_DEG / 2) * Math.PI / 180;
+
+                for (let ring = 1; ring <= CONE_RINGS; ring++) {
+                    const ringDist = (ring / CONE_RINGS) * CONE_RANGE;
+                    const ringWidth = ringDist * Math.tan(halfFov);
+                    const ringY = CAM_Y - ring * 0.5;
+                    const opacity = 1.0 - (ring / CONE_RINGS) * 0.7;
+
+                    for (let p = 0; p < CONE_PTS_PER_RING; p++) {
+                        const lateralT = (p / (CONE_PTS_PER_RING - 1)) * 2 - 1;
+                        const perpAngle = dirRad + Math.PI / 2;
+                        const fwdX = Math.sin(dirRad) * ringDist;
+                        const fwdZ = -Math.cos(dirRad) * ringDist;
+                        const latX = Math.sin(perpAngle) * ringWidth * lateralT;
+                        const latZ = -Math.cos(perpAngle) * ringWidth * lateralT;
+                        positions.push(cx + fwdX + latX, ringY, cz + fwdZ + latZ);
+                        colors.push(1.0 * opacity, 0.2 * opacity, 0.15 * opacity);
+                    }
+                }
+            } else if (isDome) {
+                // Dome/hemisphere: points in a hemisphere below the camera
+                for (let ring = 1; ring <= DOME_RINGS; ring++) {
+                    const elevAngle = (ring / (DOME_RINGS + 1)) * (Math.PI / 2);
+                    const ringRadius = DOME_RANGE * Math.sin(elevAngle);
+                    const ringY = CAM_Y - DOME_RANGE * (1 - Math.cos(elevAngle)) * 0.3;
+                    const opacity = 1.0 - (ring / DOME_RINGS) * 0.65;
+
+                    for (let p = 0; p < DOME_PTS_PER_RING; p++) {
+                        const angle = (p / DOME_PTS_PER_RING) * Math.PI * 2;
+                        positions.push(
+                            cx + Math.cos(angle) * ringRadius,
+                            ringY,
+                            cz + Math.sin(angle) * ringRadius
+                        );
+                        colors.push(0.9 * opacity, 0.15 * opacity, 0.5 * opacity);
+                    }
+                }
+            } else {
+                // Unknown direction: 360° ground ring at short range
+                const RING_PTS = 12;
+                const RING_R = 12;
+                for (let p = 0; p < RING_PTS; p++) {
+                    const angle = (p / RING_PTS) * Math.PI * 2;
+                    positions.push(cx + Math.cos(angle) * RING_R, CAM_Y - 1.5, cz + Math.sin(angle) * RING_R);
+                    colors.push(0.7, 0.12, 0.08);
+                }
+            }
+        }
+
+        return { positions: new Float32Array(positions), colors: new Float32Array(colors) };
+    }
+
+    async function fetchSurveillanceCameras() {
+        if (worldOriginLat === null) return;
+
+        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
+        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const d = 0.06;
+        const bbox = `${(lat - d).toFixed(4)},${(lon - d * 1.8).toFixed(4)},${(lat + d).toFixed(4)},${(lon + d * 1.8).toFixed(4)}`;
+        const query = `[out:json][timeout:25];node["man_made"="surveillance"](${bbox});out body;`;
+
+        try {
+            let res, fetchErr;
+            for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
+                const mirrorUrl = OVERPASS_MIRRORS[(_overpassMirrorIdx + attempt) % OVERPASS_MIRRORS.length];
+                try {
+                    res = await fetch(mirrorUrl, {
+                        method: 'POST',
+                        body: `data=${encodeURIComponent(query)}`,
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    });
+                    if (res.ok) break;
+                    fetchErr = new Error(`HTTP ${res.status}`);
+                } catch (e) { fetchErr = e; }
+            }
+            _overpassMirrorIdx++;
+            if (!res || !res.ok) return;
+            const data = await res.json();
+            if (!data.elements || data.elements.length === 0) return;
+
+            const cameras = [];
+            for (const el of data.elements) {
+                if (el.type !== 'node') continue;
+                const tags = el.tags || {};
+                let direction = null;
+                if (tags['camera:direction']) {
+                    direction = parseFloat(tags['camera:direction']);
+                    if (isNaN(direction)) {
+                        const cardinals = { n:0, ne:45, e:90, se:135, s:180, sw:225, w:270, nw:315 };
+                        direction = cardinals[tags['camera:direction'].toLowerCase()] ?? null;
+                    }
+                } else if (tags.direction) {
+                    direction = parseFloat(tags.direction);
+                    if (isNaN(direction)) {
+                        const cardinals = { n:0, ne:45, e:90, se:135, s:180, sw:225, w:270, nw:315 };
+                        direction = cardinals[tags.direction.toLowerCase()] ?? null;
+                    }
+                }
+                cameras.push({
+                    lat: el.lat,
+                    lon: el.lon,
+                    type: tags['camera:type'] || tags['surveillance:type'] || 'fixed',
+                    direction,
+                });
+            }
+
+            if (cameras.length === 0) return;
+
+            cameraCount = cameras.length;
+            const { positions, colors } = buildCameraGeometry(cameras);
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 2.5,
+                sizeAttenuation: true,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.85,
+                depthWrite: false,
+            });
+
+            if (cameraPoints) {
+                scene.remove(cameraPoints);
+                cameraPoints.geometry.dispose();
+                cameraPoints.material.dispose();
+            }
+            cameraPoints = new THREE.Points(geo, mat);
+            cameraPoints.visible = layerCameras;
+            cameraPoints.renderOrder = 998;
+            cameraPoints.frustumCulled = false;
+            scene.add(cameraPoints);
+            updateTileHUD();
+        } catch (e) {
+            console.warn('Surveillance camera fetch failed:', e.message);
+        }
+    }
+
+    fetchSurveillanceCameras();
+
     // ─── HUD updates ──────────────────────────────────────────────────────────
     const coordsPanel = document.getElementById('coords-panel');
     const tilePanel = document.getElementById('tile-panel');
@@ -3173,6 +3365,7 @@
             }
         }
         html += `\naircraft  <span>${aircraftCount}</span>`;
+        html += `\ncameras   <span>${cameraCount}</span>`;
         html += `\nwind      <span>${windLabel}</span>`;
         tilePanel.innerHTML = html;
     }
@@ -3324,10 +3517,19 @@
         if (typeof setAnchorSubMode === 'function') setAnchorSubMode('me');
         // Clear transit
         clearTransit();
+        // Dispose camera points from old city
+        if (cameraPoints) {
+            scene.remove(cameraPoints);
+            cameraPoints.geometry.dispose();
+            cameraPoints.material.dispose();
+            cameraPoints = null;
+            cameraCount = 0;
+        }
         // Load new tiles
         updateTileManager(lat, lon);
         // Re-fetch location-relative data
         fetchAirportData();
+        fetchSurveillanceCameras();
     }
 
     function applyGpsOverride(lat, lon) {
