@@ -653,7 +653,6 @@
         _overpassMirrorIdx++;
         return url;
     }
-    const OVERPASS_URL = getOverpassURL();
     const FALLBACK_LAT = 56.9496;
     const FALLBACK_LON = 24.1052;
     // VPS backend -- tile server + authenticated proxy endpoints
@@ -1666,9 +1665,6 @@
             // ── Fetch OSM data from Overpass (buildings + roads combined) ───
             const bbox = tileToBbox(z, x, y);
             const query = `[out:json][timeout:30];(way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(primary|secondary|tertiary|residential|service|footway|pedestrian|path)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
-            const buildAbort = new AbortController();
-            const buildTimeout = setTimeout(() => buildAbort.abort(), 35000);
-            // Query Overpass directly with mirror retry (CF Worker too slow for large tiles)
             const encodedQuery = `data=${encodeURIComponent(query)}`;
             let overpassRes, lastErr;
             for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
@@ -1687,7 +1683,6 @@
                 } catch (e) { lastErr = e; }
             }
             _overpassMirrorIdx++;
-            clearTimeout(buildTimeout);
             if (!overpassRes || !overpassRes.ok) throw (lastErr || new Error('all mirrors failed'));
             const osmData = await overpassRes.json();
 
@@ -2624,12 +2619,21 @@
         const bbox = `${(aLat - d).toFixed(4)},${(aLon - d * 1.6).toFixed(4)},${(aLat + d).toFixed(4)},${(aLon + d * 1.6).toFixed(4)}`;
         const query = `[out:json][timeout:30];(way["aeroway"~"^(runway|taxiway|apron|terminal)$"](${bbox}););out body;>;out skel qt;`;
         try {
-            const res = await fetch(OVERPASS_URL, {
-                method: 'POST',
-                body: `data=${encodeURIComponent(query)}`,
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            });
-            if (!res.ok) return;
+            let res, fetchErr;
+            for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
+                const mirrorUrl = OVERPASS_MIRRORS[(_overpassMirrorIdx + attempt) % OVERPASS_MIRRORS.length];
+                try {
+                    res = await fetch(mirrorUrl, {
+                        method: 'POST',
+                        body: `data=${encodeURIComponent(query)}`,
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    });
+                    if (res.ok) break;
+                    fetchErr = new Error(`HTTP ${res.status}`);
+                } catch (e) { fetchErr = e; }
+            }
+            _overpassMirrorIdx++;
+            if (!res || !res.ok) return;
             const data = await res.json();
             if (!data.elements || data.elements.length === 0) return;
 
@@ -2912,9 +2916,9 @@
     fetchAircraft();
     setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
 
-    // Start SL real-time transit poll
-    pollSLTransitVehicles();
-    setInterval(pollSLTransitVehicles, 5000);
+    // SL real-time transit poll is started on-demand when the transit layer
+    // is enabled via the checkbox handler (cbTransit 'change' listener).
+    // Previously an unconditional 5s setInterval was leaked here at startup.
 
     // ── Tile retry ticker ─────────────────────────────────────────────────────
     // updateTileManager only runs on GPS updates. If GPS is denied/static,
@@ -2972,13 +2976,15 @@
         if (windSpeed < 0.1) return; // no wind, no drift
         const speed = windSpeed * 2; // scale for visual effect (world m/s)
         const posAttr = windGeo.getAttribute('position');
+        const ox = (smoothLat !== null && worldOriginLat !== null) ? latLonToWorld(smoothLat, smoothLon).x : 0;
+        const oz = (smoothLat !== null && worldOriginLat !== null) ? latLonToWorld(smoothLat, smoothLon).z : 0;
         for (let i = 0; i < WIND_PARTICLE_COUNT; i++) {
             let px = posAttr.getX(i) + windDirX * speed * delta;
             let py = posAttr.getY(i);
             let pz = posAttr.getZ(i) + windDirZ * speed * delta;
 
-            // Reset if out of bounds
-            if (Math.abs(px) > WIND_AREA || Math.abs(pz) > WIND_AREA) {
+            // Reset if out of bounds relative to user position
+            if (Math.abs(px - ox) > WIND_AREA || Math.abs(pz - oz) > WIND_AREA) {
                 randomWindParticle(i);
                 px = posAttr.getX(i);
                 py = posAttr.getY(i);
@@ -3794,12 +3800,15 @@
                         bearing: v.bearing || 0,
                         speed: v.speed || 0,
                         tripId: v.tripId,
+                        routeId: v.routeId,
                         color: v.color,
                     });
                 }
-                // Update stored tripId
                 const obj = transitVehicleObjects.get(v.id);
-                if (obj) obj.tripId = v.tripId;
+                if (obj) {
+                    obj.tripId = v.tripId;
+                    if (v.routeId !== undefined) obj.routeId = v.routeId;
+                }
             }
             if (transitSearchResults.size > 0) {
                 highlightSearchedVehicles();
@@ -3966,7 +3975,8 @@
         // ── Ground wave (shader time uniform) ─────────────────────────────────
         if (window._groundUniforms) {
             window._groundUniforms.uTime.value = t;
-            const activeCam = cameraMode === 'anchor' ? anchorCam : camera;
+            const activeCam = cameraMode === 'followme' ? followCam :
+                              cameraMode === 'anchor'   ? anchorCam : camera;
             window._groundUniforms.uCamPos.value.copy(activeCam.position);
         }
 
