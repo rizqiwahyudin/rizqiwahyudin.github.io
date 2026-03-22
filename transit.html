@@ -151,6 +151,12 @@
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
 
     <script>
 'use strict';
@@ -172,7 +178,7 @@ const GROUND_GRID_SPACING = 18; // world units between ground points (tuned afte
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let scene, camera, renderer, controls;
+let scene, camera, renderer, controls, composer;
 let buildingLines = null;      // current THREE.LineSegments
 let buildingLineMaterial = null;
 let aspect = window.innerWidth / window.innerHeight;
@@ -235,6 +241,17 @@ function initScene() {
     controls.minDistance = 10;
     controls.maxDistance = 50000;
 
+    // Post-processing bloom
+    composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    const bloomPass = new THREE.UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.9,  // strength
+        0.4,  // radius
+        0.0   // threshold -- glow everything
+    );
+    composer.addPass(bloomPass);
+
     window.addEventListener('resize', onResize);
 }
 
@@ -243,6 +260,7 @@ function onResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = aspect;
     camera.updateProjectionMatrix();
+    if (composer) composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // ─── Coordinate system ───────────────────────────────────────────────────────
@@ -267,34 +285,14 @@ function latLonToWorld(lat, lon) {
 
 // ─── Color mapping ────────────────────────────────────────────────────────────
 
-// Color stops: indigo (low) -> electric blue (mid-low) -> teal (mid) -> cyan (tall) -> near-white (top of tall)
-// Range is relative to the city's own height distribution so short European cities don't cluster at one end.
-const COLOR_STOPS = [
-    [0.20, 0.05, 0.45],  // t=0.0  deep indigo
-    [0.10, 0.30, 0.85],  // t=0.33 electric blue
-    [0.00, 0.75, 0.80],  // t=0.66 teal-cyan
-    [0.60, 0.95, 1.00],  // t=1.0  bright cyan-white
-];
-
-function lerpStops(stops, t) {
-    const scaled = Math.max(0, Math.min(1, t)) * (stops.length - 1);
-    const lo = Math.floor(scaled);
-    const hi = Math.min(lo + 1, stops.length - 1);
-    const f  = scaled - lo;
-    return [
-        stops[lo][0] + (stops[hi][0] - stops[lo][0]) * f,
-        stops[lo][1] + (stops[hi][1] - stops[lo][1]) * f,
-        stops[lo][2] + (stops[hi][2] - stops[lo][2]) * f,
-    ];
-}
-
-// normalizedH: 0-1 based on city height distribution (p5 to p95)
-// verticalT:   0 (base of building) to 1 (top of building)
+// Matches citywatch.html heightColor: dark blue-teal at base, full #33ccff at top.
+// verticalT: 0 (base) to 1 (top)
 function columnColor(normalizedH, verticalT) {
-    const [r, g, b] = lerpStops(COLOR_STOPS, normalizedH);
-    // Top of column is brighter; base is slightly dimmer so columns read as solid shapes
-    const brightness = 0.55 + verticalT * 0.45;
-    return [r * brightness, g * brightness, b * brightness];
+    const t = verticalT;
+    const r = 0.1 + t * 0.1;
+    const g = 0.5 + t * 0.3;
+    const b = 0.8 + t * 0.2;
+    return [r, g, b];
 }
 
 // ─── Data pipeline ───────────────────────────────────────────────────────────
@@ -747,7 +745,7 @@ function animate() {
         colAttr.needsUpdate = true;
     }
 
-    renderer.render(scene, camera);
+    composer.render();
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
