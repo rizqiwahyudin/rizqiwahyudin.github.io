@@ -2231,9 +2231,11 @@
                 acPosArr[idx*3]   = cx + dx;
                 acPosArr[idx*3+1] = cy + dy;
                 acPosArr[idx*3+2] = cz + dz;
-                acColArr[idx*3]   = 0.7 * fade;
-                acColArr[idx*3+1] = 0.85 * fade;
-                acColArr[idx*3+2] = 1.0 * fade;
+                // airborne: blue-white, on ground: amber
+                const onGnd = ac.onGround || false;
+                acColArr[idx*3]   = onGnd ? 1.0 * fade : 0.7 * fade;
+                acColArr[idx*3+1] = onGnd ? 0.65 * fade : 0.85 * fade;
+                acColArr[idx*3+2] = onGnd ? 0.1 * fade : 1.0 * fade;
                 idx++;
             }
         }
@@ -2882,7 +2884,7 @@
                 let rawY;
 
                 if (onGround) {
-                    rawY = 1.0;
+                    rawY = 18.0; // elevated so ground planes aren't buried under tile geometry
                 } else {
                     const calculatedY = baroAlt !== null ? Math.log(baroAlt + 1) * 12 : 60;
                     rawY = Math.max(15.0, calculatedY);
@@ -2905,6 +2907,7 @@
                     ac.targetY = rawY;
                     ac.targetZ = ww.z;
                     ac.updateTime = now;
+                    ac.onGround = onGround;
                     ac.callsign = ac.callsign || callsign;
                 } else {
                     aircraftData.set(icao24, {
@@ -2913,6 +2916,7 @@
                         currentX: ww.x, currentY: rawY, currentZ: ww.z,
                         updateTime: now,
                         callsign,
+                        onGround,
                         lastSeenMs: Date.now(),
                         vx: 0,
                         vz: 0,
