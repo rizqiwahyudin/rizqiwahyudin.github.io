@@ -167,8 +167,9 @@ const OVERPASS_MIRRORS = [
 const CHUNK_SIZE = 5000;        // buildings per animation frame during build
 const MAX_BBOX_DIAG_M = 120000; // clamp large cities to this diagonal
 const CLAMP_DIAG_M = 80000;     // target diagonal when clamping
-const POINT_SIZE = 2.5;
+const POINT_SIZE = 3.0;
 const HEIGHT_EXAGGERATION = 6;  // vertical scale multiplier so skylines read at city scale
+const GROUND_GRID_SPACING = 18; // world units between ground points (tuned after city loads)
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +185,16 @@ let worldScale = 1;
 
 // overpass mirror rotation
 let _overpassIdx = 0;
+
+// height distribution percentiles, computed per city load so color range fits local context
+let _heightP5  = 0;
+let _heightP95 = 80;
+
+// ground plane
+let groundPoints   = null;  // THREE.Points for the animated ground grid
+let groundMaterial = null;
+let _groundOrigY   = null;  // Float32Array of base Y values for wave animation
+let _groundTime    = 0;     // animation clock in seconds
 
 // chunked build state
 let _buildChunks = [];         // array of element arrays
@@ -256,29 +267,34 @@ function latLonToWorld(lat, lon) {
 
 // ─── Color mapping ────────────────────────────────────────────────────────────
 
-// Multi-stop color ramp: violet -> electric blue -> cyan -> white
-// Each stop is [r, g, b] at t = 0.0, 0.33, 0.66, 1.0
-// Even the shortest buildings get a visible, saturated colour.
+// Color stops: indigo (low) -> electric blue (mid-low) -> teal (mid) -> cyan (tall) -> near-white (top of tall)
+// Range is relative to the city's own height distribution so short European cities don't cluster at one end.
 const COLOR_STOPS = [
-    [0.35, 0.10, 0.65],  // t=0.0  -- deep violet (1-2 storey)
-    [0.10, 0.40, 0.95],  // t=0.33 -- electric blue (3-5 storey)
-    [0.00, 0.90, 0.95],  // t=0.66 -- cyan (10+ storey)
-    [0.85, 1.00, 1.00],  // t=1.0  -- near-white (skyscraper)
+    [0.20, 0.05, 0.45],  // t=0.0  deep indigo
+    [0.10, 0.30, 0.85],  // t=0.33 electric blue
+    [0.00, 0.75, 0.80],  // t=0.66 teal-cyan
+    [0.60, 0.95, 1.00],  // t=1.0  bright cyan-white
 ];
 
-function heightColor(heightM) {
-    const t = Math.min(heightM / 80, 1.0);
-    const scaled = t * (COLOR_STOPS.length - 1);
+function lerpStops(stops, t) {
+    const scaled = Math.max(0, Math.min(1, t)) * (stops.length - 1);
     const lo = Math.floor(scaled);
-    const hi = Math.min(lo + 1, COLOR_STOPS.length - 1);
-    const f = scaled - lo;
-    const a = COLOR_STOPS[lo];
-    const b = COLOR_STOPS[hi];
+    const hi = Math.min(lo + 1, stops.length - 1);
+    const f  = scaled - lo;
     return [
-        a[0] + (b[0] - a[0]) * f,
-        a[1] + (b[1] - a[1]) * f,
-        a[2] + (b[2] - a[2]) * f,
+        stops[lo][0] + (stops[hi][0] - stops[lo][0]) * f,
+        stops[lo][1] + (stops[hi][1] - stops[lo][1]) * f,
+        stops[lo][2] + (stops[hi][2] - stops[lo][2]) * f,
     ];
+}
+
+// normalizedH: 0-1 based on city height distribution (p5 to p95)
+// verticalT:   0 (base of building) to 1 (top of building)
+function columnColor(normalizedH, verticalT) {
+    const [r, g, b] = lerpStops(COLOR_STOPS, normalizedH);
+    // Top of column is brighter; base is slightly dimmer so columns read as solid shapes
+    const brightness = 0.55 + verticalT * 0.45;
+    return [r * brightness, g * brightness, b * brightness];
 }
 
 // ─── Data pipeline ───────────────────────────────────────────────────────────
@@ -393,6 +409,16 @@ function clearPointCloud() {
         pointCloud = null;
         pointMaterial = null;
     }
+    // Clear ground plane on city reset so stale geometry doesn't bleed into the next load
+    if (groundPoints) {
+        scene.remove(groundPoints);
+        groundPoints.geometry.dispose();
+        groundMaterial.dispose();
+        groundPoints   = null;
+        groundMaterial = null;
+        _groundOrigY   = null;
+        _groundTime    = 0;
+    }
 }
 
 function resetBuildState() {
@@ -424,19 +450,30 @@ function processChunk(chunk) {
         const levels = parseInt(el.tags && el.tags['building:levels'], 10);
         const heightM = (isFinite(levels) && levels > 0) ? levels * 3.5 : 8;
 
-        // Exaggerate height so skylines read at city scale
-        const y = heightM * worldScale * HEIGHT_EXAGGERATION;
+        // Normalize against city's own distribution so short cities get full color range
+        const normalizedH = _heightP95 > _heightP5
+            ? Math.max(0, Math.min(1, (heightM - _heightP5) / (_heightP95 - _heightP5)))
+            : 0.5;
 
-        const [r, g, b] = heightColor(heightM);
+        // Points per column scale with height: minimum 2 so even squat buildings have presence
+        const PTS_PER_M = 0.15;
+        const colPts   = Math.max(2, Math.round(heightM * PTS_PER_M));
+        const colHeight = heightM * worldScale * HEIGHT_EXAGGERATION;
+        const step     = colPts > 1 ? colHeight / (colPts - 1) : 0;
 
-        _buildPositions.push(x, y, z);
-        _buildColors.push(r, g, b);
+        for (let p = 0; p < colPts; p++) {
+            const py       = p * step;
+            const verticalT = colPts > 1 ? p / (colPts - 1) : 1;
+            _buildPositions.push(x, py, z);
+            _buildColors.push(...columnColor(normalizedH, verticalT));
+        }
 
         if (x < _minX) _minX = x;
         if (x > _maxX) _maxX = x;
         if (z < _minZ) _minZ = z;
         if (z > _maxZ) _maxZ = z;
-        if (y > _maxY) _maxY = y;
+        const topY = colHeight;
+        if (topY > _maxY) _maxY = topY;
     }
 }
 
@@ -458,9 +495,71 @@ function finalizePointCloud(cityName, totalBuildings) {
     scene.add(pointCloud);
 
     fitCamera();
+    buildGroundPlane(_minX, _maxX, _minZ, _maxZ);
     hudEl.innerHTML = '<span>' + totalBuildings.toLocaleString() + '</span> buildings | ' + escapeHtml(cityName);
     setStatus('');
     loadBtn.disabled = false;
+}
+
+function buildGroundPlane(minX, maxX, minZ, maxZ) {
+    // Always rebuild fresh; clearPointCloud already disposed the old one
+    if (groundPoints) {
+        scene.remove(groundPoints);
+        groundPoints.geometry.dispose();
+        groundMaterial.dispose();
+        groundPoints   = null;
+        groundMaterial = null;
+        _groundOrigY   = null;
+    }
+
+    // Expand slightly beyond city bounds so ground covers edges of the point cloud
+    const pad = (maxX - minX) * 0.05;
+    const x0 = minX - pad, x1 = maxX + pad;
+    const z0 = minZ - pad, z1 = maxZ + pad;
+
+    // Fixed grid resolution so the ground looks consistent regardless of city size
+    const cols = 80;
+    const rows = 80;
+    const dx = (x1 - x0) / cols;
+    const dz = (z1 - z0) / rows;
+
+    const count     = cols * rows;
+    const positions = new Float32Array(count * 3);
+    const colors    = new Float32Array(count * 3);
+    _groundOrigY    = new Float32Array(count);
+
+    let i = 0;
+    for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+            // Slight jitter breaks the visible grid regularity at distance
+            const x = x0 + col * dx + (Math.random() - 0.5) * dx * 0.4;
+            const z = z0 + row * dz + (Math.random() - 0.5) * dz * 0.4;
+            positions[i * 3]     = x;
+            positions[i * 3 + 1] = 0;
+            positions[i * 3 + 2] = z;
+            _groundOrigY[i] = 0;
+
+            // Dim teal-grey, consistent (wave will modulate this each frame)
+            colors[i * 3]     = 0.04;
+            colors[i * 3 + 1] = 0.12;
+            colors[i * 3 + 2] = 0.16;
+            i++;
+        }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+
+    groundMaterial = new THREE.PointsMaterial({
+        size: 2.0,
+        sizeAttenuation: true,
+        vertexColors: true,
+    });
+
+    groundPoints = new THREE.Points(geo, groundMaterial);
+    groundPoints.renderOrder = -1; // draw before buildings so buildings sit on top
+    scene.add(groundPoints);
 }
 
 function fitCamera() {
@@ -534,6 +633,15 @@ async function loadCity(query) {
         _buildTotal = elements.length;
         _pendingCityName = cityGeo.displayName;
 
+        // Compute height distribution before chunking so processChunk can normalize colors
+        const allHeights = elements.map(el => {
+            const levels = parseInt(el.tags && el.tags['building:levels'], 10);
+            return (isFinite(levels) && levels > 0) ? levels * 3.5 : 8;
+        });
+        allHeights.sort((a, b) => a - b);
+        _heightP5  = allHeights[Math.floor(allHeights.length * 0.05)];
+        _heightP95 = allHeights[Math.floor(allHeights.length * 0.95)];
+
         if (elements.length <= CHUNK_SIZE) {
             // small city: build synchronously then finalize
             processChunk(elements);
@@ -588,6 +696,34 @@ function animate() {
     // advance one chunk per frame to keep UI responsive
     if (_isBuildingChunks) {
         tickBuildChunks(_pendingCityName);
+    }
+
+    // Animate ground wave so empty areas feel alive
+    if (groundPoints && _groundOrigY) {
+        _groundTime += 0.008;
+        const posAttr  = groundPoints.geometry.getAttribute('position');
+        const posArr   = posAttr.array;
+        const colAttr  = groundPoints.geometry.getAttribute('color');
+        const colArr   = colAttr.array;
+        const count    = _groundOrigY.length;
+        const citySpan = Math.max(_maxX - _minX, _maxZ - _minZ);
+        const waveAmp  = citySpan * 0.003;  // amplitude scales with city size so it's never overwhelming
+        const waveFreq = 6.0 / citySpan;    // frequency inversely proportional so large cities get broad waves
+
+        for (let i = 0; i < count; i++) {
+            const x    = posArr[i * 3];
+            const z    = posArr[i * 3 + 2];
+            const wave = Math.sin(x * waveFreq + _groundTime) * Math.cos(z * waveFreq * 0.7 + _groundTime * 0.8);
+            posArr[i * 3 + 1] = _groundOrigY[i] + wave * waveAmp;
+
+            // Pulse color with wave: bright peaks, dim troughs
+            const brightness  = 0.5 + wave * 0.5;
+            colArr[i * 3]     = 0.04 * brightness + 0.06 * Math.max(0, wave);
+            colArr[i * 3 + 1] = 0.12 * brightness + 0.15 * Math.max(0, wave);
+            colArr[i * 3 + 2] = 0.16 * brightness + 0.25 * Math.max(0, wave);
+        }
+        posAttr.needsUpdate = true;
+        colAttr.needsUpdate = true;
     }
 
     renderer.render(scene, camera);
