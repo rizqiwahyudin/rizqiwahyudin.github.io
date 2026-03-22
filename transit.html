@@ -802,7 +802,21 @@ async function pollTransit() {
     // Expand bbox 30% so vehicles near the city edge aren't clipped
     const latPad = (north - south) * 0.3;
     const lonPad = (east - west) * 0.3;
-    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/entur-vehicles?south=${south - latPad}&west=${west - lonPad}&north=${north + latPad}&east=${east + lonPad}`;
+    const s = south - latPad, w = west - lonPad, n = north + latPad, e = east + lonPad;
+
+    // Route to correct data source based on city center coordinates
+    const cLat = originLat, cLon = originLon;
+    let url;
+    if (cLat >= 57 && cLat <= 71.5 && cLon >= 4 && cLon <= 31) {
+        // Norway -- Entur (no API key, all operators)
+        url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/entur-vehicles?south=${s}&west=${w}&north=${n}&east=${e}`;
+    } else if (cLat >= 55 && cLat <= 69 && cLon >= 10 && cLon <= 24) {
+        // Sweden -- SL/Trafiklab (Stockholm region)
+        url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/transit-vehicles`;
+    } else {
+        setStatus('transit: no data source for this city');
+        return;
+    }
 
     let data;
     try {
@@ -817,7 +831,10 @@ async function pollTransit() {
         return;
     }
 
-    const incoming = data.vehicles || [];
+    // Filter by expanded bbox (SL returns all vehicles, Entur is pre-filtered server-side)
+    const incoming = (data.vehicles || []).filter(v =>
+        v.lat >= s && v.lat <= n && v.lon >= w && v.lon <= e
+    );
     const seenIds = new Set();
 
     for (const v of incoming) {
