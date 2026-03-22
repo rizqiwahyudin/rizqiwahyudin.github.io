@@ -100,6 +100,38 @@
             cursor: not-allowed;
         }
 
+        #transit-btn {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 4px;
+            color: rgba(255, 255, 255, 0.30);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+            padding: 6px 14px;
+            cursor: pointer;
+            text-transform: lowercase;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            flex: 0 0 auto;
+        }
+
+        #transit-btn:hover:not(:disabled) {
+            background: rgba(0, 255, 255, 0.08);
+            border-color: rgba(0, 255, 255, 0.25);
+            color: rgba(0, 255, 255, 0.60);
+        }
+
+        #transit-btn.active {
+            background: rgba(0, 255, 255, 0.08);
+            border-color: rgba(0, 255, 255, 0.55);
+            color: #00ffff;
+        }
+
+        #transit-btn:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+        }
+
         #hud {
             font-size: 11px;
             letter-spacing: 1px;
@@ -141,6 +173,8 @@
             <input id="city-input" type="text" placeholder="enter a city..." autocomplete="off" spellcheck="false" />
             <button id="load-btn">load</button>
         </div>
+
+        <button id="transit-btn" disabled>transit</button>
 
         <div id="hud"></div>
     </div>
@@ -211,12 +245,25 @@ let _buildTotal = 0;
 let _isBuildingChunks = false;
 let _minX = Infinity, _maxX = -Infinity, _minZ = Infinity, _maxZ = -Infinity, _maxY = 0;
 
+// ─── Transit state ────────────────────────────────────────────────────────────
+
+let _cityBbox      = null;   // {south, west, north, east} set after successful city load
+let _transitActive = false;
+let _transitTimer  = null;   // setInterval handle
+let _vehicles      = new Map(); // vehicleId -> {points, lat, lon, bearing, speed, lastUpdateTime}
+let _vehicleCount  = 0;      // last polled count, for HUD
+
+const TRANSIT_POLL_MS = 15000;
+const CROSS_ARM       = 8;   // world units, half-length of each cross arm
+const CROSS_Y         = 2;   // Y position (just above ground)
+
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
-const hudEl     = document.getElementById('hud');
-const statusEl  = document.getElementById('status');
-const inputEl   = document.getElementById('city-input');
-const loadBtn   = document.getElementById('load-btn');
+const hudEl      = document.getElementById('hud');
+const statusEl   = document.getElementById('status');
+const inputEl    = document.getElementById('city-input');
+const loadBtn    = document.getElementById('load-btn');
+const transitBtn = document.getElementById('transit-btn');
 
 // ─── Scene setup ─────────────────────────────────────────────────────────────
 
@@ -512,7 +559,9 @@ function finalizePointCloud(cityName, totalBuildings) {
 
     fitCamera();
     buildGroundPlane(_minX, _maxX, _minZ, _maxZ);
-    hudEl.innerHTML = '<span>' + totalBuildings.toLocaleString() + '</span> buildings | ' + escapeHtml(cityName);
+    hudEl.dataset.buildings = totalBuildings.toLocaleString();
+    hudEl.dataset.cityName  = escapeHtml(cityName);
+    updateHud();
     setStatus('');
     loadBtn.disabled = false;
 }
@@ -623,14 +672,23 @@ let _pendingCityName = '';
 
 async function loadCity(query) {
     loadBtn.disabled = true;
+    stopTransit();
+    transitBtn.disabled = true;
+    transitBtn.classList.remove('active');
+    _cityBbox = null;
     clearPointCloud();
     resetBuildState();
     hudEl.textContent = '';
+    hudEl.dataset.buildings = '';
+    hudEl.dataset.cityName  = '';
     statusEl.className = '';
 
     try {
         setStatus('geocoding...');
         const cityGeo = await geocodeCity(query);
+
+        _cityBbox = { south: cityGeo.south, west: cityGeo.west, north: cityGeo.north, east: cityGeo.east };
+        transitBtn.disabled = false;
 
         originLat = cityGeo.lat;
         originLon = cityGeo.lon;
@@ -682,6 +740,201 @@ async function loadCity(query) {
     }
 }
 
+// ─── Transit layer ────────────────────────────────────────────────────────────
+
+function vehicleColor(routeId) {
+    if (!routeId) return [0.9, 0.65, 0.1];
+    if (routeId.startsWith('FLT:') || routeId.startsWith('VYG:') || routeId.startsWith('VY:')) {
+        return [0.95, 0.95, 1.0];
+    }
+    if (routeId.startsWith('RUT:')) return [0.9, 0.65, 0.1];
+    if (routeId.startsWith('ATB:')) return [0.9, 0.65, 0.1];
+    if (routeId.startsWith('SKY:')) return [0.9, 0.65, 0.1];
+    return [0.9, 0.65, 0.1];
+}
+
+function buildVehicleCross(wx, wy, wz, color) {
+    const [r, g, b] = color;
+    const arm = CROSS_ARM;
+    const positions = new Float32Array([
+        wx,        wy, wz,         // center
+        wx - arm,  wy, wz,         // west
+        wx + arm,  wy, wz,         // east
+        wx,        wy, wz - arm,   // north
+        wx,        wy, wz + arm,   // south
+    ]);
+    const colors = new Float32Array([
+        r, g, b,
+        r, g, b,
+        r, g, b,
+        r, g, b,
+        r, g, b,
+    ]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({ size: 5, sizeAttenuation: true, vertexColors: true });
+    return new THREE.Points(geo, mat);
+}
+
+function disposeVehicle(entry) {
+    if (!entry) return;
+    if (entry.points) {
+        scene.remove(entry.points);
+        if (entry.points.geometry) entry.points.geometry.dispose();
+        if (entry.points.material) entry.points.material.dispose();
+        entry.points = null;
+    }
+}
+
+function disposeAllVehicles() {
+    for (const entry of _vehicles.values()) {
+        disposeVehicle(entry);
+    }
+    _vehicles.clear();
+    _vehicleCount = 0;
+}
+
+async function pollTransit() {
+    if (!_cityBbox) return;
+
+    const { south, west, north, east } = _cityBbox;
+    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/entur-vehicles?south=${south}&west=${west}&north=${north}&east=${east}`;
+
+    let data;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            setStatus('transit: fetch error ' + res.status);
+            return;
+        }
+        data = await res.json();
+    } catch (err) {
+        setStatus('transit: ' + err.message);
+        return;
+    }
+
+    const incoming = data.vehicles || [];
+    const seenIds = new Set();
+
+    for (const v of incoming) {
+        const id = v.id;
+        seenIds.add(id);
+        const lat = v.lat;
+        const lon = v.lon;
+        const bearing = v.bearing || 0;
+        const speed   = v.speed   || 0;
+        const color   = vehicleColor(v.routeId);
+        const wPos    = latLonToWorld(lat, lon);
+
+        if (_vehicles.has(id)) {
+            // Update existing: dispose old cross, rebuild at new position
+            const entry = _vehicles.get(id);
+            disposeVehicle(entry);
+            const pts = buildVehicleCross(wPos.x, CROSS_Y, wPos.z, color);
+            scene.add(pts);
+            entry.points        = pts;
+            entry.lat           = lat;
+            entry.lon           = lon;
+            entry.bearing       = bearing;
+            entry.speed         = speed;
+            entry.lastUpdateTime = performance.now();
+            entry.color         = color;
+        } else {
+            // New vehicle
+            const pts = buildVehicleCross(wPos.x, CROSS_Y, wPos.z, color);
+            scene.add(pts);
+            _vehicles.set(id, {
+                points:         pts,
+                lat,
+                lon,
+                bearing,
+                speed,
+                lastUpdateTime: performance.now(),
+                color,
+            });
+        }
+    }
+
+    // Remove vehicles that disappeared from the feed
+    for (const [id, entry] of _vehicles.entries()) {
+        if (!seenIds.has(id)) {
+            disposeVehicle(entry);
+            _vehicles.delete(id);
+        }
+    }
+
+    _vehicleCount = _vehicles.size;
+    updateHud();
+}
+
+function updateHud() {
+    const cityNamePart = hudEl.dataset.cityName || '';
+    const buildingPart = hudEl.dataset.buildings || '';
+    let text = '';
+    if (buildingPart) {
+        text = '<span>' + buildingPart + '</span> buildings';
+        if (cityNamePart) text += ' | ' + cityNamePart;
+    }
+    if (_transitActive) {
+        text += (text ? ' | ' : '') + '<span>' + _vehicleCount.toLocaleString() + '</span> vehicles';
+    }
+    hudEl.innerHTML = text;
+}
+
+function startTransit() {
+    if (_transitActive) return;
+    _transitActive = true;
+    transitBtn.classList.add('active');
+    pollTransit();
+    _transitTimer = setInterval(pollTransit, TRANSIT_POLL_MS);
+}
+
+function stopTransit() {
+    if (!_transitActive && _transitTimer === null) return;
+    _transitActive = false;
+    if (_transitTimer !== null) {
+        clearInterval(_transitTimer);
+        _transitTimer = null;
+    }
+    disposeAllVehicles();
+    transitBtn.classList.remove('active');
+    updateHud();
+}
+
+function deadReckonVehicles() {
+    const now = performance.now();
+    for (const entry of _vehicles.values()) {
+        if (!entry.points) continue;
+        const elapsed = (now - entry.lastUpdateTime) / 1000;
+        if (elapsed <= 0) continue;
+
+        const speed   = entry.speed   || 0;
+        const bearing = entry.bearing || 0;
+        if (speed === 0) continue;
+
+        const bearingRad = bearing * Math.PI / 180;
+        const latRad     = entry.lat * Math.PI / 180;
+        const newLat     = entry.lat + Math.cos(bearingRad) * speed * elapsed / 111320;
+        const newLon     = entry.lon + Math.sin(bearingRad) * speed * elapsed / (111320 * Math.cos(latRad));
+
+        if (!isFinite(newLat) || !isFinite(newLon)) continue;
+
+        const wPos = latLonToWorld(newLat, newLon);
+        const posAttr = entry.points.geometry.getAttribute('position');
+        const arr     = posAttr.array;
+        const arm     = CROSS_ARM;
+
+        arr[0] = wPos.x;        arr[1] = CROSS_Y; arr[2] = wPos.z;
+        arr[3] = wPos.x - arm;  arr[4] = CROSS_Y; arr[5] = wPos.z;
+        arr[6] = wPos.x + arm;  arr[7] = CROSS_Y; arr[8] = wPos.z;
+        arr[9] = wPos.x;        arr[10] = CROSS_Y; arr[11] = wPos.z - arm;
+        arr[12] = wPos.x;       arr[13] = CROSS_Y; arr[14] = wPos.z + arm;
+
+        posAttr.needsUpdate = true;
+    }
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function setStatus(msg) {
@@ -706,6 +959,18 @@ inputEl.addEventListener('keydown', (e) => {
     }
 });
 
+transitBtn.addEventListener('click', () => {
+    if (!_cityBbox) {
+        setStatus('load a city first');
+        return;
+    }
+    if (_transitActive) {
+        stopTransit();
+    } else {
+        startTransit();
+    }
+});
+
 // ─── Animation loop ──────────────────────────────────────────────────────────
 
 function animate() {
@@ -715,6 +980,11 @@ function animate() {
     // advance one chunk per frame to keep UI responsive
     if (_isBuildingChunks) {
         tickBuildChunks(_pendingCityName);
+    }
+
+    // dead reckon transit vehicles between polls
+    if (_transitActive && _vehicles.size > 0) {
+        deadReckonVehicles();
     }
 
     // Animate ground wave so empty areas feel alive
