@@ -583,8 +583,8 @@ function buildGroundPlane(minX, maxX, minZ, maxZ) {
     const z0 = minZ - pad, z1 = maxZ + pad;
 
     // Fixed grid resolution so the ground looks consistent regardless of city size
-    const cols = 140;
-    const rows = 140;
+    const cols = 220;
+    const rows = 220;
     const dx = (x1 - x0) / cols;
     const dz = (z1 - z0) / rows;
 
@@ -617,7 +617,7 @@ function buildGroundPlane(minX, maxX, minZ, maxZ) {
     geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
 
     groundMaterial = new THREE.PointsMaterial({
-        size: 2.0,
+        size: 0.8,
         sizeAttenuation: true,
         vertexColors: true,
     });
@@ -799,7 +799,10 @@ async function pollTransit() {
     if (!_cityBbox) return;
 
     const { south, west, north, east } = _cityBbox;
-    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/entur-vehicles?south=${south}&west=${west}&north=${north}&east=${east}`;
+    // Expand bbox 30% so vehicles near the city edge aren't clipped
+    const latPad = (north - south) * 0.3;
+    const lonPad = (east - west) * 0.3;
+    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/entur-vehicles?south=${south - latPad}&west=${west - lonPad}&north=${north + latPad}&east=${east + lonPad}`;
 
     let data;
     try {
@@ -919,6 +922,11 @@ function deadReckonVehicles() {
         const newLon     = entry.lon + Math.sin(bearingRad) * speed * elapsed / (111320 * Math.cos(latRad));
 
         if (!isFinite(newLat) || !isFinite(newLon)) continue;
+
+        // Advance the stored position and reset the time anchor so elapsed doesn't compound
+        entry.lat = newLat;
+        entry.lon = newLon;
+        entry.lastUpdateTime = now;
 
         const wPos = latLonToWorld(newLat, newLon);
         const posAttr = entry.points.geometry.getAttribute('position');
