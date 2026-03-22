@@ -246,8 +246,8 @@ function initScene() {
     composer.addPass(new THREE.RenderPass(scene, camera));
     const bloomPass = new THREE.UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        0.9,  // strength
-        0.4,  // radius
+        0.5,  // strength
+        0.3,  // radius
         0.0   // threshold -- glow everything
     );
     composer.addPass(bloomPass);
