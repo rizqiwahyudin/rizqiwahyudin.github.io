@@ -831,28 +831,46 @@ async function pollTransit() {
         const wPos    = latLonToWorld(lat, lon);
 
         if (_vehicles.has(id)) {
-            // Update existing: dispose old cross, rebuild at new position
             const entry = _vehicles.get(id);
+            // Compute observed speed from position delta since last poll
+            const dtSec = (performance.now() - entry.lastUpdateTime) / 1000;
+            let observedSpeed = entry.observedSpeed || 0;
+            if (dtSec > 1) {
+                const dLat = lat - entry.prevLat;
+                const dLon = lon - entry.prevLon;
+                const distM = Math.sqrt(
+                    (dLat * 111320) ** 2 +
+                    (dLon * 111320 * Math.cos(lat * Math.PI / 180)) ** 2
+                );
+                const measured = distM / dtSec;
+                // Sanity cap: ignore teleports > 100 m/s
+                observedSpeed = (measured > 0.5 && measured < 100) ? measured : 0;
+            }
+
             disposeVehicle(entry);
             const pts = buildVehicleCross(wPos.x, CROSS_Y, wPos.z, color);
             scene.add(pts);
-            entry.points        = pts;
-            entry.lat           = lat;
-            entry.lon           = lon;
-            entry.bearing       = bearing;
-            entry.speed         = speed;
+            entry.points         = pts;
+            entry.prevLat        = entry.lat;
+            entry.prevLon        = entry.lon;
+            entry.lat            = lat;
+            entry.lon            = lon;
+            entry.bearing        = bearing;
+            entry.observedSpeed  = observedSpeed;
             entry.lastUpdateTime = performance.now();
-            entry.color         = color;
+            entry.color          = color;
         } else {
-            // New vehicle
+            // New vehicle -- no prior position yet, assume default speed if bearing is nonzero
             const pts = buildVehicleCross(wPos.x, CROSS_Y, wPos.z, color);
             scene.add(pts);
             _vehicles.set(id, {
                 points:         pts,
+                prevLat:        lat,
+                prevLon:        lon,
                 lat,
                 lon,
                 bearing,
-                speed,
+                observedSpeed:  bearing !== 0 ? 8 : 0, // 8 m/s default until first delta
                 lastUpdateTime: performance.now(),
                 color,
             });
@@ -912,9 +930,9 @@ function deadReckonVehicles() {
         const elapsed = (now - entry.lastUpdateTime) / 1000;
         if (elapsed <= 0) continue;
 
-        const speed   = entry.speed   || 0;
+        const speed   = entry.observedSpeed || 0;
         const bearing = entry.bearing || 0;
-        if (speed === 0) continue;
+        if (speed === 0 || bearing === 0) continue;
 
         const bearingRad = bearing * Math.PI / 180;
         const latRad     = entry.lat * Math.PI / 180;
