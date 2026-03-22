@@ -878,10 +878,10 @@
         }
     }
 
-    // Helper to update point material size/attenuation on all cached tiles
+    // Helper to update road point material size/attenuation on all cached tiles
     function updateTileMaterials(usePerspective) {
         for (const entry of tileCache.values()) {
-            if (!entry.points) continue;
+            if (!entry.points) continue; // road points only
             const m = entry.points.material;
             if (usePerspective) {
                 m.size = 0.5;
@@ -989,37 +989,6 @@
             };
 
             composer.passes[0].camera = anchorCam;
-
-            // Bubble-up: push all building points underground then animate them rising
-            {
-                const now = performance.now();
-                let stagger = 0;
-                for (const [, entry] of tileCache.entries()) {
-                    if (!entry.points || !entry.origY || !entry.fadeComplete) continue;
-                    const posAttr = entry.points.geometry.getAttribute('position');
-                    const posArr = posAttr.array;
-                    // Push building points below ground (Y > 0.5 = building, not road/ground)
-                    for (let i = 0; i < entry.pointCount; i++) {
-                        if (entry.streamIndices && entry.streamIndices.has(i)) continue;
-                        if (entry.origY[i] > 0.5) posArr[i * 3 + 1] = -2.0;
-                    }
-                    posAttr.needsUpdate = true;
-                    entry.regenStartTime = now + stagger;
-                    // Store tile center for radial bubble-up
-                    if (entry.tileCenterX === undefined) {
-                        entry.tileCenterX = 0; entry.tileCenterZ = 0;
-                        for (let i = 0; i < Math.min(entry.pointCount, 200); i++) {
-                            entry.tileCenterX += posArr[i * 3];
-                            entry.tileCenterZ += posArr[i * 3 + 2];
-                        }
-                        const n = Math.min(entry.pointCount, 200);
-                        entry.tileCenterX /= n;
-                        entry.tileCenterZ /= n;
-                        entry.tileRadius = 350;
-                    }
-                    stagger += 100; // stagger tiles 100ms apart
-                }
-            }
 
         } else {
             // Back to bird's eye
@@ -1574,7 +1543,6 @@
                         const posArr = new Float32Array(pointCount * 3);
                         const colArr = new Float32Array(pointCount * 3);
                         const origColArr = new Float32Array(pointCount * 3);
-                        const tileStreamPoints = [];
 
                         for (let i = 0; i < pointCount; i++) {
                             const base = HEADER_BYTES + i * POINT_STRIDE * 4;
@@ -1584,7 +1552,6 @@
                             const pr = view.getFloat32(base + 12, true);
                             const pg = view.getFloat32(base + 16, true);
                             const pb = view.getFloat32(base + 20, true);
-                            // Offset by tile world position
                             posArr[i * 3 + 0] = px + tileWorldOffset.x;
                             posArr[i * 3 + 1] = py;
                             posArr[i * 3 + 2] = pz + tileWorldOffset.z;
@@ -1596,22 +1563,18 @@
                             origColArr[i * 3 + 2] = pb;
                         }
 
-                        // Parse stream particles
+                        // Stream particle data in binary tile (legacy -- ignored for wireframe path)
+                        // Still parse to avoid offset corruption on future formats
                         const STREAM_OFFSET = HEADER_BYTES + pointCount * POINT_STRIDE * 4;
                         for (let s = 0; s < streamCount; s++) {
-                            const base = STREAM_OFFSET + s * 16;
-                            const idx = view.getUint32(base, true);
-                            const yBase = view.getFloat32(base + 4, true);
-                            const yTop = view.getFloat32(base + 8, true);
-                            const speed = view.getFloat32(base + 12, true);
-                            tileStreamPoints.push({ idx, yBase, yTop, speed });
+                            // parsed but discarded
+                            void view.getUint32(STREAM_OFFSET + s * 16, true);
                         }
 
-                        const positions = posArr;
                         const animColors = new Float32Array(pointCount * 3); // start at 0 for fade-in
 
                         const geo = new THREE.BufferGeometry();
-                        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
                         geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
 
                         const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
@@ -1625,18 +1588,16 @@
 
                         if (currentTileKeys.has(key) && sceneGeneration === myGeneration) {
                             scene.add(points);
-                            const origY = new Float32Array(pointCount);
-                            for (let i = 0; i < pointCount; i++) origY[i] = positions[i * 3 + 1];
 
                             tileCache.set(key, {
+                                lines: null,
                                 points,
                                 loading: false,
                                 error: false,
-                                pointCount,
+                                lineCount: 0,
+                                origLineColors: null,
                                 origColors: origColArr,
-                                origY,
-                                streamPoints: tileStreamPoints,
-                                streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
+                                streamPoints: [],
                                 loadStartTime: performance.now(),
                                 fadeComplete: false,
                                 regenStartTime: null,
@@ -1698,9 +1659,6 @@
             const tileWorldOffset = latLonToWorld(tileC.lat, tileC.lon);
             const METERS_PER_DEG_LAT = 111320;
             const METERS_PER_DEG_LON = Math.cos(tileC.lat * Math.PI / 180) * 111320;
-            const MAX_HEIGHT = 40;
-            const DENSITY = 1.2; // points per m² -- reduced to spread out, structured walls compensate
-
             const posArr = [], colArr = [];
             const buildingFootprints = []; // collected for ground plane sampling
             const tileStreamPoints = [];   // stream particles: {idx, yBase, yTop, speed}
@@ -1717,27 +1675,6 @@
                 return inside;
             }
 
-            function heightColor(t, worldY) {
-                const j = (Math.random() - 0.5) * 0.06;
-                let r, g, b;
-                // Buildings are backdrop -- keep them dim so transit vehicles pop
-                // Ground/base: dark blue-teal skeleton
-                // Tips/top: slightly brighter but still subdued
-                r = 0.05 + t * 0.07;
-                g = 0.25 + t * 0.18;
-                b = 0.45 + t * 0.15;
-                // Apply time-of-day shift
-                r = r * todMult[0];
-                g = g * todMult[1];
-                b = b * todMult[2];
-                // Height-based opacity: ground points further dimmed
-                const opacityMult = (worldY < 1) ? 0.35 : 1.0;
-                r = r * opacityMult;
-                g = g * opacityMult;
-                b = b * opacityMult;
-                return [Math.max(0,Math.min(1,r+j)), Math.max(0,Math.min(1,g+j)), Math.max(0,Math.min(1,b+j))];
-            }
-
             function getHeight(tags) {
                 if (tags.height) return parseFloat(tags.height) || 8;
                 if (tags['building:levels']) return parseFloat(tags['building:levels']) * 3.5;
@@ -1749,17 +1686,9 @@
                 return 8;
             }
 
-            function sampleFace(ax, ay, az, bx, by, bz, cx, cy, cz, count, h) {
-                for (let i = 0; i < count; i++) {
-                    const s = Math.random(), tt = Math.random();
-                    const px = ax + s * bx + tt * cx;
-                    const py = ay + s * by + tt * cy;
-                    const pz = az + s * bz + tt * cz;
-                    const [r, g, b] = heightColor(Math.max(0, py / MAX_HEIGHT), py);
-                    posArr.push(px, py, pz);
-                    colArr.push(r, g, b);
-                }
-            }
+            // ── Buildings → wireframe LineSegments ───────────────────────────
+            const linePositions = []; // building line vertices
+            const lineColors = [];    // building line colors
 
             for (const el of osmData.elements) {
                 if (el.type !== 'way' || !el.tags || !el.tags.building) continue;
@@ -1777,86 +1706,127 @@
                 }
                 if (footprint.length < 3) continue;
 
+                buildingFootprints.push(footprint);
+
                 const h = getHeight(el.tags);
                 const wx = tileWorldOffset.x;
                 const wz = tileWorldOffset.z;
+                const WALL_X_STEP = 3.0; // horizontal spacing along each edge (meters)
 
-                // Sample roof and walls
-                // Roof: point-in-polygon sampling -- respects actual building shape
-                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                for (const p of footprint) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
-                const bboxArea = (maxX - minX) * (maxY - minY);
-                const roofCount = Math.max(4, Math.floor(bboxArea * DENSITY * 0.6));
-                // Collect footprint for ground plane exclusion
-                buildingFootprints.push(footprint);
-                let attempts = 0;
-                let roofPlaced = 0;
-                while (roofPlaced < roofCount && attempts < roofCount * 4) {
-                    attempts++;
-                    const rx = minX + Math.random() * (maxX - minX);
-                    const ry = minY + Math.random() * (maxY - minY);
-                    if (!pointInPolygon(rx, ry, footprint)) continue;
-                    const [r, g, b] = heightColor(h / MAX_HEIGHT, h);
-                    posArr.push(wx + rx, h, wz - ry);
-                    colArr.push(r, g, b);
-                    roofPlaced++;
-                }
-
-                // Roof perimeter edge strip -- brighter points tracing the outline
+                // Walls: vertical lines at regular intervals along each footprint edge
                 for (let i = 0; i < footprint.length - 1; i++) {
                     const p0 = footprint[i], p1 = footprint[i + 1];
                     const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-                    const perimCount = Math.max(2, Math.floor(edgeLen * 2.5));
-                    for (let j = 0; j < perimCount; j++) {
-                        const t = j / perimCount;
-                        const ex = p0.x + t * (p1.x - p0.x);
-                        const ey = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(1.0, h);
-                        posArr.push(wx + ex, h, wz - ey);
-                        colArr.push(Math.min(1, r * 1.4), Math.min(1, g * 1.4), Math.min(1, b * 1.4));
-                    }
-                }
-
-                // Walls: structured grid (horizontal steps along edge × vertical height steps)
-                // This replaces random scatter -- gives clear building silhouettes instead of blobs.
-                // Stream particles: ~4% of wall points are flagged as streams
-                const streamIndices = tileStreamPoints; // reference to outer array
-                const WALL_H_STEP = 3.5;  // vertical spacing between rows -- wider = fewer points, less clutter
-                const WALL_X_STEP = 3.5;  // horizontal spacing along each edge (meters)
-                for (let i = 0; i < footprint.length - 1; i++) {
-                    const p0 = footprint[i], p1 = footprint[i + 1];
-                    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-                    const hSteps = Math.max(1, Math.floor(h / WALL_H_STEP));
                     const xSteps = Math.max(1, Math.floor(edgeLen / WALL_X_STEP));
                     for (let xi = 0; xi <= xSteps; xi++) {
                         const t = xi / xSteps;
-                        const wx2 = p0.x + t * (p1.x - p0.x);
-                        const wy2 = p0.y + t * (p1.y - p0.y);
-                        for (let yi = 0; yi <= hSteps; yi++) {
-                            const wallH = (yi / hSteps) * h;
-                            const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
-                            const idx = posArr.length / 3;
-                            // Base strip: bottom row brightened
-                            const isBase = yi === 0;
-                            const em = isBase ? 1.35 : 1.0;
-                            posArr.push(wx + wx2, wallH, wz - wy2);
-                            colArr.push(Math.min(1, r * em), Math.min(1, g * em), Math.min(1, b * em));
-                            // ~4% of wall points become stream particles
-                            if (Math.random() < 0.04) {
-                                streamIndices.push({ idx, yBase: 0, yTop: h, speed: 0.03 + Math.random() * 0.09 });
+                        const lx = p0.x + t * (p1.x - p0.x);
+                        const ly = p0.y + t * (p1.y - p0.y);
+                        // bottom vertex
+                        linePositions.push(wx + lx, 0, wz - ly);
+                        lineColors.push(0.04, 0.18, 0.35);
+                        // top vertex
+                        linePositions.push(wx + lx, h, wz - ly);
+                        lineColors.push(0.15, 0.55, 0.8);
+                    }
+                }
+
+                // Roof perimeter: connect footprint corners at height h
+                for (let i = 0; i < footprint.length - 1; i++) {
+                    const p0 = footprint[i], p1 = footprint[i + 1];
+                    linePositions.push(wx + p0.x, h, wz - p0.y);
+                    lineColors.push(0.2, 0.7, 1.0);
+                    linePositions.push(wx + p1.x, h, wz - p1.y);
+                    lineColors.push(0.2, 0.7, 1.0);
+                }
+
+                // Base perimeter: connect footprint corners at Y=0.05
+                for (let i = 0; i < footprint.length - 1; i++) {
+                    const p0 = footprint[i], p1 = footprint[i + 1];
+                    linePositions.push(wx + p0.x, 0.05, wz - p0.y);
+                    lineColors.push(0.03, 0.1, 0.2);
+                    linePositions.push(wx + p1.x, 0.05, wz - p1.y);
+                    lineColors.push(0.03, 0.1, 0.2);
+                }
+            }
+
+            // ── Road points (kept as THREE.Points) ────────────────────────────
+            // posArr / colArr now used exclusively for roads and ground grid
+            try {
+                const roadWays = osmData.elements.filter(e => e.type === 'way' && e.tags && e.tags.highway);
+
+                for (const el of roadWays) {
+                    const hwType = el.tags.highway;
+                    const nodeIds = el.nodes;
+                    if (!nodeIds || nodeIds.length < 2) continue;
+
+                    const roadPts = [];
+                    for (const nid of nodeIds) {
+                        const nd = nodes[nid];
+                        if (!nd) continue;
+                        const rx = (nd.lon - tileC.lon) * METERS_PER_DEG_LON;
+                        const ry = (nd.lat - tileC.lat) * METERS_PER_DEG_LAT;
+                        roadPts.push({ x: rx, y: ry });
+                    }
+                    if (roadPts.length < 2) continue;
+
+                    let rc, gc, bc;
+                    let strips;
+                    if (hwType === 'primary') {
+                        rc = 0.70; gc = 0.70; bc = 0.75;
+                        strips = [-3, 0, 3];
+                    } else if (hwType === 'secondary') {
+                        rc = 0.55; gc = 0.55; bc = 0.60;
+                        strips = [-3, 0, 3];
+                    } else if (hwType === 'tertiary') {
+                        rc = 0.50; gc = 0.50; bc = 0.55;
+                        strips = [-2, 2];
+                    } else if (hwType === 'residential') {
+                        rc = 0.45; gc = 0.45; bc = 0.50;
+                        strips = [-2, 2];
+                    } else if (hwType === 'service' || hwType === 'pedestrian') {
+                        rc = 0.40; gc = 0.40; bc = 0.45;
+                        strips = [0];
+                    } else {
+                        rc = 0.35; gc = 0.45; bc = 0.45;
+                        strips = [0];
+                    }
+
+                    rc *= todMult[0]; gc *= todMult[1]; bc *= todMult[2];
+
+                    for (let si = 0; si < roadPts.length - 1; si++) {
+                        const rp0 = roadPts[si], rp1 = roadPts[si + 1];
+                        const segDx = rp1.x - rp0.x;
+                        const segDy = rp1.y - rp0.y;
+                        const segLen = Math.hypot(segDx, segDy);
+                        if (segLen < 0.01) continue;
+                        const segUx = segDx / segLen;
+                        const segUy = segDy / segLen;
+                        const perpX = -segUy;
+                        const perpY = segUx;
+
+                        const numSamples = Math.max(2, Math.ceil(segLen / 1.5));
+                        for (let k = 0; k <= numSamples; k++) {
+                            const t = k / numSamples;
+                            const basePx = rp0.x + t * segDx;
+                            const basePy = rp0.y + t * segDy;
+                            for (const offset of strips) {
+                                const finalX = basePx + perpX * offset;
+                                const finalY = basePy + perpY * offset;
+                                posArr.push(tileWorldOffset.x + finalX, -0.1, tileWorldOffset.z - finalY);
+                                colArr.push(rc, gc, bc);
                             }
                         }
                     }
                 }
+            } catch (roadErr) {
+                console.warn(`Road fetch for tile ${key} failed:`, roadErr.message);
             }
 
-            // ── Ground plane point grid (Fix 4A) ─────────────────────────────
-            // Add a uniform grid of ground points covering the tile bounding box,
-            // skipping points inside building footprints.
+            // ── Ground plane point grid ────────────────────────────────────────
             {
                 const GROUND_Y = -0.2;
-                const GRID_SPACING = 18; // meters -- wider spacing, buildings carry more visual weight now
-                // Tile bounding box in local coords (relative to tileWorldOffset)
+                const GRID_SPACING = 18;
                 const latSpanM = (bbox.north - bbox.south) * METERS_PER_DEG_LAT;
                 const lonSpanM = (bbox.east - bbox.west) * METERS_PER_DEG_LON;
                 const gridMinX = -lonSpanM / 2;
@@ -1866,7 +1836,6 @@
 
                 for (let gx = gridMinX; gx <= gridMaxX; gx += GRID_SPACING) {
                     for (let gy = gridMinY; gy <= gridMaxY; gy += GRID_SPACING) {
-                        // Check against building footprints (capped to avoid O(n*m) blowup)
                         const fpsToCheck = buildingFootprints.slice(0, Math.min(buildingFootprints.length, 25));
                         let insideBuilding = false;
                         for (const fp of fpsToCheck) {
@@ -1880,142 +1849,70 @@
                 }
             }
 
-            // ── Process roads from the same osmData ──────────────────────────
-            try {
-                const roadWays = osmData.elements.filter(e => e.type === 'way' && e.tags && e.tags.highway);
+            // ── Build building LineSegments ────────────────────────────────────
+            const lineCount = linePositions.length / 3;
+            const linePosF32 = new Float32Array(linePositions);
+            const lineColF32 = new Float32Array(lineColors);
+            const origLineColors = new Float32Array(lineColors); // saved for fade/focus
+            const animLineColors = new Float32Array(lineColF32.length); // start at 0 for fade-in
 
-                for (const el of roadWays) {
-                        const hwType = el.tags.highway;
-                        const nodeIds = el.nodes;
-                        if (!nodeIds || nodeIds.length < 2) continue;
+            const lineGeo = new THREE.BufferGeometry();
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(linePosF32, 3));
+            lineGeo.setAttribute('color', new THREE.BufferAttribute(animLineColors, 3));
+            const lineMat = new THREE.LineBasicMaterial({ vertexColors: true });
+            const lines = new THREE.LineSegments(lineGeo, lineMat);
 
-                        // Convert node coords to local XY (same reference as buildings)
-                        const roadPts = [];
-                        for (const nid of nodeIds) {
-                            const nd = nodes[nid];
-                            if (!nd) continue;
-                            const rx = (nd.lon - tileC.lon) * METERS_PER_DEG_LON;
-                            const ry = (nd.lat - tileC.lat) * METERS_PER_DEG_LAT;
-                            roadPts.push({ x: rx, y: ry });
-                        }
-                        if (roadPts.length < 2) continue;
-
-                        // Determine color and strip offsets by highway type
-                        // Brighter base colors so roads are visible after ToD and LOD multipliers
-                        let rc, gc, bc;
-                        let strips;
-                        if (hwType === 'primary') {
-                            rc = 0.70; gc = 0.70; bc = 0.75;
-                            strips = [-3, 0, 3];
-                        } else if (hwType === 'secondary') {
-                            rc = 0.55; gc = 0.55; bc = 0.60;
-                            strips = [-3, 0, 3];
-                        } else if (hwType === 'tertiary') {
-                            rc = 0.50; gc = 0.50; bc = 0.55;
-                            strips = [-2, 2];
-                        } else if (hwType === 'residential') {
-                            rc = 0.45; gc = 0.45; bc = 0.50;
-                            strips = [-2, 2];
-                        } else if (hwType === 'service' || hwType === 'pedestrian') {
-                            rc = 0.40; gc = 0.40; bc = 0.45;
-                            strips = [0];
-                        } else { // footway, path
-                            rc = 0.35; gc = 0.45; bc = 0.45;
-                            strips = [0];
-                        }
-
-                        // Apply time-of-day to road colors
-                        rc *= todMult[0]; gc *= todMult[1]; bc *= todMult[2];
-
-                        // Sample points every 1.5m along each segment
-                        for (let si = 0; si < roadPts.length - 1; si++) {
-                            const rp0 = roadPts[si], rp1 = roadPts[si + 1];
-                            const segDx = rp1.x - rp0.x;
-                            const segDy = rp1.y - rp0.y;
-                            const segLen = Math.hypot(segDx, segDy);
-                            if (segLen < 0.01) continue;
-                            const segUx = segDx / segLen; // unit along segment
-                            const segUy = segDy / segLen;
-                            // Perpendicular unit vector (rotate 90°)
-                            const perpX = -segUy;
-                            const perpY = segUx;
-
-                            const numSamples = Math.max(2, Math.ceil(segLen / 1.5));
-                            for (let k = 0; k <= numSamples; k++) {
-                                const t = k / numSamples;
-                                const basePx = rp0.x + t * segDx;
-                                const basePy = rp0.y + t * segDy;
-                                for (const offset of strips) {
-                                    const finalX = basePx + perpX * offset;
-                                    const finalY = basePy + perpY * offset;
-                                    posArr.push(tileWorldOffset.x + finalX, -0.1, tileWorldOffset.z - finalY);
-                                    colArr.push(rc, gc, bc);
-                                }
-                            }
-                        }
-                    }
-            } catch (roadErr) {
-                // Road fetch failure is non-fatal -- continue with buildings only
-                console.warn(`Road fetch for tile ${key} failed:`, roadErr.message);
+            // ── Build road/ground Points ──────────────────────────────────────
+            const roadCount = posArr.length / 3;
+            let points = null;
+            let roadOrigColors = null;
+            let roadGeo = null;
+            let roadMat = null;
+            if (roadCount > 0) {
+                const roadPositions = new Float32Array(posArr);
+                roadOrigColors = new Float32Array(colArr);
+                const roadAnimColors = new Float32Array(roadOrigColors.length);
+                roadGeo = new THREE.BufferGeometry();
+                roadGeo.setAttribute('position', new THREE.BufferAttribute(roadPositions, 3));
+                roadGeo.setAttribute('color', new THREE.BufferAttribute(roadAnimColors, 3));
+                const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
+                roadMat = new THREE.PointsMaterial({
+                    size: isPerspectiveMode ? 0.32 : 0.28,
+                    sizeAttenuation: isPerspectiveMode,
+                    vertexColors: true,
+                });
+                points = new THREE.Points(roadGeo, roadMat);
             }
 
-            const actualCount = posArr.length / 3;
-            // Empty tiles (water, parks, open fields) are valid -- don't error them
-
-            const positions = new Float32Array(posArr);
-            const colors = new Float32Array(colArr);
-
-            // Store original colors for focus mode and tile animation
-            const origColors = new Float32Array(colArr);
-            // Start with zero colors (tile fade-in animation)
-            const animColors = new Float32Array(colors.length);
-            // animColors starts at 0 -- animate toward origColors over 1s
-
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(animColors, 3));
-
-            const isPerspectiveMode = (cameraMode === 'followme' || cameraMode === 'anchor');
-            const mat = new THREE.PointsMaterial({
-                size: isPerspectiveMode ? 0.32 : 0.28,
-                sizeAttenuation: isPerspectiveMode,
-                vertexColors: true,
-            });
-
-            const points = new THREE.Points(geo, mat);
-
             // Only add to scene if this tile is still wanted and scene hasn't reset
-            // (GPS may have moved to different tiles while we were loading)
             if (currentTileKeys.has(key) && sceneGeneration === myGeneration) {
-                scene.add(points);
-                // Store original Y values for regen animation
-                const origY = new Float32Array(actualCount);
-                for (let i = 0; i < actualCount; i++) origY[i] = positions[i * 3 + 1];
+                scene.add(lines);
+                if (points) scene.add(points);
 
                 tileCache.set(key, {
+                    lines,
                     points,
                     loading: false,
                     error: false,
-                    pointCount: actualCount,
-                    origColors,       // full-brightness colors (base, before focus dim)
-                    origY,            // original Y positions for regen animation
-                    streamPoints: tileStreamPoints, // rising stream particles for this tile
-                    streamIndices: new Set(tileStreamPoints.map(sp => sp.idx)),
-                    loadStartTime: performance.now(), // for fade-in animation
+                    lineCount,
+                    origLineColors,
+                    origColors: roadOrigColors,
+                    streamPoints: [],
+                    loadStartTime: performance.now(),
                     fadeComplete: false,
-                    regenStartTime: null, // set when regen animation is active
+                    regenStartTime: null,
                     tileCenterX: tileWorldOffset.x,
                     tileCenterZ: tileWorldOffset.z,
                     tileRadius: 350,
                 });
-                // If a route is active, apply focus mode to this new tile immediately
                 if (routeState.active && routeState.waypoints.length > 0) {
                     applyFocusModeTile(key, _focusWpWorld);
                 }
             } else {
-                // Stale tile: dispose immediately
-                geo.dispose();
-                mat.dispose();
+                lineGeo.dispose();
+                lineMat.dispose();
+                if (roadGeo) roadGeo.dispose();
+                if (roadMat) roadMat.dispose();
             }
             loadingSet.delete(key);
             updateTileHUD();
@@ -2029,6 +1926,7 @@
             // Backoff: 5s (rate limit), else 10s/30s/90s/5min
             const backoffMs = isRateLimit ? 5000 : Math.min(300000, 10000 * Math.pow(3, attempts - 1));
             tileCache.set(key, {
+                lines: null,
                 points: null,
                 loading: false,
                 error: true,
@@ -2044,6 +1942,11 @@
     function disposeTile(key) {
         const entry = tileCache.get(key);
         if (!entry) return;
+        if (entry.lines) {
+            entry.lines.geometry.dispose();
+            entry.lines.material.dispose();
+            scene.remove(entry.lines);
+        }
         if (entry.points) {
             entry.points.geometry.dispose();
             entry.points.material.dispose();
@@ -2065,10 +1968,12 @@
         for (const [key, entry] of tileCache.entries()) {
             if (desiredKeys.has(key)) {
                 // Show desired tiles
+                if (entry.lines) entry.lines.visible = true;
                 if (entry.points) entry.points.visible = true;
-            } else if (entry.points) {
+            } else if (entry.lines || entry.points) {
                 // Hide non-desired but keep cached
-                entry.points.visible = false;
+                if (entry.lines) entry.lines.visible = false;
+                if (entry.points) entry.points.visible = false;
                 // Evict if too far (outside 7x7 = 3 tiles from center in any direction)
                 const parts = key.split('/');
                 const tx = parseInt(parts[1]), ty = parseInt(parts[2]);
@@ -2115,60 +2020,64 @@
 
     function applyFocusModeTile(key, wpWorld) {
         const entry = tileCache.get(key);
-        if (!entry || !entry.points || !entry.origColors) return;
-        if (!entry.fadeComplete) return; // let fade-in finish first
-        const geo = entry.points.geometry;
-        const colorAttr = geo.getAttribute('color');
-        const pos = geo.getAttribute('position');
-        const count = pos.count;
+        if (!entry || !entry.fadeComplete) return;
 
-        const posArr = pos.array;
-        const colArr2 = colorAttr.array;
         const R2 = FOCUS_CORRIDOR_M * FOCUS_CORRIDOR_M;
 
-        // Cull waypoints that can't possibly affect this tile:
-        // compute tile AABB, expand by corridor radius, discard waypoints outside.
-        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-        for (let i = 0; i < count; i++) {
-            const x = posArr[i * 3], z = posArr[i * 3 + 2];
-            if (x < minX) minX = x; if (x > maxX) maxX = x;
-            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-        }
-        const pad = FOCUS_CORRIDOR_M;
-        const tileWp = wpWorld.filter(w =>
-            w.x >= minX - pad && w.x <= maxX + pad &&
-            w.z >= minZ - pad && w.z <= maxZ + pad
-        );
+        // Helper: dim a geometry's color buffer using origSrc as full-brightness reference
+        function dimGeo(geo, origSrc) {
+            const colorAttr = geo.getAttribute('color');
+            const pos = geo.getAttribute('position');
+            const count = pos.count;
+            const posArrF = pos.array;
+            const colArr2 = colorAttr.array;
 
-        // If no waypoints are near this tile at all, dim the whole tile uniformly
-        if (tileWp.length === 0) {
+            // Compute AABB for waypoint culling
+            let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
             for (let i = 0; i < count; i++) {
-                colArr2[i * 3]     = entry.origColors[i * 3]     * FOCUS_DIM_MULT;
-                colArr2[i * 3 + 1] = entry.origColors[i * 3 + 1] * FOCUS_DIM_MULT;
-                colArr2[i * 3 + 2] = entry.origColors[i * 3 + 2] * FOCUS_DIM_MULT;
+                const x = posArrF[i * 3], z = posArrF[i * 3 + 2];
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+            }
+            const pad = FOCUS_CORRIDOR_M;
+            const tileWp = wpWorld.filter(w =>
+                w.x >= minX - pad && w.x <= maxX + pad &&
+                w.z >= minZ - pad && w.z <= maxZ + pad
+            );
+
+            if (tileWp.length === 0) {
+                for (let i = 0; i < count; i++) {
+                    colArr2[i * 3]     = origSrc[i * 3]     * FOCUS_DIM_MULT;
+                    colArr2[i * 3 + 1] = origSrc[i * 3 + 1] * FOCUS_DIM_MULT;
+                    colArr2[i * 3 + 2] = origSrc[i * 3 + 2] * FOCUS_DIM_MULT;
+                }
+                colorAttr.needsUpdate = true;
+                return;
+            }
+
+            for (let i = 0; i < count; i++) {
+                const wx = posArrF[i * 3];
+                const wz = posArrF[i * 3 + 2];
+                let inCorridor = false;
+                for (let w = 0; w < tileWp.length; w++) {
+                    const dx = wx - tileWp[w].x;
+                    const dz = wz - tileWp[w].z;
+                    if (dx * dx + dz * dz <= R2) { inCorridor = true; break; }
+                }
+                const mult = inCorridor ? 1.0 : FOCUS_DIM_MULT;
+                colArr2[i * 3]     = origSrc[i * 3]     * mult;
+                colArr2[i * 3 + 1] = origSrc[i * 3 + 1] * mult;
+                colArr2[i * 3 + 2] = origSrc[i * 3 + 2] * mult;
             }
             colorAttr.needsUpdate = true;
-            return;
         }
 
-        for (let i = 0; i < count; i++) {
-            if (entry.streamIndices && entry.streamIndices.has(i)) continue;
-            const wx = posArr[i * 3];
-            const wz = posArr[i * 3 + 2];
-
-            let inCorridor = false;
-            for (let w = 0; w < tileWp.length; w++) {
-                const dx = wx - tileWp[w].x;
-                const dz = wz - tileWp[w].z;
-                if (dx * dx + dz * dz <= R2) { inCorridor = true; break; }
-            }
-
-            const mult = inCorridor ? 1.0 : FOCUS_DIM_MULT;
-            colArr2[i * 3]     = entry.origColors[i * 3]     * mult;
-            colArr2[i * 3 + 1] = entry.origColors[i * 3 + 1] * mult;
-            colArr2[i * 3 + 2] = entry.origColors[i * 3 + 2] * mult;
+        if (entry.lines && entry.origLineColors) {
+            dimGeo(entry.lines.geometry, entry.origLineColors);
         }
-        colorAttr.needsUpdate = true;
+        if (entry.points && entry.origColors) {
+            dimGeo(entry.points.geometry, entry.origColors);
+        }
     }
 
     // Process tiles in async batches so the render loop stays alive
@@ -2188,14 +2097,22 @@
     }
 
     function clearFocusModeAll() {
-        for (const [key, entry] of tileCache.entries()) {
-            if (!entry.points || !entry.origColors || !entry.fadeComplete) continue;
-            const geo = entry.points.geometry;
-            const colorAttr = geo.getAttribute('color');
-            const arr = colorAttr.array;
-            const src = entry.origColors;
-            for (let j = 0; j < arr.length; j++) arr[j] = src[j];
-            colorAttr.needsUpdate = true;
+        for (const [, entry] of tileCache.entries()) {
+            if (!entry.fadeComplete) continue;
+            if (entry.lines && entry.origLineColors) {
+                const ca = entry.lines.geometry.getAttribute('color');
+                const arr = ca.array;
+                const src = entry.origLineColors;
+                for (let j = 0; j < arr.length; j++) arr[j] = src[j];
+                ca.needsUpdate = true;
+            }
+            if (entry.points && entry.origColors) {
+                const ca = entry.points.geometry.getAttribute('color');
+                const arr = ca.array;
+                const src = entry.origColors;
+                for (let j = 0; j < arr.length; j++) arr[j] = src[j];
+                ca.needsUpdate = true;
+            }
         }
     }
 
@@ -2414,59 +2331,18 @@
         regenActive = true;
         regenBtn.disabled = true;
 
-        const readyEntries = [...tileCache.entries()].filter(([, e]) => e.points && e.fadeComplete && e.origY);
-        if (readyEntries.length === 0) { regenActive = false; regenBtn.disabled = false; return; }
-
-        // Stagger tile start times slightly so they don't all pop at once
-        readyEntries.forEach(([, entry], i) => {
-            entry.regenStartTime = performance.now() + i * 120; // 120ms per tile stagger
-        });
-
-        // Re-enable button after longest animation completes
+        // Buildings are now wireframe lines -- just clear any pending regen state
+        // so the button click feels responsive, then re-enable immediately
         setTimeout(() => {
             regenActive = false;
             regenBtn.disabled = false;
-        }, REGEN_DURATION + readyEntries.length * 120 + 200);
+        }, 500);
     }
 
     function updateRegenAnimation() {
-        const now = performance.now();
+        // Regen bubble-up removed for wireframe buildings -- no-op
         for (const entry of tileCache.values()) {
-            if (!entry.regenStartTime || !entry.points || !entry.origY) continue;
-            const elapsed = now - entry.regenStartTime;
-            if (elapsed < 0) continue; // stagger delay not reached yet
-
-            const posAttr = entry.points.geometry.getAttribute('position');
-            const posArr = posAttr.array;
-            const count = entry.pointCount;
-
-            if (elapsed >= REGEN_DURATION) {
-                // Animation done -- restore exact original Y for all non-stream points
-                for (let i = 0; i < count; i++) {
-                    if (entry.streamIndices && entry.streamIndices.has(i)) continue;
-                    posArr[i * 3 + 1] = entry.origY[i];
-                }
-                posAttr.needsUpdate = true;
-                entry.regenStartTime = null;
-                continue;
-            }
-
-            // Bubble-up: center points rise first, outer points lag
-            for (let i = 0; i < count; i++) {
-                if (entry.streamIndices && entry.streamIndices.has(i)) continue;
-                const targetY = entry.origY[i];
-                const fromY = targetY > 0.5 ? -2.0 : targetY;
-                const px = posArr[i * 3];
-                const pz = posArr[i * 3 + 2];
-                const dx = px - (entry.tileCenterX || 0);
-                const dz = pz - (entry.tileCenterZ || 0);
-                const normDist = Math.min(Math.sqrt(dx * dx + dz * dz) / (entry.tileRadius || 350), 1.0);
-                const pointDelay = normDist * 0.4;
-                const localRaw = Math.max(0, (elapsed / REGEN_DURATION) - pointDelay) / (1.0 - pointDelay);
-                const localT = 1 - Math.pow(1 - Math.min(localRaw, 1.0), 3);
-                posArr[i * 3 + 1] = fromY + localT * (targetY - fromY);
-            }
-            posAttr.needsUpdate = true;
+            if (entry.regenStartTime) entry.regenStartTime = null;
         }
     }
 
@@ -2500,22 +2376,27 @@
     // Apply LOD factor to all tile colors (batch, direct Float32Array writes)
     function applyLODToTiles(factor) {
         for (const entry of tileCache.values()) {
-            if (!entry.points || !entry.origColors || !entry.fadeComplete) continue;
-            const colorAttr = entry.points.geometry.getAttribute('color');
-            const arr = colorAttr.array;
-            const src = entry.origColors;
-            const len = arr.length;
+            if (!entry.fadeComplete) continue;
             if (factor <= 0) {
-                entry.points.visible = false;
+                if (entry.lines) entry.lines.visible = false;
+                if (entry.points) entry.points.visible = false;
             } else {
-                entry.points.visible = true;
-                for (let j = 0; j < len / 3; j++) {
-                    if (entry.streamIndices && entry.streamIndices.has(j)) continue;
-                    arr[j*3]   = src[j*3]   * factor;
-                    arr[j*3+1] = src[j*3+1] * factor;
-                    arr[j*3+2] = src[j*3+2] * factor;
+                if (entry.lines && entry.origLineColors) {
+                    entry.lines.visible = true;
+                    const ca = entry.lines.geometry.getAttribute('color');
+                    const arr = ca.array;
+                    const src = entry.origLineColors;
+                    for (let j = 0; j < arr.length; j++) arr[j] = src[j] * factor;
+                    ca.needsUpdate = true;
                 }
-                colorAttr.needsUpdate = true;
+                if (entry.points && entry.origColors) {
+                    entry.points.visible = true;
+                    const ca = entry.points.geometry.getAttribute('color');
+                    const arr = ca.array;
+                    const src = entry.origColors;
+                    for (let j = 0; j < arr.length; j++) arr[j] = src[j] * factor;
+                    ca.needsUpdate = true;
+                }
             }
         }
     }
@@ -2602,6 +2483,7 @@
         if (!surveillanceOn) {
             // Restore tile colors/visibility (skip if route focus mode is active)
             for (const entry of tileCache.values()) {
+                if (entry.lines) entry.lines.visible = true;
                 if (entry.points) entry.points.visible = true;
             }
             if (!routeState.active) {
@@ -4144,29 +4026,46 @@
 
         // ── Tile fade-in animation ─────────────────────────────────────────────
         for (const [key, entry] of tileCache.entries()) {
-            if (entry.fadeComplete || !entry.points || !entry.origColors) continue;
+            if (entry.fadeComplete) continue;
             const elapsed = nowMs - entry.loadStartTime;
             const lerpT = Math.min(elapsed / TILE_FADE_DURATION, 1.0);
-            const colorAttr = entry.points.geometry.getAttribute('color');
-            const arr = colorAttr.array;
-            const src = entry.origColors;
-            const len = arr.length;
-            for (let j = 0; j < len; j++) {
-                arr[j] = src[j] * lerpT;
+
+            if (entry.lines && entry.origLineColors) {
+                const ca = entry.lines.geometry.getAttribute('color');
+                const arr = ca.array;
+                const src = entry.origLineColors;
+                for (let j = 0; j < arr.length; j++) arr[j] = src[j] * lerpT;
+                ca.needsUpdate = true;
             }
-            colorAttr.needsUpdate = true;
+            if (entry.points && entry.origColors) {
+                const ca = entry.points.geometry.getAttribute('color');
+                const arr = ca.array;
+                const src = entry.origColors;
+                for (let j = 0; j < arr.length; j++) arr[j] = src[j] * lerpT;
+                ca.needsUpdate = true;
+            }
+
             if (lerpT >= 1.0) {
                 entry.fadeComplete = true;
                 // Apply LOD factor to newly faded-in tile
                 if (surveillanceOn && currentLOD !== 'street') {
                     const lodFactor = currentLOD === 'district' ? 0.4 : 0.0;
                     if (lodFactor <= 0) {
-                        entry.points.visible = false;
+                        if (entry.lines) entry.lines.visible = false;
+                        if (entry.points) entry.points.visible = false;
                     } else {
-                        const ca = entry.points.geometry.getAttribute('color');
-                        const ar = ca.array, sr = entry.origColors;
-                        for (let j = 0; j < ar.length; j++) ar[j] = sr[j] * lodFactor;
-                        ca.needsUpdate = true;
+                        if (entry.lines && entry.origLineColors) {
+                            const ca = entry.lines.geometry.getAttribute('color');
+                            const ar = ca.array, sr = entry.origLineColors;
+                            for (let j = 0; j < ar.length; j++) ar[j] = sr[j] * lodFactor;
+                            ca.needsUpdate = true;
+                        }
+                        if (entry.points && entry.origColors) {
+                            const ca = entry.points.geometry.getAttribute('color');
+                            const ar = ca.array, sr = entry.origColors;
+                            for (let j = 0; j < ar.length; j++) ar[j] = sr[j] * lodFactor;
+                            ca.needsUpdate = true;
+                        }
                     }
                 }
                 // If route is active, re-apply focus mode at full brightness
