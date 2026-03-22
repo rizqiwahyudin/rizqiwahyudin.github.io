@@ -196,10 +196,11 @@ let _groundOrigY   = null;  // Float32Array of base Y values for wave animation
 let _groundTime    = 0;     // animation clock in seconds
 
 // chunked build state
-let _buildChunks = [];         // array of element arrays
+let _buildChunks = [];         // array of way elements
 let _buildChunkIdx = 0;
-let _buildPositions = [];      // accumulated Float32 data
+let _buildPositions = [];      // accumulated line vertex data
 let _buildColors = [];
+let _buildNodes = {};          // node id -> {lat, lon}
 let _buildTotal = 0;
 let _isBuildingChunks = false;
 let _minX = Infinity, _maxX = -Infinity, _minZ = Infinity, _maxZ = -Infinity, _maxY = 0;
@@ -360,9 +361,8 @@ async function fetchBuildings(south, north, west, east) {
     const query = `[out:json][timeout:60];
 (
   way["building"](${south},${west},${north},${east});
-  relation["building"]["type"="multipolygon"](${south},${west},${north},${east});
 );
-out center tags;`;
+out body;>;out skel qt;`;
 
     const encoded = 'data=' + encodeURIComponent(query);
 
@@ -425,6 +425,7 @@ function resetBuildState() {
     _buildChunkIdx = 0;
     _buildPositions = [];
     _buildColors = [];
+    _buildNodes = {};
     _buildTotal = 0;
     _isBuildingChunks = false;
     _minX = Infinity; _maxX = -Infinity;
@@ -432,45 +433,61 @@ function resetBuildState() {
     _maxY = 0;
 }
 
-// split elements into fixed-size chunks for frame-paced processing
-function chunkElements(elements) {
+// split way elements into fixed-size chunks for frame-paced processing
+function chunkElements(ways) {
     const chunks = [];
-    for (let i = 0; i < elements.length; i += CHUNK_SIZE) {
-        chunks.push(elements.slice(i, i + CHUNK_SIZE));
+    for (let i = 0; i < ways.length; i += CHUNK_SIZE) {
+        chunks.push(ways.slice(i, i + CHUNK_SIZE));
     }
     return chunks;
 }
 
 function processChunk(chunk) {
     for (const el of chunk) {
-        if (!el.center) continue;
-        const { x, z } = latLonToWorld(el.center.lat, el.center.lon);
+        if (el.type !== 'way' || !el.tags || !el.tags.building) continue;
+        if (!el.nodes || el.nodes.length < 3) continue;
 
-        const levels = parseInt(el.tags && el.tags['building:levels'], 10);
+        // Build footprint in world coords
+        const footprint = [];
+        for (const nid of el.nodes) {
+            const nd = _buildNodes[nid];
+            if (!nd) continue;
+            footprint.push(latLonToWorld(nd.lat, nd.lon));
+        }
+        if (footprint.length < 3) continue;
+
+        const levels = parseInt(el.tags['building:levels'], 10);
         const heightM = (isFinite(levels) && levels > 0) ? levels * 3.5 : 8;
-
-        // Normalize against city's own distribution so short cities get full color range
         const normalizedH = _heightP95 > _heightP5
             ? Math.max(0, Math.min(1, (heightM - _heightP5) / (_heightP95 - _heightP5)))
             : 0.5;
 
-        // One vertical line per building: bottom vertex + top vertex
-        const colHeight = heightM * worldScale * HEIGHT_EXAGGERATION;
-        // Bottom: dark teal
-        const [rb, gb, bb] = columnColor(normalizedH, 0.0);
-        // Top: bright cyan
-        const [rt, gt, bt] = columnColor(normalizedH, 1.0);
-        _buildPositions.push(x, 0,         z);  // bottom
-        _buildColors.push(rb, gb, bb);
-        _buildPositions.push(x, colHeight, z);  // top
-        _buildColors.push(rt, gt, bt);
+        const h = heightM * worldScale * HEIGHT_EXAGGERATION;
+        const [rb, gb, bb] = columnColor(normalizedH, 0.0); // base color
+        const [rt, gt, bt] = columnColor(normalizedH, 1.0); // top color
 
-        if (x < _minX) _minX = x;
-        if (x > _maxX) _maxX = x;
-        if (z < _minZ) _minZ = z;
-        if (z > _maxZ) _maxZ = z;
-        const topY = colHeight;
-        if (topY > _maxY) _maxY = topY;
+        // Roof loop + base loop + vertical corner lines
+        for (let i = 0; i < footprint.length - 1; i++) {
+            const a = footprint[i];
+            const b = footprint[i + 1];
+
+            // Roof edge
+            _buildPositions.push(a.x, h, a.z,  b.x, h, b.z);
+            _buildColors.push(rt, gt, bt,  rt, gt, bt);
+
+            // Base edge
+            _buildPositions.push(a.x, 0, a.z,  b.x, 0, b.z);
+            _buildColors.push(rb, gb, bb,  rb, gb, bb);
+
+            // Vertical line at each corner
+            _buildPositions.push(a.x, 0, a.z,  a.x, h, a.z);
+            _buildColors.push(rb, gb, bb,  rt, gt, bt);
+
+            // Track bounds from roof corners
+            if (a.x < _minX) _minX = a.x; if (a.x > _maxX) _maxX = a.x;
+            if (a.z < _minZ) _minZ = a.z; if (a.z > _maxZ) _maxZ = a.z;
+        }
+        if (h > _maxY) _maxY = h;
     }
 }
 
@@ -623,11 +640,17 @@ async function loadCity(query) {
             return;
         }
 
-        _buildTotal = elements.length;
+        // Index nodes, separate ways
+        for (const el of elements) {
+            if (el.type === 'node') _buildNodes[el.id] = { lat: el.lat, lon: el.lon };
+        }
+        const ways = elements.filter(el => el.type === 'way' && el.tags && el.tags.building);
+
+        _buildTotal = ways.length;
         _pendingCityName = cityGeo.displayName;
 
         // Compute height distribution before chunking so processChunk can normalize colors
-        const allHeights = elements.map(el => {
+        const allHeights = ways.map(el => {
             const levels = parseInt(el.tags && el.tags['building:levels'], 10);
             return (isFinite(levels) && levels > 0) ? levels * 3.5 : 8;
         });
@@ -635,15 +658,12 @@ async function loadCity(query) {
         _heightP5  = allHeights[Math.floor(allHeights.length * 0.05)];
         _heightP95 = allHeights[Math.floor(allHeights.length * 0.95)];
 
-        if (elements.length <= CHUNK_SIZE) {
-            // small city: build synchronously then finalize
-            processChunk(elements);
+        if (ways.length <= CHUNK_SIZE) {
+            processChunk(ways);
             finalizePointCloud(cityGeo.displayName, _buildTotal);
             loadBtn.disabled = false;
         } else {
-            // large city: spread across animation frames.
-            // finalizePointCloud re-enables the button when chunks finish.
-            _buildChunks = chunkElements(elements);
+            _buildChunks = chunkElements(ways);
             _buildChunkIdx = 0;
             _isBuildingChunks = true;
             setStatus('rendering 0 / ' + _buildTotal.toLocaleString() + '...');
@@ -693,7 +713,7 @@ function animate() {
 
     // Animate ground wave so empty areas feel alive
     if (groundPoints && _groundOrigY) {
-        _groundTime += 0.008;
+        _groundTime += 0.025;
         const posAttr  = groundPoints.geometry.getAttribute('position');
         const posArr   = posAttr.array;
         const colAttr  = groundPoints.geometry.getAttribute('color');
