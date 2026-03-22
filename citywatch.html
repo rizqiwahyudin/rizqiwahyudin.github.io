@@ -2846,8 +2846,8 @@
         const lon = smoothLon !== null ? smoothLon : 24.1052;
         // latLonToWorld needs worldOriginLat set -- skip if not ready
         if (worldOriginLat === null) return;
-        const D = 1.1; // ~120km radius
-        // Route through VPS proxy (OAuth2 authenticated, higher rate limits)
+        const D = 2.5; // ~275km radius -- wide enough to see nearby traffic even at cruise altitude
+        // Route through VPS proxy (adsb.lol, no auth, global)
         const url = `${VPS_URL}/proxy/aircraft?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&r=${D}`;
         try {
             const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
