@@ -167,15 +167,14 @@ const OVERPASS_MIRRORS = [
 const CHUNK_SIZE = 5000;        // buildings per animation frame during build
 const MAX_BBOX_DIAG_M = 120000; // clamp large cities to this diagonal
 const CLAMP_DIAG_M = 80000;     // target diagonal when clamping
-const POINT_SIZE = 3.0;
 const HEIGHT_EXAGGERATION = 6;  // vertical scale multiplier so skylines read at city scale
 const GROUND_GRID_SPACING = 18; // world units between ground points (tuned after city loads)
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let scene, camera, renderer, controls;
-let pointCloud = null;         // current THREE.Points
-let pointMaterial = null;
+let buildingLines = null;      // current THREE.LineSegments
+let buildingLineMaterial = null;
 let aspect = window.innerWidth / window.innerHeight;
 
 // coordinate system origin, set per city load
@@ -402,12 +401,12 @@ out center tags;`;
 // ─── Geometry ────────────────────────────────────────────────────────────────
 
 function clearPointCloud() {
-    if (pointCloud) {
-        scene.remove(pointCloud);
-        pointCloud.geometry.dispose();
-        if (pointMaterial) pointMaterial.dispose();
-        pointCloud = null;
-        pointMaterial = null;
+    if (buildingLines) {
+        scene.remove(buildingLines);
+        buildingLines.geometry.dispose();
+        if (buildingLineMaterial) buildingLineMaterial.dispose();
+        buildingLines = null;
+        buildingLineMaterial = null;
     }
     // Clear ground plane on city reset so stale geometry doesn't bleed into the next load
     if (groundPoints) {
@@ -455,18 +454,16 @@ function processChunk(chunk) {
             ? Math.max(0, Math.min(1, (heightM - _heightP5) / (_heightP95 - _heightP5)))
             : 0.5;
 
-        // Points per column scale with height: minimum 2 so even squat buildings have presence
-        const PTS_PER_M = 0.15;
-        const colPts   = Math.max(2, Math.round(heightM * PTS_PER_M));
+        // One vertical line per building: bottom vertex + top vertex
         const colHeight = heightM * worldScale * HEIGHT_EXAGGERATION;
-        const step     = colPts > 1 ? colHeight / (colPts - 1) : 0;
-
-        for (let p = 0; p < colPts; p++) {
-            const py       = p * step;
-            const verticalT = colPts > 1 ? p / (colPts - 1) : 1;
-            _buildPositions.push(x, py, z);
-            _buildColors.push(...columnColor(normalizedH, verticalT));
-        }
+        // Bottom: dark teal
+        const [rb, gb, bb] = columnColor(normalizedH, 0.0);
+        // Top: bright cyan
+        const [rt, gt, bt] = columnColor(normalizedH, 1.0);
+        _buildPositions.push(x, 0,         z);  // bottom
+        _buildColors.push(rb, gb, bb);
+        _buildPositions.push(x, colHeight, z);  // top
+        _buildColors.push(rt, gt, bt);
 
         if (x < _minX) _minX = x;
         if (x > _maxX) _maxX = x;
@@ -485,14 +482,10 @@ function finalizePointCloud(cityName, totalBuildings) {
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
 
-    pointMaterial = new THREE.PointsMaterial({
-        size: POINT_SIZE,
-        sizeAttenuation: true,
-        vertexColors: true,
-    });
+    buildingLineMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
 
-    pointCloud = new THREE.Points(geo, pointMaterial);
-    scene.add(pointCloud);
+    buildingLines = new THREE.LineSegments(geo, buildingLineMaterial);
+    scene.add(buildingLines);
 
     fitCamera();
     buildGroundPlane(_minX, _maxX, _minZ, _maxZ);
