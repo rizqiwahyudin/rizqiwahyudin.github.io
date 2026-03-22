@@ -623,7 +623,7 @@
     <div id="gps-override-overlay">
         <div id="gps-override-dialog">
             <div id="gps-override-label">pin location</div>
-            <input id="gps-override-input" type="text" placeholder="lat, lon" spellcheck="false" autocomplete="off" inputmode="decimal" />
+            <input id="gps-override-input" type="text" placeholder="city name or lat, lon" spellcheck="false" autocomplete="off" />
             <div id="gps-override-actions">
                 <button id="gps-override-confirm">pin</button>
                 <button id="gps-override-cancel">cancel</button>
@@ -1090,21 +1090,39 @@
         gpsOverrideOverlay.classList.remove('visible');
     }
 
-    function tryApplyOverride() {
-        const parts = gpsOverrideInput.value.split(',').map(s => parseFloat(s.trim()));
-        if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
-            gpsOverrideInput.style.borderColor = 'rgba(255,80,80,0.7)';
-            setTimeout(() => { gpsOverrideInput.style.borderColor = ''; }, 1000);
-            return;
+    async function tryApplyOverride() {
+        const raw = gpsOverrideInput.value.trim();
+
+        // Try lat,lon format first
+        const parts = raw.split(',').map(s => parseFloat(s.trim()));
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            const [lat, lon] = parts;
+            if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                applyGpsOverride(lat, lon);
+                closeOverrideOverlay();
+                return;
+            }
         }
-        const [lat, lon] = parts;
-        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+
+        // Otherwise geocode as city/place name
+        gpsOverrideInput.style.opacity = '0.5';
+        gpsConfirmBtn.disabled = true;
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(raw)}&format=json&limit=1`, {
+                headers: { 'Accept-Language': 'en' }
+            });
+            const results = await res.json();
+            if (!results || results.length === 0) throw new Error('not found');
+            const { lat, lon } = results[0];
+            applyGpsOverride(parseFloat(lat), parseFloat(lon));
+            closeOverrideOverlay();
+        } catch (err) {
             gpsOverrideInput.style.borderColor = 'rgba(255,80,80,0.7)';
-            setTimeout(() => { gpsOverrideInput.style.borderColor = ''; }, 1000);
-            return;
+            setTimeout(() => { gpsOverrideInput.style.borderColor = ''; }, 1500);
+        } finally {
+            gpsOverrideInput.style.opacity = '';
+            gpsConfirmBtn.disabled = false;
         }
-        applyGpsOverride(lat, lon);
-        closeOverrideOverlay();
     }
 
     gpsOverrideBtn.addEventListener('click', openOverrideOverlay);
@@ -2845,7 +2863,7 @@
     async function fetchAircraft() {
         // Use GPS if available, fallback to Riga center
         const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const lon = smoothLon !== null ? smoothLon : 24.1052;
+        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
         // latLonToWorld needs worldOriginLat set -- skip if not ready
         if (worldOriginLat === null) return;
         const D = 2.5; // ~275km radius -- wide enough to see nearby traffic even at cruise altitude
