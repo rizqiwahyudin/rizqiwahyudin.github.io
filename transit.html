@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>transit // city explorer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #0a0a12;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            display: block;
+        }
+
+        /* Top bar */
+        #topbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 50px;
+            background: rgba(10, 10, 18, 0.72);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 18px;
+            z-index: 20;
+        }
+
+        #title {
+            font-size: 13px;
+            font-variant: small-caps;
+            letter-spacing: 3px;
+            color: rgba(255, 255, 255, 0.28);
+            flex: 0 0 auto;
+            min-width: 90px;
+        }
+
+        #search-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+
+        #city-input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 4px;
+            color: #e0e0f0;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            letter-spacing: 1px;
+            padding: 6px 12px;
+            width: 220px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        #city-input::placeholder {
+            color: rgba(255, 255, 255, 0.22);
+        }
+
+        #city-input:focus {
+            border-color: rgba(0, 255, 255, 0.35);
+        }
+
+        #load-btn {
+            background: rgba(0, 255, 255, 0.08);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 4px;
+            color: #00ffff;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+            padding: 6px 14px;
+            cursor: pointer;
+            text-transform: lowercase;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        #load-btn:hover {
+            background: rgba(0, 255, 255, 0.15);
+            border-color: rgba(0, 255, 255, 0.55);
+        }
+
+        #load-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        #hud {
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: rgba(255, 255, 255, 0.30);
+            text-align: right;
+            flex: 0 0 auto;
+            min-width: 200px;
+        }
+
+        #hud span {
+            color: #00ffff;
+        }
+
+        /* Bottom-left status line */
+        #status {
+            position: fixed;
+            bottom: 18px;
+            left: 18px;
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: rgba(255, 255, 255, 0.38);
+            font-family: 'Courier New', Courier, monospace;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        #status.error {
+            color: rgba(255, 80, 80, 0.80);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Top bar -->
+    <div id="topbar">
+        <div id="title">transit</div>
+
+        <div id="search-group">
+            <input id="city-input" type="text" placeholder="enter a city..." autocomplete="off" spellcheck="false" />
+            <button id="load-btn">load</button>
+        </div>
+
+        <div id="hud"></div>
+    </div>
+
+    <!-- Status line -->
+    <div id="status"></div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+'use strict';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const OVERPASS_MIRRORS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.openstreetmap.ru/api/interpreter',
+];
+
+const CHUNK_SIZE = 5000;       // buildings per animation frame during build
+const MAX_BBOX_DIAG_M = 120000; // clamp large cities to this diagonal
+const CLAMP_DIAG_M = 80000;    // target diagonal when clamping
+const POINT_SIZE = 1.5;
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let scene, camera, renderer, controls;
+let pointCloud = null;         // current THREE.Points
+let pointMaterial = null;
+let aspect = window.innerWidth / window.innerHeight;
+
+// coordinate system origin, set per city load
+let originLat = 0;
+let originLon = 0;
+let worldScale = 1;
+
+// overpass mirror rotation
+let _overpassIdx = 0;
+
+// chunked build state
+let _buildChunks = [];         // array of element arrays
+let _buildChunkIdx = 0;
+let _buildPositions = [];      // accumulated Float32 data
+let _buildColors = [];
+let _buildTotal = 0;
+let _isBuildingChunks = false;
+let _minX = Infinity, _maxX = -Infinity, _minZ = Infinity, _maxZ = -Infinity;
+
+// ─── DOM refs ─────────────────────────────────────────────────────────────────
+
+const hudEl     = document.getElementById('hud');
+const statusEl  = document.getElementById('status');
+const inputEl   = document.getElementById('city-input');
+const loadBtn   = document.getElementById('load-btn');
+
+// ─── Scene setup ─────────────────────────────────────────────────────────────
+
+function initScene() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a12);
+
+    const CAM_SIZE = 1200;
+    camera = new THREE.OrthographicCamera(
+        -CAM_SIZE * aspect, CAM_SIZE * aspect,
+        CAM_SIZE, -CAM_SIZE,
+        1, 100000
+    );
+    camera.position.set(0, 1800, 1200);
+    camera.lookAt(0, 0, 0);
+
+    renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.screenSpacePanning = true;
+    controls.minZoom = 0.05;
+    controls.maxZoom = 50;
+
+    window.addEventListener('resize', onResize);
+}
+
+function onResize() {
+    aspect = window.innerWidth / window.innerHeight;
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    // preserve current frustum half-size on resize
+    const half = camera.top;
+    camera.left   = -half * aspect;
+    camera.right  =  half * aspect;
+    camera.updateProjectionMatrix();
+}
+
+// ─── Coordinate system ───────────────────────────────────────────────────────
+
+function haversineM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+        * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function latLonToWorld(lat, lon) {
+    const dLon = (lon - originLon) * Math.PI / 180;
+    const dLat = (lat - originLat) * Math.PI / 180;
+    const x = dLon * Math.cos(originLat * Math.PI / 180) * 6371000 * worldScale;
+    const z = -dLat * 6371000 * worldScale;
+    return { x, z };
+}
+
+// ─── Color mapping ────────────────────────────────────────────────────────────
+
+function heightColor(heightM) {
+    const t = Math.min(heightM / 60, 1.0);
+    return [0.05 + t * 0.65, 0.15 + t * 0.80, 0.20 + t * 0.80];
+}
+
+// ─── Data pipeline ───────────────────────────────────────────────────────────
+
+function nextOverpassURL() {
+    return OVERPASS_MIRRORS[(_overpassIdx++) % OVERPASS_MIRRORS.length];
+}
+
+async function geocodeCity(query) {
+    const url = 'https://nominatim.openstreetmap.org/search?'
+        + new URLSearchParams({
+            q: query,
+            format: 'json',
+            limit: '1',
+            featuretype: 'city',
+        });
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+
+    const res = await fetch(url, {
+        signal: ctrl.signal,
+        headers: {
+            'User-Agent': 'transit-explorer/1.0',
+            'Accept-Language': 'en',
+        },
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) throw new Error('Nominatim returned ' + res.status);
+
+    const data = await res.json();
+    if (!data.length) throw new Error('city not found');
+
+    const item = data[0];
+    const bb = item.boundingbox; // [south, north, west, east]
+    let south = parseFloat(bb[0]);
+    let north = parseFloat(bb[1]);
+    let west  = parseFloat(bb[2]);
+    let east  = parseFloat(bb[3]);
+    const lat = parseFloat(item.lat);
+    const lon = parseFloat(item.lon);
+    let displayName = item.display_name;
+
+    // clamp oversized bounding boxes (avoids massive overpass queries)
+    const diagM = haversineM(south, west, north, east);
+    if (diagM > MAX_BBOX_DIAG_M) {
+        const ratio = CLAMP_DIAG_M / diagM;
+        const dLat = (north - south) * ratio / 2;
+        const dLon = (east - west) * ratio / 2;
+        const centerLat = (south + north) / 2;
+        const centerLon = (west + east) / 2;
+        south = centerLat - dLat;
+        north = centerLat + dLat;
+        west  = centerLon - dLon;
+        east  = centerLon + dLon;
+        displayName += ' (central area)';
+    }
+
+    return { lat, lon, south, north, west, east, displayName };
+}
+
+async function fetchBuildings(south, north, west, east) {
+    const query = `[out:json][timeout:60];
+(
+  way["building"](${south},${west},${north},${east});
+  relation["building"]["type"="multipolygon"](${south},${west},${north},${east});
+);
+out center tags;`;
+
+    const encoded = 'data=' + encodeURIComponent(query);
+
+    // try each mirror until one responds
+    for (let attempt = 0; attempt < OVERPASS_MIRRORS.length; attempt++) {
+        const url = nextOverpassURL();
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 75000);
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                body: encoded,
+                signal: ctrl.signal,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            });
+            clearTimeout(timer);
+
+            if (!res.ok) {
+                setStatus('mirror ' + url.split('/')[2] + ' failed (' + res.status + '), trying next...');
+                continue;
+            }
+
+            const data = await res.json();
+            return data.elements || [];
+
+        } catch (err) {
+            clearTimeout(timer);
+            setStatus('mirror ' + url.split('/')[2] + ' unreachable, trying next...');
+        }
+    }
+
+    throw new Error('all overpass mirrors failed');
+}
+
+// ─── Geometry ────────────────────────────────────────────────────────────────
+
+function clearPointCloud() {
+    if (pointCloud) {
+        scene.remove(pointCloud);
+        pointCloud.geometry.dispose();
+        if (pointMaterial) pointMaterial.dispose();
+        pointCloud = null;
+        pointMaterial = null;
+    }
+}
+
+function resetBuildState() {
+    _buildChunks = [];
+    _buildChunkIdx = 0;
+    _buildPositions = [];
+    _buildColors = [];
+    _buildTotal = 0;
+    _isBuildingChunks = false;
+    _minX = Infinity; _maxX = -Infinity;
+    _minZ = Infinity; _maxZ = -Infinity;
+}
+
+// split elements into fixed-size chunks for frame-paced processing
+function chunkElements(elements) {
+    const chunks = [];
+    for (let i = 0; i < elements.length; i += CHUNK_SIZE) {
+        chunks.push(elements.slice(i, i + CHUNK_SIZE));
+    }
+    return chunks;
+}
+
+function processChunk(chunk) {
+    for (const el of chunk) {
+        if (!el.center) continue;
+        const { x, z } = latLonToWorld(el.center.lat, el.center.lon);
+
+        const levels = parseInt(el.tags && el.tags['building:levels'], 10);
+        const heightM = (isFinite(levels) && levels > 0) ? levels * 3.5 : 10;
+
+        const [r, g, b] = heightColor(heightM);
+
+        _buildPositions.push(x, 0, z);
+        _buildColors.push(r, g, b);
+
+        if (x < _minX) _minX = x;
+        if (x > _maxX) _maxX = x;
+        if (z < _minZ) _minZ = z;
+        if (z > _maxZ) _maxZ = z;
+    }
+}
+
+function finalizePointCloud(cityName, totalBuildings) {
+    const positions = new Float32Array(_buildPositions);
+    const colors    = new Float32Array(_buildColors);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+
+    pointMaterial = new THREE.PointsMaterial({
+        size: POINT_SIZE,
+        sizeAttenuation: true,
+        vertexColors: true,
+    });
+
+    pointCloud = new THREE.Points(geo, pointMaterial);
+    scene.add(pointCloud);
+
+    fitCamera();
+    hudEl.innerHTML = '<span>' + totalBuildings.toLocaleString() + '</span> buildings | ' + escapeHtml(cityName);
+    setStatus('');
+    loadBtn.disabled = false;
+}
+
+function fitCamera() {
+    if (!isFinite(_minX) || !isFinite(_maxX)) return;
+
+    // expand frustum to show city at ~80% of viewport
+    const cityRadius = Math.max(_maxX - _minX, _maxZ - _minZ) / 2 * 1.25;
+    const newHalf = cityRadius;
+
+    camera.left   = -newHalf * aspect;
+    camera.right  =  newHalf * aspect;
+    camera.top    =  newHalf;
+    camera.bottom = -newHalf;
+    camera.updateProjectionMatrix();
+
+    camera.position.set(0, newHalf * 1.5, newHalf);
+    camera.lookAt(0, 0, 0);
+    controls.target.set(0, 0, 0);
+    controls.update();
+}
+
+// ─── Chunked build loop ───────────────────────────────────────────────────────
+
+// called from the animation loop one chunk per frame
+function tickBuildChunks(cityName) {
+    if (!_isBuildingChunks) return;
+    if (_buildChunkIdx >= _buildChunks.length) {
+        _isBuildingChunks = false;
+        finalizePointCloud(cityName, _buildTotal);
+        return;
+    }
+
+    processChunk(_buildChunks[_buildChunkIdx]);
+    _buildChunkIdx++;
+
+    const done = Math.min(_buildChunkIdx * CHUNK_SIZE, _buildTotal);
+    setStatus('rendering ' + done.toLocaleString() + ' / ' + _buildTotal.toLocaleString() + '...');
+}
+
+// ─── Load orchestrator ────────────────────────────────────────────────────────
+
+// pendingCityName is shared so the animation loop can pass it to finalizePointCloud
+let _pendingCityName = '';
+
+async function loadCity(query) {
+    loadBtn.disabled = true;
+    clearPointCloud();
+    resetBuildState();
+    hudEl.textContent = '';
+    statusEl.className = '';
+
+    try {
+        setStatus('geocoding...');
+        const cityGeo = await geocodeCity(query);
+
+        originLat = cityGeo.lat;
+        originLon = cityGeo.lon;
+        const diagM = haversineM(cityGeo.south, cityGeo.west, cityGeo.north, cityGeo.east);
+        worldScale = 2000 / diagM;
+
+        setStatus('fetching buildings...');
+        const elements = await fetchBuildings(cityGeo.south, cityGeo.north, cityGeo.west, cityGeo.east);
+
+        if (!elements.length) {
+            setStatus('no buildings found for this area');
+            loadBtn.disabled = false;
+            return;
+        }
+
+        _buildTotal = elements.length;
+        _pendingCityName = cityGeo.displayName;
+
+        if (elements.length <= CHUNK_SIZE) {
+            // small city: build synchronously then finalize
+            processChunk(elements);
+            finalizePointCloud(cityGeo.displayName, _buildTotal);
+            loadBtn.disabled = false;
+        } else {
+            // large city: spread across animation frames.
+            // finalizePointCloud re-enables the button when chunks finish.
+            _buildChunks = chunkElements(elements);
+            _buildChunkIdx = 0;
+            _isBuildingChunks = true;
+            setStatus('rendering 0 / ' + _buildTotal.toLocaleString() + '...');
+        }
+
+    } catch (err) {
+        statusEl.className = 'error';
+        setStatus('error: ' + err.message);
+        loadBtn.disabled = false;
+    }
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+function setStatus(msg) {
+    statusEl.textContent = msg;
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ─── Event handlers ──────────────────────────────────────────────────────────
+
+loadBtn.addEventListener('click', () => {
+    const q = inputEl.value.trim();
+    if (q) loadCity(q);
+});
+
+inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const q = inputEl.value.trim();
+        if (q) loadCity(q);
+    }
+});
+
+// ─── Animation loop ──────────────────────────────────────────────────────────
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+
+    // advance one chunk per frame to keep UI responsive
+    if (_isBuildingChunks) {
+        tickBuildChunks(_pendingCityName);
+    }
+
+    renderer.render(scene, camera);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+initScene();
+animate();
+
+    </script>
+</body>
+</html>
