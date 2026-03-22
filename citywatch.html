@@ -1718,20 +1718,20 @@
             }
 
             function heightColor(t, worldY) {
-                const j = (Math.random() - 0.5) * 0.1;
+                const j = (Math.random() - 0.5) * 0.06;
                 let r, g, b;
-                // Ground/base: r=0.1, g=0.5, b=0.8 (dark blue-teal)
-                // Tips/top: r=0.2, g=0.8, b=1.0 (full #33ccff)
-                // Smooth linear gradient from base to tip
-                r = 0.1 + t * 0.1;
-                g = 0.5 + t * 0.3;
-                b = 0.8 + t * 0.2;
+                // Buildings are backdrop -- keep them dim so transit vehicles pop
+                // Ground/base: dark blue-teal skeleton
+                // Tips/top: slightly brighter but still subdued
+                r = 0.05 + t * 0.07;
+                g = 0.25 + t * 0.18;
+                b = 0.45 + t * 0.15;
                 // Apply time-of-day shift
                 r = r * todMult[0];
                 g = g * todMult[1];
                 b = b * todMult[2];
-                // Height-based opacity: ground points (y < 1) get multiplied by 0.45
-                const opacityMult = (worldY < 1) ? 0.45 : 1.0;
+                // Height-based opacity: ground points further dimmed
+                const opacityMult = (worldY < 1) ? 0.35 : 1.0;
                 r = r * opacityMult;
                 g = g * opacityMult;
                 b = b * opacityMult;
@@ -1821,8 +1821,8 @@
                 // This replaces random scatter -- gives clear building silhouettes instead of blobs.
                 // Stream particles: ~4% of wall points are flagged as streams
                 const streamIndices = tileStreamPoints; // reference to outer array
-                const WALL_H_STEP = 1.8;  // vertical spacing between rows (meters) -- ~floor height
-                const WALL_X_STEP = 2.0;  // horizontal spacing along each edge (meters)
+                const WALL_H_STEP = 3.5;  // vertical spacing between rows -- wider = fewer points, less clutter
+                const WALL_X_STEP = 3.5;  // horizontal spacing along each edge (meters)
                 for (let i = 0; i < footprint.length - 1; i++) {
                     const p0 = footprint[i], p1 = footprint[i + 1];
                     const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
@@ -4217,7 +4217,7 @@
 
         // ── Ground wave (shader time uniform) ─────────────────────────────────
         if (window._groundUniforms) {
-            window._groundUniforms.uTime.value = t;
+            window._groundUniforms.uTime.value = t * 2.0; // 2x roll speed
             const activeCam = cameraMode === 'followme' ? followCam :
                               cameraMode === 'anchor'   ? anchorCam : camera;
             window._groundUniforms.uCamPos.value.copy(activeCam.position);
