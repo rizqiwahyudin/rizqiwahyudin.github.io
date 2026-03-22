@@ -654,8 +654,8 @@
         _overpassMirrorIdx++;
         return url;
     }
-    const FALLBACK_LAT = 56.9496;
-    const FALLBACK_LON = 24.1052;
+    const FALLBACK_LAT = null; // no hardcoded city -- prompt user if GPS unavailable
+    const FALLBACK_LON = null;
     // VPS backend -- tile server + authenticated proxy endpoints
     const VPS_URL = CF_WORKER; // route VPS calls through CF Worker (HTTPS + cached)
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
@@ -2684,8 +2684,9 @@
 
     async function fetchAirportData() {
         // Build bbox around current GPS position (roughly 60km radius)
-        const aLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const aLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const aLat = smoothLat;
+        const aLon = smoothLon;
+        if (aLat === null || aLon === null) return;
         const d = 0.55; // ~60km in degrees
         const bbox = `${(aLat - d).toFixed(4)},${(aLon - d * 1.6).toFixed(4)},${(aLat + d).toFixed(4)},${(aLon + d * 1.6).toFixed(4)}`;
         const query = `[out:json][timeout:30];(way["aeroway"~"^(runway|taxiway|apron|terminal)$"](${bbox}););out body;>;out skel qt;`;
@@ -2862,8 +2863,8 @@
 
     async function fetchAircraft() {
         // Use GPS if available, fallback to Riga center
-        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const lat = smoothLat;
+        const lon = smoothLon;
         // latLonToWorld needs worldOriginLat set -- skip if not ready
         if (worldOriginLat === null) return;
         const D = 2.5; // ~275km radius -- wide enough to see nearby traffic even at cruise altitude
@@ -2998,8 +2999,9 @@
     // errored tiles never get retried. This ticker re-triggers the tile manager
     // every 20s so retries fire even without GPS movement.
     setInterval(() => {
-        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const lat = smoothLat;
+        const lon = smoothLon;
+        if (lat === null || lon === null) return;
         // Only retry if there are actually errored tiles with expired backoff
         const hasRetriable = [...tileCache.values()].some(e => e.error && Date.now() > e.retryAt);
         if (hasRetriable) updateTileManager(lat, lon);
@@ -3069,8 +3071,9 @@
     }
 
     async function fetchWind() {
-        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const lat = smoothLat;
+        const lon = smoothLon;
+        if (lat === null || lon === null) return;
         const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms`;
         try {
             const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -3283,8 +3286,8 @@
     async function fetchSurveillanceCameras() {
         if (worldOriginLat === null) return;
 
-        const lat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const lon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const lat = smoothLat;
+        const lon = smoothLon;
         const d = 0.06;
         const bbox = `${(lat - d).toFixed(4)},${(lon - d * 1.8).toFixed(4)},${(lat + d).toFixed(4)},${(lon + d * 1.8).toFixed(4)}`;
         const query = `[out:json][timeout:25];node["man_made"="surveillance"](${bbox});out body;`;
@@ -3481,15 +3484,10 @@
         // Only act on first error -- browser may fire this repeatedly
         if (_gpsDeniedTimer !== null) return;
         _gpsDeniedTimer = setTimeout(() => { _gpsDeniedTimer = null; }, 60000); // 1min cooldown
-        // Fall back to Riga silently if we already have a position
+        // GPS denied/failed -- ask the user where they are
         if (smoothLat === null) {
-            smoothLat = FALLBACK_LAT;
-            smoothLon = FALLBACK_LON;
-            if (worldOriginLat === null) worldOriginFromFallback = true;
-            updateCoordsHUD();
-            updateTileManager(smoothLat, smoothLon);
+            openOverrideOverlay();
         }
-        // gpsError stays null -- don't clutter HUD when fallback works fine
     }
 
     // ─── GPS Override: resetScene, apply, revert ─────────────────────────────
@@ -3629,16 +3627,10 @@
             timeout: 30000,   // 30s to respond to permission prompt
             maximumAge: 5000,
         });
-        // If GPS hasn't reported in 12s, load fallback tiles so the map is visible
-        // (gives user time to respond to the browser permission prompt)
+        // If GPS hasn't reported in 12s, ask the user where they are
         setTimeout(() => {
             if (smoothLat === null) {
-                console.log('GPS timeout -- loading fallback tiles for Riga');
-                smoothLat = FALLBACK_LAT;
-                smoothLon = FALLBACK_LON;
-                // Mark that the world origin will be set from fallback
-                if (worldOriginLat === null) worldOriginFromFallback = true;
-                updateTileManager(FALLBACK_LAT, FALLBACK_LON);
+                openOverrideOverlay();
             }
         }, 12000);
     } else {
@@ -3816,8 +3808,9 @@
         }
 
         // Use current GPS position as origin
-        const originLat = smoothLat !== null ? smoothLat : FALLBACK_LAT;
-        const originLon = smoothLon !== null ? smoothLon : FALLBACK_LON;
+        const originLat = smoothLat;
+        const originLon = smoothLon;
+        if (originLat === null || originLon === null) { routeStatus.textContent = 'set location first'; routeBtn.disabled = false; return; }
 
         routeStatus.textContent = 'geocoding...';
         routeBtn.disabled = true;
