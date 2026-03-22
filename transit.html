@@ -164,10 +164,11 @@ const OVERPASS_MIRRORS = [
     'https://overpass.openstreetmap.ru/api/interpreter',
 ];
 
-const CHUNK_SIZE = 5000;       // buildings per animation frame during build
+const CHUNK_SIZE = 5000;        // buildings per animation frame during build
 const MAX_BBOX_DIAG_M = 120000; // clamp large cities to this diagonal
-const CLAMP_DIAG_M = 80000;    // target diagonal when clamping
-const POINT_SIZE = 1.5;
+const CLAMP_DIAG_M = 80000;     // target diagonal when clamping
+const POINT_SIZE = 2.5;
+const HEIGHT_EXAGGERATION = 6;  // vertical scale multiplier so skylines read at city scale
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -191,7 +192,7 @@ let _buildPositions = [];      // accumulated Float32 data
 let _buildColors = [];
 let _buildTotal = 0;
 let _isBuildingChunks = false;
-let _minX = Infinity, _maxX = -Infinity, _minZ = Infinity, _maxZ = -Infinity;
+let _minX = Infinity, _maxX = -Infinity, _minZ = Infinity, _maxZ = -Infinity, _maxY = 0;
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -205,14 +206,10 @@ const loadBtn   = document.getElementById('load-btn');
 function initScene() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a12);
+    scene.fog = new THREE.FogExp2(0x0a0a12, 0.00018); // gentle depth fade
 
-    const CAM_SIZE = 1200;
-    camera = new THREE.OrthographicCamera(
-        -CAM_SIZE * aspect, CAM_SIZE * aspect,
-        CAM_SIZE, -CAM_SIZE,
-        1, 100000
-    );
-    camera.position.set(0, 1800, 1200);
+    camera = new THREE.PerspectiveCamera(45, aspect, 1, 200000);
+    camera.position.set(0, 1800, 1800);
     camera.lookAt(0, 0, 0);
 
     renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -224,8 +221,8 @@ function initScene() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
-    controls.minZoom = 0.05;
-    controls.maxZoom = 50;
+    controls.minDistance = 10;
+    controls.maxDistance = 50000;
 
     window.addEventListener('resize', onResize);
 }
@@ -233,10 +230,7 @@ function initScene() {
 function onResize() {
     aspect = window.innerWidth / window.innerHeight;
     renderer.setSize(window.innerWidth, window.innerHeight);
-    // preserve current frustum half-size on resize
-    const half = camera.top;
-    camera.left   = -half * aspect;
-    camera.right  =  half * aspect;
+    camera.aspect = aspect;
     camera.updateProjectionMatrix();
 }
 
@@ -262,9 +256,29 @@ function latLonToWorld(lat, lon) {
 
 // ─── Color mapping ────────────────────────────────────────────────────────────
 
+// Multi-stop color ramp: violet -> electric blue -> cyan -> white
+// Each stop is [r, g, b] at t = 0.0, 0.33, 0.66, 1.0
+// Even the shortest buildings get a visible, saturated colour.
+const COLOR_STOPS = [
+    [0.35, 0.10, 0.65],  // t=0.0  -- deep violet (1-2 storey)
+    [0.10, 0.40, 0.95],  // t=0.33 -- electric blue (3-5 storey)
+    [0.00, 0.90, 0.95],  // t=0.66 -- cyan (10+ storey)
+    [0.85, 1.00, 1.00],  // t=1.0  -- near-white (skyscraper)
+];
+
 function heightColor(heightM) {
-    const t = Math.min(heightM / 60, 1.0);
-    return [0.05 + t * 0.65, 0.15 + t * 0.80, 0.20 + t * 0.80];
+    const t = Math.min(heightM / 80, 1.0);
+    const scaled = t * (COLOR_STOPS.length - 1);
+    const lo = Math.floor(scaled);
+    const hi = Math.min(lo + 1, COLOR_STOPS.length - 1);
+    const f = scaled - lo;
+    const a = COLOR_STOPS[lo];
+    const b = COLOR_STOPS[hi];
+    return [
+        a[0] + (b[0] - a[0]) * f,
+        a[1] + (b[1] - a[1]) * f,
+        a[2] + (b[2] - a[2]) * f,
+    ];
 }
 
 // ─── Data pipeline ───────────────────────────────────────────────────────────
@@ -390,6 +404,7 @@ function resetBuildState() {
     _isBuildingChunks = false;
     _minX = Infinity; _maxX = -Infinity;
     _minZ = Infinity; _maxZ = -Infinity;
+    _maxY = 0;
 }
 
 // split elements into fixed-size chunks for frame-paced processing
@@ -407,17 +422,21 @@ function processChunk(chunk) {
         const { x, z } = latLonToWorld(el.center.lat, el.center.lon);
 
         const levels = parseInt(el.tags && el.tags['building:levels'], 10);
-        const heightM = (isFinite(levels) && levels > 0) ? levels * 3.5 : 10;
+        const heightM = (isFinite(levels) && levels > 0) ? levels * 3.5 : 8;
+
+        // Exaggerate height so skylines read at city scale
+        const y = heightM * worldScale * HEIGHT_EXAGGERATION;
 
         const [r, g, b] = heightColor(heightM);
 
-        _buildPositions.push(x, 0, z);
+        _buildPositions.push(x, y, z);
         _buildColors.push(r, g, b);
 
         if (x < _minX) _minX = x;
         if (x > _maxX) _maxX = x;
         if (z < _minZ) _minZ = z;
         if (z > _maxZ) _maxZ = z;
+        if (y > _maxY) _maxY = y;
     }
 }
 
@@ -447,19 +466,20 @@ function finalizePointCloud(cityName, totalBuildings) {
 function fitCamera() {
     if (!isFinite(_minX) || !isFinite(_maxX)) return;
 
-    // expand frustum to show city at ~80% of viewport
-    const cityRadius = Math.max(_maxX - _minX, _maxZ - _minZ) / 2 * 1.25;
-    const newHalf = cityRadius;
+    // Pull camera back far enough that the whole city fits in a 45-degree FOV.
+    // Use the larger of width or depth as the bounding radius, then add height
+    // offset so we're looking down at roughly 40 degrees.
+    const citySpan = Math.max(_maxX - _minX, _maxZ - _minZ);
+    const cityRadius = citySpan / 2;
+    const dist = cityRadius / Math.tan((45 / 2) * Math.PI / 180) * 1.1;
 
-    camera.left   = -newHalf * aspect;
-    camera.right  =  newHalf * aspect;
-    camera.top    =  newHalf;
-    camera.bottom = -newHalf;
+    const centerX = (_minX + _maxX) / 2;
+    const centerZ = (_minZ + _maxZ) / 2;
+
+    controls.target.set(centerX, 0, centerZ);
+    camera.position.set(centerX, dist * 0.75, centerZ + dist * 0.75);
+    camera.lookAt(centerX, 0, centerZ);
     camera.updateProjectionMatrix();
-
-    camera.position.set(0, newHalf * 1.5, newHalf);
-    camera.lookAt(0, 0, 0);
-    controls.target.set(0, 0, 0);
     controls.update();
 }
 
