@@ -466,7 +466,8 @@ function processChunk(chunk) {
         const [rb, gb, bb] = columnColor(normalizedH, 0.0); // base color
         const [rt, gt, bt] = columnColor(normalizedH, 1.0); // top color
 
-        // Roof loop + base loop + vertical corner lines
+        // Roof loop + base loop + vertical lines along each wall
+        const WIRE_SPACING = 3.0; // world units between vertical wires along each edge
         for (let i = 0; i < footprint.length - 1; i++) {
             const a = footprint[i];
             const b = footprint[i + 1];
@@ -479,11 +480,18 @@ function processChunk(chunk) {
             _buildPositions.push(a.x, 0, a.z,  b.x, 0, b.z);
             _buildColors.push(rb, gb, bb,  rb, gb, bb);
 
-            // Vertical line at each corner
-            _buildPositions.push(a.x, 0, a.z,  a.x, h, a.z);
-            _buildColors.push(rb, gb, bb,  rt, gt, bt);
+            // Vertical lines: corner + intermediates spaced every WIRE_SPACING units
+            const edgeLen = Math.hypot(b.x - a.x, b.z - a.z);
+            const numWires = Math.max(1, Math.ceil(edgeLen / WIRE_SPACING));
+            for (let w = 0; w < numWires; w++) {
+                const t = w / numWires;
+                const wx = a.x + t * (b.x - a.x);
+                const wz = a.z + t * (b.z - a.z);
+                _buildPositions.push(wx, 0, wz,  wx, h, wz);
+                _buildColors.push(rb, gb, bb,  rt, gt, bt);
+            }
 
-            // Track bounds from roof corners
+            // Track bounds
             if (a.x < _minX) _minX = a.x; if (a.x > _maxX) _maxX = a.x;
             if (a.z < _minZ) _minZ = a.z; if (a.z > _maxZ) _maxZ = a.z;
         }
@@ -528,8 +536,8 @@ function buildGroundPlane(minX, maxX, minZ, maxZ) {
     const z0 = minZ - pad, z1 = maxZ + pad;
 
     // Fixed grid resolution so the ground looks consistent regardless of city size
-    const cols = 80;
-    const rows = 80;
+    const cols = 140;
+    const rows = 140;
     const dx = (x1 - x0) / cols;
     const dz = (z1 - z0) / rows;
 
