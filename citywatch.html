@@ -1699,7 +1699,7 @@
             const METERS_PER_DEG_LAT = 111320;
             const METERS_PER_DEG_LON = Math.cos(tileC.lat * Math.PI / 180) * 111320;
             const MAX_HEIGHT = 40;
-            const DENSITY = 2; // points per m² -- sparse hacker look
+            const DENSITY = 1.2; // points per m² -- reduced to spread out, structured walls compensate
 
             const posArr = [], colArr = [];
             const buildingFootprints = []; // collected for ground plane sampling
@@ -1806,7 +1806,7 @@
                 for (let i = 0; i < footprint.length - 1; i++) {
                     const p0 = footprint[i], p1 = footprint[i + 1];
                     const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-                    const perimCount = Math.max(2, Math.floor(edgeLen * 1.2));
+                    const perimCount = Math.max(2, Math.floor(edgeLen * 2.5));
                     for (let j = 0; j < perimCount; j++) {
                         const t = j / perimCount;
                         const ex = p0.x + t * (p1.x - p0.x);
@@ -1817,32 +1817,36 @@
                     }
                 }
 
-                // Walls: sample along each edge
-                // Stream particles: ~4% of interior wall points are flagged as streams
-                // They will be animated each frame (Y rises from 0 to h, wraps)
+                // Walls: structured grid (horizontal steps along edge × vertical height steps)
+                // This replaces random scatter -- gives clear building silhouettes instead of blobs.
+                // Stream particles: ~4% of wall points are flagged as streams
                 const streamIndices = tileStreamPoints; // reference to outer array
+                const WALL_H_STEP = 1.8;  // vertical spacing between rows (meters) -- ~floor height
+                const WALL_X_STEP = 2.0;  // horizontal spacing along each edge (meters)
                 for (let i = 0; i < footprint.length - 1; i++) {
                     const p0 = footprint[i], p1 = footprint[i + 1];
                     const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-                    const wallCount = Math.max(2, Math.floor(edgeLen * h * DENSITY * 0.4));
-                    for (let j = 0; j < wallCount; j++) {
-                        const t = Math.random();
-                        const wallH = Math.random() * h;
+                    const hSteps = Math.max(1, Math.floor(h / WALL_H_STEP));
+                    const xSteps = Math.max(1, Math.floor(edgeLen / WALL_X_STEP));
+                    for (let xi = 0; xi <= xSteps; xi++) {
+                        const t = xi / xSteps;
                         const wx2 = p0.x + t * (p1.x - p0.x);
                         const wy2 = p0.y + t * (p1.y - p0.y);
-                        const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
-                        const idx = posArr.length / 3;
-                        // Base strip: bottom 8% of wall height gets brightened
-                        const isBase = wallH < h * 0.08;
-                        const em = isBase ? 1.35 : 1.0;
-                        posArr.push(wx + wx2, wallH, wz - wy2);
-                        colArr.push(Math.min(1, r * em), Math.min(1, g * em), Math.min(1, b * em));
-                        // ~4% of wall points become stream particles
-                        if (Math.random() < 0.04) {
-                            streamIndices.push({ idx, yBase: 0, yTop: h, speed: 0.03 + Math.random() * 0.09 });
+                        for (let yi = 0; yi <= hSteps; yi++) {
+                            const wallH = (yi / hSteps) * h;
+                            const [r, g, b] = heightColor(wallH / MAX_HEIGHT, wallH);
+                            const idx = posArr.length / 3;
+                            // Base strip: bottom row brightened
+                            const isBase = yi === 0;
+                            const em = isBase ? 1.35 : 1.0;
+                            posArr.push(wx + wx2, wallH, wz - wy2);
+                            colArr.push(Math.min(1, r * em), Math.min(1, g * em), Math.min(1, b * em));
+                            // ~4% of wall points become stream particles
+                            if (Math.random() < 0.04) {
+                                streamIndices.push({ idx, yBase: 0, yTop: h, speed: 0.03 + Math.random() * 0.09 });
+                            }
                         }
                     }
-
                 }
             }
 
@@ -1851,7 +1855,7 @@
             // skipping points inside building footprints.
             {
                 const GROUND_Y = -0.2;
-                const GRID_SPACING = 12; // meters -- denser ground dot field
+                const GRID_SPACING = 18; // meters -- wider spacing, buildings carry more visual weight now
                 // Tile bounding box in local coords (relative to tileWorldOffset)
                 const latSpanM = (bbox.north - bbox.south) * METERS_PER_DEG_LAT;
                 const lonSpanM = (bbox.east - bbox.west) * METERS_PER_DEG_LON;
