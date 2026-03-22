@@ -3545,6 +3545,10 @@
         smoothLat = lat;
         smoothLon = lon;
         setWorldOrigin(lat, lon, false);
+        // Flush stale aircraft world coords -- they were computed relative to old origin
+        aircraftData.clear();
+        aircraftTrails.clear();
+        buildAircraftGeometry();
         // Reset camera state so bird's-eye doesn't wander to old world coords
         camTarget.set(0, 0, 0);
         followGPS = true;
