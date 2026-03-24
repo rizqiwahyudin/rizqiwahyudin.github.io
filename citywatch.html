@@ -732,7 +732,7 @@
     // ─── Scene setup ──────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d0f0c);
-    scene.fog = new THREE.FogExp2(0x0d1008, 0.0012); // slightly denser for atmosphere
+    scene.fog = new THREE.FogExp2(0x0d1008, 0.0005); // light fog, reduced from 0.0012
 
     // ── Mist layer: sparse transparent sprites at low altitude ───────────────
     // Gives the same volumetric haze feel as city.html without choking aircraft visibility
