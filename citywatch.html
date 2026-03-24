@@ -1606,12 +1606,16 @@
                             posArr[i * 3 + 0] = px + tileWorldOffset.x;
                             posArr[i * 3 + 1] = py;
                             posArr[i * 3 + 2] = pz + tileWorldOffset.z;
-                            colArr[i * 3 + 0] = pr;
-                            colArr[i * 3 + 1] = pg;
-                            colArr[i * 3 + 2] = pb;
-                            origColArr[i * 3 + 0] = pr;
-                            origColArr[i * 3 + 1] = pg;
-                            origColArr[i * 3 + 2] = pb;
+                            // Warm industrial tint: boost red/green slightly, reduce blue
+                            const tr = Math.min(1.0, pr * 1.18 + 0.04);
+                            const tg = Math.min(1.0, pg * 1.05 + 0.01);
+                            const tb = Math.min(1.0, pb * 0.72);
+                            colArr[i * 3 + 0] = tr;
+                            colArr[i * 3 + 1] = tg;
+                            colArr[i * 3 + 2] = tb;
+                            origColArr[i * 3 + 0] = tr;
+                            origColArr[i * 3 + 1] = tg;
+                            origColArr[i * 3 + 2] = tb;
                         }
 
                         // Parse stream particles
