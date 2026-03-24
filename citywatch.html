@@ -8,7 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #000;
+            background: #0d0f0c;
             overflow: hidden;
             user-select: none;
             -webkit-user-select: none;
@@ -24,7 +24,7 @@
             letter-spacing: 1px;
             font-size: 11px;
             line-height: 1.8;
-            color: #ffffff;
+            color: #ddd5c0;
             text-transform: lowercase;
         }
         #back-btn {
@@ -33,9 +33,9 @@
             font-size: 14px;
             text-transform: lowercase;
             text-decoration: none;
-            color: rgba(255,255,255,0.35);
-            background: rgba(0,0,0,0.5);
-            border: 1px solid rgba(255,255,255,0.12);
+            color: rgba(221,213,192,0.35);
+            background: rgba(13,15,12,0.55);
+            border: 1px solid rgba(180,140,90,0.12);
             border-radius: 6px;
             padding: 6px 14px;
             z-index: 20;
@@ -43,15 +43,15 @@
             font-family: 'DotGothic16', monospace;
         }
         #back-btn:hover {
-            color: rgba(255,255,255,0.8);
-            border-color: rgba(255,255,255,0.3);
+            color: rgba(221,213,192,0.85);
+            border-color: rgba(221,213,192,0.28);
         }
         #hint {
             position: fixed;
             bottom: 70px;
             width: 100%;
             text-align: center;
-            color: rgba(255,255,255,0.25);
+            color: rgba(221,213,192,0.28);
             pointer-events: none;
             z-index: 20;
             font-size: 11px;
@@ -61,8 +61,8 @@
         }
         .hud-panel {
             position: fixed;
-            background: rgba(0,0,0,0.75);
-            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(13,15,12,0.78);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 8px 10px;
             z-index: 20;
             white-space: pre;
@@ -72,11 +72,11 @@
             line-height: 1.7;
             letter-spacing: 1px;
             text-transform: lowercase;
-            color: #ffffff;
+            color: #ddd5c0;
         }
-        .hud-panel span { color: #00ffff; }
-        .hud-panel .warn { color: #ffaa00; }
-        .hud-panel .err { color: #ff2244; }
+        .hud-panel span { color: #3dd6c8; }
+        .hud-panel .warn { color: #c4a96a; }
+        .hud-panel .err { color: #c45c30; }
         #coords-panel { top: 14px; left: 58px; }
         #tile-panel { top: 14px; right: 14px; }
         #gps-denied {
@@ -87,9 +87,9 @@
             font-size: 13px;
             letter-spacing: 2px;
             text-transform: lowercase;
-            color: #ff2244;
-            border: 1px solid #ff2244;
-            background: rgba(0,0,0,0.85);
+            color: #c45c30;
+            border: 1px solid #c45c30;
+            background: rgba(13,15,12,0.87);
             padding: 12px 20px;
             z-index: 30;
             display: none;
@@ -105,8 +105,8 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            background: rgba(0,0,0,0.82);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(13,15,12,0.84);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 7px 10px;
             pointer-events: all;
         }
@@ -118,12 +118,12 @@
             background: transparent;
             border: none;
             outline: none;
-            color: #ffffff;
+            color: #ddd5c0;
             width: 200px;
-            caret-color: #00ffff;
+            caret-color: #3dd6c8;
         }
         #route-input::placeholder {
-            color: rgba(255,255,255,0.3);
+            color: rgba(221,213,192,0.28);
         }
         #route-btn, #route-clear-btn {
             font-family: 'DotGothic16', monospace;
@@ -131,26 +131,26 @@
             letter-spacing: 1px;
             text-transform: lowercase;
             background: transparent;
-            border: 1px solid rgba(255,255,255,0.3);
-            color: #ffffff;
+            border: 1px solid rgba(221,213,192,0.28);
+            color: #ddd5c0;
             padding: 2px 8px;
             cursor: pointer;
             transition: border-color 0.15s, color 0.15s;
         }
-        #route-btn:hover { border-color: #00ffff; color: #00ffff; }
+        #route-btn:hover { border-color: #3dd6c8; color: #3dd6c8; }
         #route-clear-btn {
             border-color: rgba(255,255,255,0.15);
-            color: rgba(255,255,255,0.4);
+            color: rgba(221,213,192,0.4);
             display: none;
             padding: 2px 6px;
         }
-        #route-clear-btn:hover { border-color: #ff2244; color: #ff2244; }
+        #route-clear-btn:hover { border-color: #c45c30; color: #c45c30; }
         #route-status {
             font-family: 'DotGothic16', monospace;
             font-size: 10px;
             letter-spacing: 1px;
             text-transform: lowercase;
-            color: rgba(255,255,255,0.4);
+            color: rgba(221,213,192,0.4);
             min-width: 80px;
             text-align: right;
         }
@@ -167,8 +167,8 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            background: rgba(0,10,20,0.75);
-            border-right: 1px solid rgba(51,204,255,0.2);
+            background: rgba(13,15,10,0.78);
+            border-right: 1px solid rgba(61,214,200,0.18);
             pointer-events: all;
             padding: 6px 0;
         }
@@ -178,8 +178,8 @@
             line-height: 1;
             background: transparent;
             border: none;
-            border-bottom: 1px solid rgba(51,204,255,0.12);
-            color: rgba(255,255,255,0.35);
+            border-bottom: 1px solid rgba(61,214,200,0.1);
+            color: rgba(221,213,192,0.35);
             width: 44px;
             height: 44px;
             display: flex;
@@ -189,8 +189,8 @@
             transition: color 0.15s;
         }
         .cam-mode-btn:last-child { border-bottom: none; }
-        .cam-mode-btn:hover { color: rgba(255,255,255,0.8); }
-        .cam-mode-btn.active { color: #33ccff; }
+        .cam-mode-btn:hover { color: rgba(221,213,192,0.85); }
+        .cam-mode-btn.active { color: #3dd6c8; }
 
         /* ── Anchor sub-buttons (inside strip) ── */
         #anchor-sub-row {
@@ -198,7 +198,7 @@
             flex-direction: column;
             align-items: center;
             width: 100%;
-            border-top: 1px solid rgba(51,204,255,0.12);
+            border-top: 1px solid rgba(61,214,200,0.1);
         }
         .anchor-sub-btn {
             font-family: 'DotGothic16', monospace;
@@ -207,8 +207,8 @@
             text-transform: lowercase;
             background: transparent;
             border: none;
-            border-bottom: 1px solid rgba(51,204,255,0.12);
-            color: rgba(255,255,255,0.4);
+            border-bottom: 1px solid rgba(61,214,200,0.1);
+            color: rgba(221,213,192,0.4);
             width: 44px;
             height: 28px;
             display: flex;
@@ -218,25 +218,25 @@
             transition: color 0.15s;
         }
         .anchor-sub-btn:last-child { border-bottom: none; }
-        .anchor-sub-btn:hover { color: rgba(255,255,255,0.85); }
-        .anchor-sub-btn.active { color: #33ccff; }
-        .anchor-sub-btn:disabled { color: rgba(255,255,255,0.18); cursor: default; }
+        .anchor-sub-btn:hover { color: rgba(221,213,192,0.85); }
+        .anchor-sub-btn.active { color: #3dd6c8; }
+        .anchor-sub-btn:disabled { color: rgba(180,140,90,0.14); cursor: default; }
 
         #gps-override-btn {
             display: block;
             width: 100%;
             background: none;
             border: none;
-            border-top: 1px solid rgba(255,255,255,0.08);
-            color: rgba(255,255,255,0.35);
+            border-top: 1px solid rgba(180,140,90,0.08);
+            color: rgba(221,213,192,0.35);
             font-family: 'DotGothic16', monospace;
             font-size: 14px;
             padding: 10px 0;
             cursor: pointer;
             letter-spacing: 0.05em;
         }
-        #gps-override-btn:hover { color: rgba(255,255,255,0.7); }
-        #gps-override-btn.active { color: #33ccff; }
+        #gps-override-btn:hover { color: rgba(221,213,192,0.72); }
+        #gps-override-btn.active { color: #3dd6c8; }
 
         #gps-override-overlay {
             display: none;
@@ -254,12 +254,12 @@
             padding: 20px;
             width: 280px;
             font-family: 'DotGothic16', monospace;
-            color: rgba(255,255,255,0.7);
+            color: rgba(221,213,192,0.72);
         }
         #gps-override-label {
             font-size: 11px;
             letter-spacing: 0.1em;
-            color: rgba(255,255,255,0.35);
+            color: rgba(221,213,192,0.35);
             margin-bottom: 10px;
         }
         #gps-override-input {
@@ -268,14 +268,14 @@
             box-sizing: border-box;
             background: rgba(255,255,255,0.04);
             border: 1px solid rgba(255,255,255,0.15);
-            color: rgba(255,255,255,0.85);
+            color: rgba(221,213,192,0.85);
             font-family: 'DotGothic16', monospace;
             font-size: 14px;
             padding: 8px 10px;
             margin-bottom: 12px;
             outline: none;
         }
-        #gps-override-input:focus { border-color: #33ccff; }
+        #gps-override-input:focus { border-color: #3dd6c8; }
         #gps-override-actions { display: flex; gap: 8px; margin-bottom: 8px; }
         #gps-override-confirm, #gps-override-cancel, #gps-override-revert {
             flex: 1;
@@ -287,8 +287,8 @@
             padding: 7px 0;
             cursor: pointer;
         }
-        #gps-override-confirm:hover { border-color: #33ccff; color: #33ccff; }
-        #gps-override-cancel:hover { border-color: rgba(255,255,255,0.4); color: rgba(255,255,255,0.8); }
+        #gps-override-confirm:hover { border-color: #3dd6c8; color: #3dd6c8; }
+        #gps-override-cancel:hover { border-color: rgba(221,213,192,0.4); color: rgba(221,213,192,0.85); }
         #gps-override-revert { width: 100%; border-color: rgba(255,100,100,0.3); color: rgba(255,100,100,0.6); }
         #gps-override-revert:hover { border-color: rgba(255,100,100,0.7); color: rgba(255,100,100,0.9); }
 
@@ -300,7 +300,7 @@
             width: 120px;
             height: 120px;
             z-index: 25;
-            border: 1px solid rgba(255,255,255,0.4);
+            border: 1px solid rgba(221,213,192,0.4);
             display: none;
             pointer-events: none;
             overflow: hidden;
@@ -331,15 +331,15 @@
             left: 50%;
             transform: translateX(-50%);
             z-index: 25;
-            background: rgba(0,0,0,0.82);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(13,15,12,0.84);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 8px 14px;
             pointer-events: none;
             font-family: 'DotGothic16', monospace;
             font-size: 16px;
             letter-spacing: 2px;
             text-transform: lowercase;
-            color: #ffffff;
+            color: #ddd5c0;
             white-space: nowrap;
             display: none;
         }
@@ -361,7 +361,7 @@
             font-size: 10px;
             letter-spacing: 1px;
             text-transform: lowercase;
-            background: rgba(0,0,0,0.82);
+            background: rgba(13,15,12,0.84);
             border: 1px solid rgba(51,204,255,0.3);
             color: rgba(51,204,255,0.6);
             padding: 6px 12px;
@@ -369,7 +369,7 @@
             pointer-events: all;
             transition: color 0.15s, border-color 0.15s;
         }
-        #regen-btn:hover { color: #33ccff; border-color: rgba(51,204,255,0.7); }
+        #regen-btn:hover { color: #3dd6c8; border-color: rgba(51,204,255,0.7); }
         #regen-btn:disabled { color: rgba(51,204,255,0.25); border-color: rgba(51,204,255,0.1); cursor: default; }
         #surveillance-btn {
             position: fixed;
@@ -380,8 +380,8 @@
             font-size: 10px;
             letter-spacing: 1px;
             text-transform: lowercase;
-            background: rgba(0,0,0,0.82);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(13,15,12,0.84);
+            border: 1px solid rgba(221,213,192,0.18);
             color: rgba(255,255,255,0.45);
             padding: 6px 10px;
             cursor: pointer;
@@ -389,11 +389,11 @@
             transition: color 0.15s, border-color 0.15s;
         }
         #surveillance-btn:hover {
-            color: rgba(255,255,255,0.85);
-            border-color: rgba(255,255,255,0.4);
+            color: rgba(221,213,192,0.85);
+            border-color: rgba(221,213,192,0.4);
         }
         #surveillance-btn.active {
-            color: #00ffff;
+            color: #3dd6c8;
             border-color: rgba(0,255,255,0.5);
         }
         #layer-panel {
@@ -401,8 +401,8 @@
             bottom: 116px;
             left: 14px;
             z-index: 25;
-            background: rgba(0,0,0,0.82);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(13,15,12,0.84);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 6px 10px;
             display: none;
             pointer-events: all;
@@ -425,7 +425,7 @@
             -webkit-appearance: none;
             width: 10px;
             height: 10px;
-            border: 1px solid rgba(255,255,255,0.4);
+            border: 1px solid rgba(221,213,192,0.4);
             background: transparent;
             cursor: pointer;
             position: relative;
@@ -433,7 +433,7 @@
         }
         .layer-toggle input[type="checkbox"]:checked {
             background: rgba(0,255,255,0.3);
-            border-color: #00ffff;
+            border-color: #3dd6c8;
         }
         .layer-toggle input[type="checkbox"]:checked::after {
             content: '';
@@ -442,15 +442,15 @@
             width: 6px; height: 6px;
             background: #00ffff;
         }
-        .layer-toggle:hover { color: #ffffff; }
+        .layer-toggle:hover { color: #ddd5c0; }
         #zoom-indicator {
             position: fixed;
             top: 60px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 25;
-            background: rgba(0,0,0,0.75);
-            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(13,15,12,0.78);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 4px 10px;
             font-family: 'DotGothic16', monospace;
             font-size: 10px;
@@ -460,7 +460,7 @@
             pointer-events: none;
             display: none;
         }
-        #zoom-indicator span { color: #00ffff; }
+        #zoom-indicator span { color: #3dd6c8; }
 
         /* ── Transit search panel ── */
         #transit-search-panel {
@@ -472,8 +472,8 @@
             flex-direction: column;
             align-items: flex-start;
             gap: 6px;
-            background: rgba(0,0,0,0.82);
-            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(13,15,12,0.84);
+            border: 1px solid rgba(221,213,192,0.18);
             padding: 7px 10px;
             pointer-events: all;
         }
@@ -490,31 +490,31 @@
             background: transparent;
             border: none;
             outline: none;
-            color: #ffffff;
+            color: #ddd5c0;
             width: 80px;
-            caret-color: #00ffff;
+            caret-color: #3dd6c8;
         }
-        #transit-search-input::placeholder { color: rgba(255,255,255,0.3); }
+        #transit-search-input::placeholder { color: rgba(221,213,192,0.28); }
         #transit-search-btn, #transit-search-clear-btn {
             font-family: 'DotGothic16', monospace;
             font-size: 11px;
             letter-spacing: 1px;
             text-transform: lowercase;
             background: transparent;
-            border: 1px solid rgba(255,255,255,0.3);
-            color: #ffffff;
+            border: 1px solid rgba(221,213,192,0.28);
+            color: #ddd5c0;
             padding: 2px 8px;
             cursor: pointer;
             transition: border-color 0.15s, color 0.15s;
         }
-        #transit-search-btn:hover { border-color: #00ffff; color: #00ffff; }
+        #transit-search-btn:hover { border-color: #3dd6c8; color: #3dd6c8; }
         #transit-search-clear-btn {
             border-color: rgba(255,255,255,0.15);
-            color: rgba(255,255,255,0.4);
+            color: rgba(221,213,192,0.4);
             display: none;
             padding: 2px 6px;
         }
-        #transit-search-clear-btn:hover { border-color: #ff2244; color: #ff2244; }
+        #transit-search-clear-btn:hover { border-color: #c45c30; color: #c45c30; }
         #transit-search-results {
             margin-top: 4px;
             font-size: 10px;
@@ -530,19 +530,19 @@
             transform: translateY(-50%);
             width: 200px;
             background: rgba(8,14,18,0.92);
-            border-left: 1px solid rgba(51,204,255,0.2);
+            border-left: 1px solid rgba(61,214,200,0.18);
             padding: 16px 12px;
             font-family: 'DotGothic16', monospace;
-            color: rgba(255,255,255,0.7);
+            color: rgba(221,213,192,0.72);
             font-size: 12px;
             z-index: 100;
         }
         #transit-sidebar.visible { display: block; }
-        #transit-sidebar-line { font-size: 16px; color: #33ccff; margin-bottom: 4px; }
-        #transit-sidebar-headsign { color: rgba(255,255,255,0.4); margin-bottom: 12px; font-size: 11px; }
+        #transit-sidebar-line { font-size: 16px; color: #3dd6c8; margin-bottom: 4px; }
+        #transit-sidebar-headsign { color: rgba(221,213,192,0.4); margin-bottom: 12px; font-size: 11px; }
         #transit-sidebar-stops .stop-row { margin-bottom: 8px; display: flex; justify-content: space-between; }
         #transit-sidebar-stops .stop-name { color: rgba(255,255,255,0.6); }
-        #transit-sidebar-stops .stop-eta { color: #33ccff; }
+        #transit-sidebar-stops .stop-eta { color: #3dd6c8; }
     </style>
 </head>
 <body>
@@ -731,8 +731,8 @@
 
     // ─── Scene setup ──────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x050810, 0.0012); // slightly denser for atmosphere
+    scene.background = new THREE.Color(0x0d0f0c);
+    scene.fog = new THREE.FogExp2(0x0d1008, 0.0012); // slightly denser for atmosphere
 
     // ── Mist layer: sparse transparent sprites at low altitude ───────────────
     // Gives the same volumetric haze feel as city.html without choking aircraft visibility
@@ -840,7 +840,7 @@
     const minimapRenderer = new THREE.WebGLRenderer({ canvas: minimapCanvas, antialias: false, alpha: true });
     minimapRenderer.setSize(120, 120);
     minimapRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    minimapRenderer.setClearColor(0x000000, 0.85);
+    minimapRenderer.setClearColor(0x0d0f0c, 0.85);
 
     // ─── Camera mode state ────────────────────────────────────────────────────
     // 'birdseye' | 'followme' | 'anchor'
@@ -1458,7 +1458,7 @@
     // Single white point (no attenuation)
     const gpsDotGeo = new THREE.BufferGeometry();
     gpsDotGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 1, 0], 3));
-    const gpsDotMat = new THREE.PointsMaterial({ color: 0xffffff, size: 8, sizeAttenuation: false });
+    const gpsDotMat = new THREE.PointsMaterial({ color: 0xddd5c0, size: 8, sizeAttenuation: false });
     const gpsDot = new THREE.Points(gpsDotGeo, gpsDotMat);
     gpsDot.visible = false;
     scene.add(gpsDot);
@@ -1472,7 +1472,7 @@
     }
     const ringGeo = new THREE.BufferGeometry();
     ringGeo.setAttribute('position', new THREE.Float32BufferAttribute(ringGeoPositions, 3));
-    const ringMat = new THREE.LineBasicMaterial({ color: 0x00ffff });
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x3dd6c8 });
     const gpsRing = new THREE.Line(ringGeo, ringMat);
     gpsRing.visible = false;
     scene.add(gpsRing);
@@ -1919,22 +1919,22 @@
                         let rc, gc, bc;
                         let strips;
                         if (hwType === 'primary') {
-                            rc = 0.70; gc = 0.70; bc = 0.75;
+                            rc = 0.62; gc = 0.55; bc = 0.42;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'secondary') {
-                            rc = 0.55; gc = 0.55; bc = 0.60;
+                            rc = 0.50; gc = 0.44; bc = 0.34;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'tertiary') {
-                            rc = 0.50; gc = 0.50; bc = 0.55;
+                            rc = 0.44; gc = 0.39; bc = 0.30;
                             strips = [-2, 2];
                         } else if (hwType === 'residential') {
-                            rc = 0.45; gc = 0.45; bc = 0.50;
+                            rc = 0.38; gc = 0.34; bc = 0.26;
                             strips = [-2, 2];
                         } else if (hwType === 'service' || hwType === 'pedestrian') {
-                            rc = 0.40; gc = 0.40; bc = 0.45;
+                            rc = 0.33; gc = 0.29; bc = 0.22;
                             strips = [0];
                         } else { // footway, path
-                            rc = 0.35; gc = 0.45; bc = 0.45;
+                            rc = 0.30; gc = 0.36; bc = 0.26;
                             strips = [0];
                         }
 
@@ -2311,7 +2311,7 @@
             const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
             const sy = (-pos.y * 0.5 + 0.5) * window.innerHeight;
             const cs = ac.callsign || icao;
-            labels.push(`<span style="position:absolute;left:${sx+8}px;top:${sy}px;font-family:'DotGothic16',monospace;font-size:9px;color:#33ccff;letter-spacing:1px;text-transform:lowercase;white-space:nowrap;">${cs}</span>`);
+            labels.push(`<span style="position:absolute;left:${sx+8}px;top:${sy}px;font-family:'DotGothic16',monospace;font-size:9px;color:#3dd6c8;letter-spacing:1px;text-transform:lowercase;white-space:nowrap;">${cs}</span>`);
         }
         aircraftLabelsEl.innerHTML = labels.join('');
     }
@@ -3763,7 +3763,7 @@
             pts.push(new THREE.Vector3(wc.x, 0.5, wc.z));
         }
         const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 });
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xc4a96a, linewidth: 1 });
         routeLine = new THREE.Line(lineGeo, lineMat);
         scene.add(routeLine);
 
@@ -3771,7 +3771,7 @@
         const dw = latLonToWorld(destLat, destLon);
         const dotGeo = new THREE.BufferGeometry();
         dotGeo.setAttribute('position', new THREE.Float32BufferAttribute([dw.x, 1, dw.z], 3));
-        const dotMat = new THREE.PointsMaterial({ color: 0x00ffff, size: 10, sizeAttenuation: false });
+        const dotMat = new THREE.PointsMaterial({ color: 0x3dd6c8, size: 10, sizeAttenuation: false });
         destDot = new THREE.Points(dotGeo, dotMat);
         scene.add(destDot);
 
@@ -3784,7 +3784,7 @@
         }
         const ringGeoD = new THREE.BufferGeometry();
         ringGeoD.setAttribute('position', new THREE.Float32BufferAttribute(rPts, 3));
-        const ringMatD = new THREE.LineBasicMaterial({ color: 0x00ffff });
+        const ringMatD = new THREE.LineBasicMaterial({ color: 0x3dd6c8 });
         destRing = new THREE.Line(ringGeoD, ringMatD);
         destRing.position.set(dw.x, 1, dw.z);
         scene.add(destRing);
@@ -3792,7 +3792,7 @@
         // Vertical beacon line above destination
         const beaconPts = [new THREE.Vector3(dw.x, 1, dw.z), new THREE.Vector3(dw.x, 30, dw.z)];
         const beaconGeo = new THREE.BufferGeometry().setFromPoints(beaconPts);
-        const beaconMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 });
+        const beaconMat = new THREE.LineBasicMaterial({ color: 0x3dd6c8, transparent: true, opacity: 0.6 });
         destBeacon = new THREE.Line(beaconGeo, beaconMat);
         scene.add(destBeacon);
     }
