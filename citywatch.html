@@ -1736,14 +1736,12 @@
             }
 
             function heightColor(t, worldY) {
-                const j = (Math.random() - 0.5) * 0.1;
+                const j = (Math.random() - 0.5) * 0.08;
                 let r, g, b;
-                // Ground/base: r=0.1, g=0.5, b=0.8 (dark blue-teal)
-                // Tips/top: r=0.2, g=0.8, b=1.0 (full #33ccff)
-                // Smooth linear gradient from base to tip
-                r = 0.1 + t * 0.1;
-                g = 0.5 + t * 0.3;
-                b = 0.8 + t * 0.2;
+                // Base: deep amber-brown. Top: vivid dusty gold
+                r = 0.35 + t * 0.55;
+                g = 0.22 + t * 0.40;
+                b = 0.05 + t * 0.14;
                 // Apply time-of-day shift
                 r = r * todMult[0];
                 g = g * todMult[1];
