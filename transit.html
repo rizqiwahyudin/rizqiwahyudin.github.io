@@ -845,8 +845,8 @@ async function pollTransit() {
     const lonPad = (east - west) * 0.3;
     const s = south - latPad, w = west - lonPad, n = north + latPad, e = east + lonPad;
 
-    // Single unified endpoint -- server detects provider from bbox
-    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/vehicles?south=${s}&west=${w}&north=${n}&east=${e}`;
+    // VPS GTFS-RT proxy (auto-detects provider from bbox)
+    const url = `https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/vehicles.json?south=${s}&west=${w}&north=${n}&east=${e}`;
 
     let data;
     try {
@@ -1048,7 +1048,9 @@ async function pollAircraft() {
     // radius: half the diagonal of the city bbox in degrees, min 1.0
     const { south, west, north, east } = _cityBbox;
     const radius = Math.max(1.0, Math.sqrt((north - south) ** 2 + (east - west) ** 2) / 2 * 1.5);
-    const url = `https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev/proxy/aircraft?lat=${originLat}&lon=${originLon}&r=${radius.toFixed(2)}`;
+    // adsb.lol takes distance in nautical miles; convert from degrees
+    const distNM = Math.max(50, radius * 60);
+    const url = `https://api.adsb.lol/v2/lat/${originLat.toFixed(4)}/lon/${originLon.toFixed(4)}/dist/${Math.round(distNM)}`;
 
     let data;
     try {
@@ -1057,7 +1059,8 @@ async function pollAircraft() {
         data = await res.json();
     } catch (err) { setStatus('aircraft: ' + err.message); return; }
 
-    const states = data.states || [];
+    // adsb.lol returns { ac: [ { lat, lon, alt_baro, gs, track, ... }, ... ] }
+    const aircraft = data.ac || [];
 
     // Dispose old geometry
     if (_aircraftPoints) {
@@ -1067,29 +1070,27 @@ async function pollAircraft() {
         _aircraftPoints = null;
     }
 
-    if (states.length === 0) { _aircraftCount = 0; updateHud(); return; }
+    if (aircraft.length === 0) { _aircraftCount = 0; updateHud(); return; }
 
     // Each aircraft = diamond shape: center + 4 arms (forward/back longer, sides shorter)
     const FORWARD = 12; // world units along heading
     const SIDE    = 5;
-    const UP      = 0;  // rendered at altitude Y if in air
 
     const positions = [];
     const colors    = [];
 
-    for (const s of states) {
-        const lon      = s[5];
-        const lat      = s[6];
-        const altM     = s[7];   // baro altitude metres (null if on ground)
-        const onGround = s[8];
-        const vel      = s[9]  || 0;
-        const heading  = s[10] || 0;
+    for (const a of aircraft) {
+        const lon      = a.lon;
+        const lat      = a.lat;
+        const altFt    = a.alt_baro;           // feet, or "ground"
+        const onGround = altFt === 'ground';
+        const altM     = onGround ? 0 : (typeof altFt === 'number' ? altFt * 0.3048 : 0);
+        const heading  = a.track || a.true_heading || 0;
 
         if (lat == null || lon == null) continue;
 
         const wPos  = latLonToWorld(lat, lon);
-        // Scale altitude: 1 world unit ≈ 1 metre at worldScale
-        const altW  = onGround ? 2 : Math.max(2, (altM || 0) * worldScale);
+        const altW  = onGround ? 2 : Math.max(2, altM * worldScale);
 
         const hr    = heading * Math.PI / 180;
         const fx    = Math.sin(hr);
@@ -1102,7 +1103,7 @@ async function pollAircraft() {
         // nose
         positions.push(wPos.x + fx * FORWARD, altW, wPos.z + fz * FORWARD);
         // tail
-        positions.push(wPos.x - fx * (FORWARD * 0.6), altW, wPos.z - fz * (FORWARD * 0.6));
+        positions.push(wPos.x - fx * (FORWARD * 0.6), altW, wPos.z - fz * FORWARD * 0.6);
         // left wing
         positions.push(wPos.x - rx * SIDE, altW, wPos.z - rz * SIDE);
         // right wing
@@ -1122,7 +1123,7 @@ async function pollAircraft() {
     _aircraftPoints = new THREE.Points(geo, mat);
     scene.add(_aircraftPoints);
 
-    _aircraftCount = states.filter(s => s[5] != null).length;
+    _aircraftCount = aircraft.filter(a => a.lat != null).length;
     updateHud();
 }
 
