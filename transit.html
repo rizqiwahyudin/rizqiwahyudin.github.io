@@ -793,31 +793,42 @@ async function loadCity(query) {
 
 // ─── Transit layer (Stockholm Metro) ──────────────────────────────────────────
 
-function buildVehiclePoint(wx, wy, wz, color) {
-    const [r, g, b] = color;
+// Single batched Points object for all metro vehicles
+let _metroBatch     = null;  // THREE.Points
+let _metroBatchMat  = null;
+let _metroMaxSlots  = 200;   // pre-allocate slots
+let _metroSlotMap   = new Map(); // vehicle id -> slot index
+
+function ensureMetroBatch() {
+    if (_metroBatch) return;
+    const pos = new Float32Array(_metroMaxSlots * 3);
+    const col = new Float32Array(_metroMaxSlots * 3);
+    // Hide all slots off-screen initially
+    for (let i = 0; i < _metroMaxSlots; i++) {
+        pos[i * 3] = 0; pos[i * 3 + 1] = -9999; pos[i * 3 + 2] = 0;
+    }
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array([wx, wy, wz]);
-    const col = new Float32Array([r, g, b]);
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({ size: 8, sizeAttenuation: true, vertexColors: true });
-    return new THREE.Points(geo, mat);
+    geo.setDrawRange(0, 0);
+    _metroBatchMat = new THREE.PointsMaterial({ size: 10, sizeAttenuation: true, vertexColors: true });
+    _metroBatch = new THREE.Points(geo, _metroBatchMat);
+    scene.add(_metroBatch);
 }
 
-function disposeVehicle(entry) {
-    if (!entry) return;
-    if (entry.obj) {
-        scene.remove(entry.obj);
-        if (entry.obj.geometry) entry.obj.geometry.dispose();
-        if (entry.obj.material) entry.obj.material.dispose();
-        entry.obj = null;
-    }
-}
+function disposeVehicle(entry) {} // no-op, batch handles it
 
 function disposeAllVehicles() {
-    for (const entry of _vehicles.values()) disposeVehicle(entry);
     _vehicles.clear();
+    _metroSlotMap.clear();
     _vehicleCount = 0;
+    if (_metroBatch) {
+        scene.remove(_metroBatch);
+        _metroBatch.geometry.dispose();
+        _metroBatchMat.dispose();
+        _metroBatch = null;
+        _metroBatchMat = null;
+    }
 }
 
 function disposeMetroLines() {
@@ -874,6 +885,8 @@ async function pollTransit() {
     const seenIds = new Set();
     const now = performance.now();
 
+    ensureMetroBatch();
+
     for (const v of incoming) {
         const id = v.id;
         seenIds.add(id);
@@ -884,20 +897,26 @@ async function pollTransit() {
 
         if (_vehicles.has(id)) {
             const entry = _vehicles.get(id);
-            // Previous target becomes the lerp origin
-            entry.fromLat  = entry.displayLat;
-            entry.fromLon  = entry.displayLon;
-            entry.toLat    = lat;
-            entry.toLon    = lon;
-            entry.bearing  = bearing;
+            entry.fromLat   = entry.displayLat;
+            entry.fromLon   = entry.displayLon;
+            entry.toLat     = lat;
+            entry.toLon     = lon;
+            entry.bearing   = bearing;
             entry.lerpStart = now;
-            entry.color    = color;
+            entry.color     = color;
         } else {
-            const wPos = latLonToWorld(lat, lon);
-            const obj = buildVehiclePoint(wPos.x, CROSS_Y, wPos.z, color);
-            scene.add(obj);
+            // Assign a batch slot
+            let slot = _metroSlotMap.size;
+            _metroSlotMap.set(id, slot);
+            // Set color in batch
+            const colArr = _metroBatch.geometry.getAttribute('color').array;
+            colArr[slot * 3]     = color[0];
+            colArr[slot * 3 + 1] = color[1];
+            colArr[slot * 3 + 2] = color[2];
+            _metroBatch.geometry.getAttribute('color').needsUpdate = true;
+
             _vehicles.set(id, {
-                obj,
+                slot,
                 fromLat: lat, fromLon: lon,
                 toLat: lat,   toLon: lon,
                 displayLat: lat, displayLon: lon,
@@ -908,9 +927,20 @@ async function pollTransit() {
         }
     }
 
+    // Remove vehicles that disappeared
     for (const [id, entry] of _vehicles.entries()) {
-        if (!seenIds.has(id)) { disposeVehicle(entry); _vehicles.delete(id); }
+        if (!seenIds.has(id)) {
+            // Hide the slot
+            const posArr = _metroBatch.geometry.getAttribute('position').array;
+            posArr[entry.slot * 3 + 1] = -9999;
+            _vehicles.delete(id);
+            _metroSlotMap.delete(id);
+        }
     }
+
+    // Update draw range
+    _metroBatch.geometry.setDrawRange(0, Math.max(...[..._metroSlotMap.values()]) + 1 || 0);
+    _metroBatch.geometry.getAttribute('position').needsUpdate = true;
 
     _vehicleCount = _vehicles.size;
     updateHud();
@@ -953,10 +983,12 @@ function stopTransit() {
 }
 
 function lerpVehicles() {
+    if (!_metroBatch) return;
     const now = performance.now();
     const duration = TRANSIT_POLL_MS;
+    const posArr = _metroBatch.geometry.getAttribute('position').array;
+
     for (const entry of _vehicles.values()) {
-        if (!entry.obj) continue;
         const elapsed = now - entry.lerpStart;
         const rawT = Math.min(1, elapsed / duration);
         const t = 1 - (1 - rawT) * (1 - rawT); // ease-out
@@ -967,12 +999,13 @@ function lerpVehicles() {
         entry.displayLon = lon;
 
         const wPos = latLonToWorld(lat, lon);
-        const posArr = entry.obj.geometry.getAttribute('position').array;
-        posArr[0] = wPos.x;
-        posArr[1] = CROSS_Y;
-        posArr[2] = wPos.z;
-        entry.obj.geometry.getAttribute('position').needsUpdate = true;
+        const i = entry.slot * 3;
+        posArr[i]     = wPos.x;
+        posArr[i + 1] = CROSS_Y;
+        posArr[i + 2] = wPos.z;
     }
+
+    _metroBatch.geometry.getAttribute('position').needsUpdate = true;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
