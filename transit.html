@@ -286,7 +286,6 @@ let _transitTimer  = null;
 let _vehicles      = new Map();
 let _vehicleCount  = 0;
 let _metroLines    = [];     // THREE.Line objects for metro route shapes
-let _metroShapes   = null;   // cached shapes from first metro poll
 
 let _aircraftActive = false;
 let _aircraftTimer  = null;
@@ -298,7 +297,7 @@ const AIRCRAFT_POLL_MS = 10000;
 const CROSS_ARM        = 8;
 const CROSS_Y          = 2;
 
-const METRO_TRAJ_URL = 'https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/metro-trajectories.json';
+const TUNNEL_BASE = 'https://composer-immediate-twist-decisions.trycloudflare.com';
 
 const LINE_COLORS = {
     blue:  [0.2, 0.4, 1.0],
@@ -306,7 +305,11 @@ const LINE_COLORS = {
     green: [0.2, 0.85, 0.3],
 };
 
-let _serverTimeOffset = 0; // client_time - server_time in seconds
+let _serverTimeOffset = 0;     // clientSec - serverSec
+let _metroSchedule    = null;  // { trips, shapes, tzOffsetSec }
+let _metroShapeLookup = {};    // shapeId -> [{dist, lat, lon}]
+let _metroTripLookup  = {};    // tripId -> {line, color, shapeId, stops[{d, a, p}]}
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -850,7 +853,7 @@ async function loadCity(query) {
     }
 }
 
-// ─── Transit layer (Stockholm Metro, trajectory-based) ───────────────────────
+// ─── Transit layer (Stockholm Metro, schedule interpolation) ─────────────────
 
 let _metroBatch     = null;
 let _metroBatchMat  = null;
@@ -861,9 +864,7 @@ function ensureMetroBatch() {
     if (_metroBatch) return;
     const pos = new Float32Array(_metroMaxSlots * 3);
     const col = new Float32Array(_metroMaxSlots * 3);
-    for (let i = 0; i < _metroMaxSlots; i++) {
-        pos[i * 3 + 1] = -9999;
-    }
+    for (let i = 0; i < _metroMaxSlots; i++) pos[i * 3 + 1] = -9999;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
@@ -897,14 +898,18 @@ function disposeMetroLines() {
 
 function buildMetroLineGeometry() {
     disposeMetroLines();
-    if (!_metroShapes) return;
-    for (const [lineNum, info] of Object.entries(_metroShapes)) {
-        const color = LINE_COLORS[info.color] || [0.5, 0.5, 0.5];
-        const pts = info.points;
+    // Group shapes by color using trip metadata
+    const drawnShapes = new Set();
+    for (const trip of Object.values(_metroTripLookup)) {
+        const sid = trip.shapeId;
+        if (drawnShapes.has(sid)) continue;
+        drawnShapes.add(sid);
+        const pts = _metroShapeLookup[sid];
         if (!pts || pts.length < 2) continue;
+        const color = LINE_COLORS[trip.color] || [0.5, 0.5, 0.5];
         const positions = [];
-        for (const [lat, lon] of pts) {
-            const w = latLonToWorld(lat, lon);
+        for (const p of pts) {
+            const w = latLonToWorld(p.lat, p.lon);
             positions.push(w.x, 0.5, w.z);
         }
         const geo = new THREE.BufferGeometry();
@@ -919,77 +924,106 @@ function buildMetroLineGeometry() {
     }
 }
 
-// Interpolate position along a trajectory at a given server time
-function trajectoryAt(trajectory, timeSec) {
-    if (!trajectory || trajectory.length === 0) return null;
-    if (trajectory.length === 1) return { lat: trajectory[0].lat, lon: trajectory[0].lon };
-    if (timeSec <= trajectory[0].time) return { lat: trajectory[0].lat, lon: trajectory[0].lon };
-    const last = trajectory[trajectory.length - 1];
-    if (timeSec >= last.time) {
-        if (trajectory.length < 2) return { lat: last.lat, lon: last.lon };
-        const prev = trajectory[trajectory.length - 2];
-        const segDur = last.time - prev.time || 1;
-        const t = Math.min((timeSec - last.time) / segDur, 1.0);
-        return {
-            lat: last.lat + (last.lat - prev.lat) * t,
-            lon: last.lon + (last.lon - prev.lon) * t,
-        };
-    }
-    let lo = 0, hi = trajectory.length - 1;
+// Interpolate position along a shape at a given distance
+function shapePositionAt(shapePoints, dist) {
+    if (!shapePoints || shapePoints.length === 0) return null;
+    if (dist <= shapePoints[0].dist) return { lat: shapePoints[0].lat, lon: shapePoints[0].lon };
+    const last = shapePoints[shapePoints.length - 1];
+    if (dist >= last.dist) return { lat: last.lat, lon: last.lon };
+    // Binary search
+    let lo = 0, hi = shapePoints.length - 1;
     while (lo < hi - 1) {
         const mid = (lo + hi) >> 1;
-        if (trajectory[mid].time <= timeSec) lo = mid; else hi = mid;
+        if (shapePoints[mid].dist <= dist) lo = mid; else hi = mid;
     }
-    const a = trajectory[lo], b = trajectory[hi];
-    const segDur = b.time - a.time || 1;
-    const t = (timeSec - a.time) / segDur;
+    const a = shapePoints[lo], b = shapePoints[hi];
+    const segLen = b.dist - a.dist || 1;
+    const t = (dist - a.dist) / segLen;
     return {
         lat: a.lat + (b.lat - a.lat) * t,
         lon: a.lon + (b.lon - a.lon) * t,
     };
 }
 
-async function pollTransit() {
+// Compute scheduled distance along track at a given local time
+function scheduledDistAt(stops, localSec) {
+    if (!stops || stops.length === 0) return null;
+    // stops are arrays: [dist, arrSec, depSec]
+    if (localSec <= stops[0][1]) return stops[0][0]; // before first arrival
+    const last = stops[stops.length - 1];
+    if (localSec >= last[2]) return -1; // trip is over
+    for (let i = 0; i < stops.length - 1; i++) {
+        const cur = stops[i], nxt = stops[i + 1];
+        // Dwelling at current stop
+        if (localSec >= cur[1] && localSec <= cur[2]) return cur[0];
+        // Between stops
+        if (localSec > cur[2] && localSec < nxt[1]) {
+            const span = nxt[1] - cur[2] || 1;
+            const frac = (localSec - cur[2]) / span;
+            return cur[0] + (nxt[0] - cur[0]) * frac;
+        }
+    }
+    return last[0];
+}
+
+// Fetch and cache the daily schedule (once per session)
+async function fetchSchedule() {
+    try {
+        const res = await fetch(TUNNEL_BASE + '/gtfs-rt/metro-schedule.json');
+        if (!res.ok) { setStatus('metro schedule: ' + res.status); return false; }
+        const data = await res.json();
+        _metroSchedule = data;
+        // Build lookups
+        _metroTripLookup = {};
+        for (const [tid, t] of Object.entries(data.trips)) {
+            _metroTripLookup[tid] = {
+                line: t.l, color: t.c, shapeId: t.s, stops: t.t,
+            };
+        }
+        _metroShapeLookup = {};
+        for (const [sid, pts] of Object.entries(data.shapes)) {
+            // pts are [lat, lon, dist] arrays
+            _metroShapeLookup[sid] = pts.map(p => ({ lat: p[0], lon: p[1], dist: p[2] }));
+        }
+        buildMetroLineGeometry();
+        return true;
+    } catch (err) {
+        setStatus('metro schedule: ' + err.message);
+        return false;
+    }
+}
+
+// Poll live delays
+async function pollLive() {
     let data;
     try {
-        const res = await fetch(METRO_TRAJ_URL + '?t=' + Date.now());
-        if (!res.ok) { setStatus('metro: fetch error ' + res.status); return; }
+        const res = await fetch(TUNNEL_BASE + '/gtfs-rt/metro-live.json?t=' + Date.now());
+        if (!res.ok) { setStatus('metro live: ' + res.status); return; }
         data = await res.json();
-    } catch (err) { setStatus('metro: ' + err.message); return; }
+    } catch (err) { setStatus('metro live: ' + err.message); return; }
 
-    // Sync clocks
     if (data.serverTime) {
         _serverTimeOffset = (Date.now() / 1000) - data.serverTime;
     }
 
-    // Load line shapes on first poll
-    if (!_metroShapes) {
-        try {
-            const shapeRes = await fetch('https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/metro.json');
-            if (shapeRes.ok) {
-                const shapeData = await shapeRes.json();
-                if (shapeData.shapes) {
-                    _metroShapes = shapeData.shapes;
-                    buildMetroLineGeometry();
-                }
-            }
-        } catch (e) { /* shapes optional */ }
-    }
-
     const incoming = data.vehicles || [];
     const seenIds = new Set();
-
     ensureMetroBatch();
     const colArr = _metroBatch.geometry.getAttribute('color').array;
 
     for (const v of incoming) {
-        const id = v.id;
+        const tid = v.tripId;
+        if (!tid) continue;
+        const trip = _metroTripLookup[tid];
+        if (!trip) continue; // unmatched trip, skip
+
+        const id = tid; // use tripId as key (one vehicle per trip)
         seenIds.add(id);
-        const color = LINE_COLORS[v.color] || [0.9, 0.65, 0.1];
+        const color = LINE_COLORS[trip.color] || [0.9, 0.65, 0.1];
 
         if (_vehicles.has(id)) {
             const entry = _vehicles.get(id);
-            entry.trajectory = v.trajectory;
+            entry.targetDelay = v.delay || 0;
             entry.color = color;
             const s = entry.slot * 3;
             colArr[s] = color[0]; colArr[s+1] = color[1]; colArr[s+2] = color[2];
@@ -999,12 +1033,19 @@ async function pollTransit() {
             colArr[slot * 3]     = color[0];
             colArr[slot * 3 + 1] = color[1];
             colArr[slot * 3 + 2] = color[2];
-            _vehicles.set(id, { slot, trajectory: v.trajectory, color });
+            _vehicles.set(id, {
+                slot,
+                tripId: tid,
+                targetDelay: v.delay || 0,
+                currentDelay: v.delay || 0, // start at actual delay
+                color,
+            });
         }
     }
 
     _metroBatch.geometry.getAttribute('color').needsUpdate = true;
 
+    // Remove disappeared vehicles
     for (const [id, entry] of _vehicles.entries()) {
         if (!seenIds.has(id)) {
             const posArr = _metroBatch.geometry.getAttribute('position').array;
@@ -1022,12 +1063,18 @@ async function pollTransit() {
     updateHud();
 }
 
-function startTransit() {
+async function startTransit() {
     if (_transitActive) return;
     _transitActive = true;
     transitBtn.classList.add('active');
-    pollTransit();
-    _transitTimer = setInterval(pollTransit, TRANSIT_POLL_MS);
+    // Fetch schedule if not cached
+    if (!_metroSchedule) {
+        setStatus('loading metro schedule...');
+        const ok = await fetchSchedule();
+        if (!ok) { stopTransit(); return; }
+    }
+    pollLive();
+    _transitTimer = setInterval(pollLive, TRANSIT_POLL_MS);
 }
 
 function stopTransit() {
@@ -1036,19 +1083,60 @@ function stopTransit() {
     if (_transitTimer !== null) { clearInterval(_transitTimer); _transitTimer = null; }
     disposeAllVehicles();
     disposeMetroLines();
-    _metroShapes = null;
+    _metroSchedule = null;
+    _metroTripLookup = {};
+    _metroShapeLookup = {};
     transitBtn.classList.remove('active');
     updateHud();
 }
 
-function interpolateVehicles() {
-    if (!_metroBatch) return;
-    const nowSec = (Date.now() / 1000) - _serverTimeOffset;
+function scheduleInterpolate() {
+    if (!_metroBatch || !_metroSchedule) return;
+    const nowUtcSec = (Date.now() / 1000) - _serverTimeOffset;
+    const tzOffset = _metroSchedule.tzOffsetSec || 7200;
     const posArr = _metroBatch.geometry.getAttribute('position').array;
 
     for (const entry of _vehicles.values()) {
-        const pos = trajectoryAt(entry.trajectory, nowSec);
+        // Smooth delay toward target (5-second lerp)
+        entry.currentDelay += (entry.targetDelay - entry.currentDelay) * 0.02;
+
+        const trip = _metroTripLookup[entry.tripId];
+        if (!trip) continue;
+        const shape = _metroShapeLookup[trip.shapeId];
+        if (!shape) continue;
+
+        // Convert to local seconds since midnight of the GTFS service day
+        // For past-midnight trips (times > 86400), this still works
+        const localSec = nowUtcSec + tzOffset;
+        // Compute which midnight this trip belongs to by checking its first stop time
+        const firstStop = trip.stops[0];
+        const lastStop = trip.stops[trip.stops.length - 1];
+        // Heuristic: if first stop > 86400, it's coded as past-midnight
+        const tripStartSec = firstStop[1]; // arrival time in GTFS seconds
+
+        // Get current date midnight in UTC
+        const nowDate = new Date(nowUtcSec * 1000);
+        const midnightLocal = new Date(nowDate.toLocaleDateString('en-CA', { timeZone: 'Europe/Stockholm' }) + 'T00:00:00+02:00');
+        const midnightUtc = midnightLocal.getTime() / 1000;
+        let secSinceMidnight = nowUtcSec - midnightUtc;
+
+        // For trips with times > 86400 (past midnight), if we're in early morning,
+        // we need to use yesterday's midnight
+        if (tripStartSec > 86400 && secSinceMidnight < 14400) {
+            secSinceMidnight += 86400; // interpret as yesterday's GTFS day
+        }
+
+        const adjustedTime = secSinceMidnight + entry.currentDelay;
+        const dist = scheduledDistAt(trip.stops, adjustedTime);
+        if (dist === null || dist === -1) {
+            // Trip not active or finished; hide
+            posArr[entry.slot * 3 + 1] = -9999;
+            continue;
+        }
+
+        const pos = shapePositionAt(shape, dist);
         if (!pos) continue;
+
         const wPos = latLonToWorld(pos.lat, pos.lon);
         const i = entry.slot * 3;
         posArr[i]     = wPos.x;
@@ -1058,6 +1146,7 @@ function interpolateVehicles() {
 
     _metroBatch.geometry.getAttribute('position').needsUpdate = true;
 }
+
 
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1213,9 +1302,9 @@ function animate() {
         tickBuildChunks(_pendingCityName);
     }
 
-    // interpolate metro vehicles along trajectories
+    // schedule-interpolate metro vehicles
     if (_transitActive && _vehicles.size > 0) {
-        interpolateVehicles();
+        scheduleInterpolate();
     }
 
     // Animate ground wave so empty areas feel alive
