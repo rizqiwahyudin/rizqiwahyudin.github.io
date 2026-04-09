@@ -293,18 +293,20 @@ let _aircraftTimer  = null;
 let _aircraftPoints = null;   // single THREE.Points rebuilt each poll
 let _aircraftCount  = 0;
 
-const TRANSIT_POLL_MS  = 15000;
+const TRANSIT_POLL_MS  = 12000;
 const AIRCRAFT_POLL_MS = 10000;
 const CROSS_ARM        = 8;
 const CROSS_Y          = 2;
 
-const METRO_PROXY_URL = 'https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/metro.json';
+const METRO_TRAJ_URL = 'https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/metro-trajectories.json';
 
 const LINE_COLORS = {
     blue:  [0.2, 0.4, 1.0],
     red:   [1.0, 0.2, 0.2],
     green: [0.2, 0.85, 0.3],
 };
+
+let _serverTimeOffset = 0; // client_time - server_time in seconds
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -848,21 +850,19 @@ async function loadCity(query) {
     }
 }
 
-// ─── Transit layer (Stockholm Metro) ──────────────────────────────────────────
+// ─── Transit layer (Stockholm Metro, trajectory-based) ───────────────────────
 
-// Single batched Points object for all metro vehicles
-let _metroBatch     = null;  // THREE.Points
+let _metroBatch     = null;
 let _metroBatchMat  = null;
-let _metroMaxSlots  = 200;   // pre-allocate slots
-let _metroSlotMap   = new Map(); // vehicle id -> slot index
+const _metroMaxSlots = 200;
+let _metroSlotMap   = new Map();
 
 function ensureMetroBatch() {
     if (_metroBatch) return;
     const pos = new Float32Array(_metroMaxSlots * 3);
     const col = new Float32Array(_metroMaxSlots * 3);
-    // Hide all slots off-screen initially
     for (let i = 0; i < _metroMaxSlots; i++) {
-        pos[i * 3] = 0; pos[i * 3 + 1] = -9999; pos[i * 3 + 2] = 0;
+        pos[i * 3 + 1] = -9999;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -872,8 +872,6 @@ function ensureMetroBatch() {
     _metroBatch = new THREE.Points(geo, _metroBatchMat);
     scene.add(_metroBatch);
 }
-
-function disposeVehicle(entry) {} // no-op, batch handles it
 
 function disposeAllVehicles() {
     _vehicles.clear();
@@ -897,26 +895,23 @@ function disposeMetroLines() {
     _metroLines = [];
 }
 
-function buildMetroLineGeometry(shapes) {
+function buildMetroLineGeometry() {
     disposeMetroLines();
-    for (const [lineNum, info] of Object.entries(shapes)) {
+    if (!_metroShapes) return;
+    for (const [lineNum, info] of Object.entries(_metroShapes)) {
         const color = LINE_COLORS[info.color] || [0.5, 0.5, 0.5];
         const pts = info.points;
         if (!pts || pts.length < 2) continue;
-
         const positions = [];
         for (const [lat, lon] of pts) {
             const w = latLonToWorld(lat, lon);
             positions.push(w.x, 0.5, w.z);
         }
-
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         const mat = new THREE.LineBasicMaterial({
             color: new THREE.Color(color[0], color[1], color[2]),
-            transparent: true,
-            opacity: 0.35,
-            linewidth: 1,
+            transparent: true, opacity: 0.35, linewidth: 1,
         });
         const line = new THREE.Line(geo, mat);
         scene.add(line);
@@ -924,70 +919,94 @@ function buildMetroLineGeometry(shapes) {
     }
 }
 
+// Interpolate position along a trajectory at a given server time
+function trajectoryAt(trajectory, timeSec) {
+    if (!trajectory || trajectory.length === 0) return null;
+    if (trajectory.length === 1) return { lat: trajectory[0].lat, lon: trajectory[0].lon };
+    if (timeSec <= trajectory[0].time) return { lat: trajectory[0].lat, lon: trajectory[0].lon };
+    const last = trajectory[trajectory.length - 1];
+    if (timeSec >= last.time) {
+        if (trajectory.length < 2) return { lat: last.lat, lon: last.lon };
+        const prev = trajectory[trajectory.length - 2];
+        const segDur = last.time - prev.time || 1;
+        const t = Math.min((timeSec - last.time) / segDur, 1.0);
+        return {
+            lat: last.lat + (last.lat - prev.lat) * t,
+            lon: last.lon + (last.lon - prev.lon) * t,
+        };
+    }
+    let lo = 0, hi = trajectory.length - 1;
+    while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (trajectory[mid].time <= timeSec) lo = mid; else hi = mid;
+    }
+    const a = trajectory[lo], b = trajectory[hi];
+    const segDur = b.time - a.time || 1;
+    const t = (timeSec - a.time) / segDur;
+    return {
+        lat: a.lat + (b.lat - a.lat) * t,
+        lon: a.lon + (b.lon - a.lon) * t,
+    };
+}
+
 async function pollTransit() {
     let data;
     try {
-        const res = await fetch(METRO_PROXY_URL);
+        const res = await fetch(METRO_TRAJ_URL + '?t=' + Date.now());
         if (!res.ok) { setStatus('metro: fetch error ' + res.status); return; }
         data = await res.json();
     } catch (err) { setStatus('metro: ' + err.message); return; }
 
-    // Build line shapes on first poll
-    if (!_metroShapes && data.shapes) {
-        _metroShapes = data.shapes;
-        buildMetroLineGeometry(data.shapes);
+    // Sync clocks
+    if (data.serverTime) {
+        _serverTimeOffset = (Date.now() / 1000) - data.serverTime;
+    }
+
+    // Load line shapes on first poll
+    if (!_metroShapes) {
+        try {
+            const shapeRes = await fetch('https://composer-immediate-twist-decisions.trycloudflare.com/gtfs-rt/metro.json');
+            if (shapeRes.ok) {
+                const shapeData = await shapeRes.json();
+                if (shapeData.shapes) {
+                    _metroShapes = shapeData.shapes;
+                    buildMetroLineGeometry();
+                }
+            }
+        } catch (e) { /* shapes optional */ }
     }
 
     const incoming = data.vehicles || [];
     const seenIds = new Set();
-    const now = performance.now();
 
     ensureMetroBatch();
+    const colArr = _metroBatch.geometry.getAttribute('color').array;
 
     for (const v of incoming) {
         const id = v.id;
         seenIds.add(id);
-        const lat     = v.lat;
-        const lon     = v.lon;
-        const bearing = v.bearing || 0;
-        const color   = LINE_COLORS[v.color] || [0.9, 0.65, 0.1];
+        const color = LINE_COLORS[v.color] || [0.9, 0.65, 0.1];
 
         if (_vehicles.has(id)) {
             const entry = _vehicles.get(id);
-            entry.fromLat   = entry.displayLat;
-            entry.fromLon   = entry.displayLon;
-            entry.toLat     = lat;
-            entry.toLon     = lon;
-            entry.bearing   = bearing;
-            entry.lerpStart = now;
-            entry.color     = color;
+            entry.trajectory = v.trajectory;
+            entry.color = color;
+            const s = entry.slot * 3;
+            colArr[s] = color[0]; colArr[s+1] = color[1]; colArr[s+2] = color[2];
         } else {
-            // Assign a batch slot
-            let slot = _metroSlotMap.size;
+            const slot = _metroSlotMap.size;
             _metroSlotMap.set(id, slot);
-            // Set color in batch
-            const colArr = _metroBatch.geometry.getAttribute('color').array;
             colArr[slot * 3]     = color[0];
             colArr[slot * 3 + 1] = color[1];
             colArr[slot * 3 + 2] = color[2];
-            _metroBatch.geometry.getAttribute('color').needsUpdate = true;
-
-            _vehicles.set(id, {
-                slot,
-                fromLat: lat, fromLon: lon,
-                toLat: lat,   toLon: lon,
-                displayLat: lat, displayLon: lon,
-                bearing,
-                lerpStart: now,
-                color,
-            });
+            _vehicles.set(id, { slot, trajectory: v.trajectory, color });
         }
     }
 
-    // Remove vehicles that disappeared
+    _metroBatch.geometry.getAttribute('color').needsUpdate = true;
+
     for (const [id, entry] of _vehicles.entries()) {
         if (!seenIds.has(id)) {
-            // Hide the slot
             const posArr = _metroBatch.geometry.getAttribute('position').array;
             posArr[entry.slot * 3 + 1] = -9999;
             _vehicles.delete(id);
@@ -995,29 +1014,12 @@ async function pollTransit() {
         }
     }
 
-    // Update draw range
-    _metroBatch.geometry.setDrawRange(0, Math.max(...[..._metroSlotMap.values()]) + 1 || 0);
+    const maxSlot = _metroSlotMap.size > 0 ? Math.max(..._metroSlotMap.values()) + 1 : 0;
+    _metroBatch.geometry.setDrawRange(0, maxSlot);
     _metroBatch.geometry.getAttribute('position').needsUpdate = true;
 
     _vehicleCount = _vehicles.size;
     updateHud();
-}
-
-function updateHud() {
-    const cityNamePart = hudEl.dataset.cityName || '';
-    const buildingPart = hudEl.dataset.buildings || '';
-    let text = '';
-    if (buildingPart) {
-        text = '<span>' + buildingPart + '</span> buildings';
-        if (cityNamePart) text += ' | ' + cityNamePart;
-    }
-    if (_transitActive) {
-        text += (text ? ' | ' : '') + '<span>' + _vehicleCount.toLocaleString() + '</span> metro';
-    }
-    if (_aircraftActive) {
-        text += (text ? ' | ' : '') + '<span>' + _aircraftCount.toLocaleString() + '</span> aircraft';
-    }
-    hudEl.innerHTML = text;
 }
 
 function startTransit() {
@@ -1039,23 +1041,15 @@ function stopTransit() {
     updateHud();
 }
 
-function lerpVehicles() {
+function interpolateVehicles() {
     if (!_metroBatch) return;
-    const now = performance.now();
-    const duration = TRANSIT_POLL_MS;
+    const nowSec = (Date.now() / 1000) - _serverTimeOffset;
     const posArr = _metroBatch.geometry.getAttribute('position').array;
 
     for (const entry of _vehicles.values()) {
-        const elapsed = now - entry.lerpStart;
-        const rawT = Math.min(1, elapsed / duration);
-        const t = 1 - (1 - rawT) * (1 - rawT); // ease-out
-
-        const lat = entry.fromLat + (entry.toLat - entry.fromLat) * t;
-        const lon = entry.fromLon + (entry.toLon - entry.fromLon) * t;
-        entry.displayLat = lat;
-        entry.displayLon = lon;
-
-        const wPos = latLonToWorld(lat, lon);
+        const pos = trajectoryAt(entry.trajectory, nowSec);
+        if (!pos) continue;
+        const wPos = latLonToWorld(pos.lat, pos.lon);
         const i = entry.slot * 3;
         posArr[i]     = wPos.x;
         posArr[i + 1] = CROSS_Y;
@@ -1064,6 +1058,7 @@ function lerpVehicles() {
 
     _metroBatch.geometry.getAttribute('position').needsUpdate = true;
 }
+
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -1218,9 +1213,9 @@ function animate() {
         tickBuildChunks(_pendingCityName);
     }
 
-    // smoothly interpolate metro vehicles between polls
+    // interpolate metro vehicles along trajectories
     if (_transitActive && _vehicles.size > 0) {
-        lerpVehicles();
+        interpolateVehicles();
     }
 
     // Animate ground wave so empty areas feel alive
