@@ -38,42 +38,7 @@ const projects = [
         sim: "vanitas.html?mode=dissolve&pixelSize=1.8&strength=40&threshold=0.2&drift=2&speed=2&mixMode=thermal&blendAmount=0.45&blendMode=multiply&mix_pixelSize=1.5&mix_brightness=1&mix_contrast=1.2",
         tags: ["canvas 2d", "bayer dither", "video"]
     },
-    {
-        type: "sim",
-        title: "strange attractor",
-        subtitle: "chaos made visible",
-        desc: "",
-        classification: "canvas // ascii",
-        sim: "attractor.html",
-        tags: ["canvas 2d", "lorenz system", "dynamical systems"]
-    },
-    {
-        type: "sim",
-        title: "reaction diffusion",
-        subtitle: "patterns from noise",
-        desc: "",
-        classification: "canvas // gray-scott",
-        sim: "reaction-diffusion.html",
-        tags: ["canvas 2d", "gray-scott", "turing patterns"]
-    },
-    {
-        type: "sim",
-        title: "n-body",
-        subtitle: "gravity at scale",
-        desc: "",
-        classification: "canvas // physics",
-        sim: "n-body.html",
-        tags: ["canvas 2d", "gravity", "orbital mechanics"]
-    },
-    {
-        type: "sim",
-        title: "fourier",
-        subtitle: "circles all the way down",
-        desc: "",
-        classification: "canvas // mathematics",
-        sim: "fourier.html",
-        tags: ["canvas 2d", "fourier series", "epicycles"]
-    },
+
     {
         type: "sim",
         title: "city",
