@@ -793,54 +793,23 @@ async function loadCity(query) {
 
 // ─── Transit layer (Stockholm Metro) ──────────────────────────────────────────
 
-function buildVehicleDiamond(wx, wy, wz, color, bearing) {
+function buildVehiclePoint(wx, wy, wz, color) {
     const [r, g, b] = color;
-    const arm = CROSS_ARM;
-    const hr = (bearing || 0) * Math.PI / 180;
-    const fx = Math.sin(hr), fz = -Math.cos(hr);
-    const rx = Math.cos(hr), rz = Math.sin(hr);
-    const positions = new Float32Array([
-        // Diamond: nose, right, tail, left, nose (closed loop as line strip)
-        wx + fx * arm * 1.5, wy, wz + fz * arm * 1.5,
-        wx + rx * arm * 0.6, wy, wz + rz * arm * 0.6,
-        wx - fx * arm,       wy, wz - fz * arm,
-        wx - rx * arm * 0.6, wy, wz - rz * arm * 0.6,
-        wx + fx * arm * 1.5, wy, wz + fz * arm * 1.5,
-        // Center dot
-        wx, wy, wz,
-    ]);
-    const colors = new Float32Array([
-        r, g, b, r, g, b, r, g, b, r, g, b, r, g, b,
-        r * 1.3, g * 1.3, b * 1.3,
-    ]);
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
-
-    const group = new THREE.Group();
-    // Line loop for diamond outline
-    const lineMat = new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 1 });
-    const lineGeo = new THREE.BufferGeometry();
-    lineGeo.setAttribute('position', new THREE.BufferAttribute(positions.slice(0, 15), 3));
-    lineGeo.setAttribute('color', new THREE.BufferAttribute(colors.slice(0, 15), 3));
-    group.add(new THREE.Line(lineGeo, lineMat));
-    // Center point
-    const ptGeo = new THREE.BufferGeometry();
-    ptGeo.setAttribute('position', new THREE.BufferAttribute(positions.slice(15), 3));
-    ptGeo.setAttribute('color', new THREE.BufferAttribute(colors.slice(15), 3));
-    const ptMat = new THREE.PointsMaterial({ size: 6, sizeAttenuation: true, vertexColors: true });
-    group.add(new THREE.Points(ptGeo, ptMat));
-    return group;
+    const pos = new Float32Array([wx, wy, wz]);
+    const col = new Float32Array([r, g, b]);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({ size: 8, sizeAttenuation: true, vertexColors: true });
+    return new THREE.Points(geo, mat);
 }
 
 function disposeVehicle(entry) {
     if (!entry) return;
     if (entry.obj) {
         scene.remove(entry.obj);
-        entry.obj.traverse(child => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) child.material.dispose();
-        });
+        if (entry.obj.geometry) entry.obj.geometry.dispose();
+        if (entry.obj.material) entry.obj.material.dispose();
         entry.obj = null;
     }
 }
@@ -925,7 +894,7 @@ async function pollTransit() {
             entry.color    = color;
         } else {
             const wPos = latLonToWorld(lat, lon);
-            const obj = buildVehicleDiamond(wPos.x, CROSS_Y, wPos.z, color, bearing);
+            const obj = buildVehiclePoint(wPos.x, CROSS_Y, wPos.z, color);
             scene.add(obj);
             _vehicles.set(id, {
                 obj,
@@ -934,7 +903,6 @@ async function pollTransit() {
                 displayLat: lat, displayLon: lon,
                 bearing,
                 lerpStart: now,
-                buildX: wPos.x, buildZ: wPos.z,
                 color,
             });
         }
@@ -986,13 +954,12 @@ function stopTransit() {
 
 function lerpVehicles() {
     const now = performance.now();
-    const duration = TRANSIT_POLL_MS; // lerp over the full poll interval
+    const duration = TRANSIT_POLL_MS;
     for (const entry of _vehicles.values()) {
         if (!entry.obj) continue;
         const elapsed = now - entry.lerpStart;
-        // Ease-out: fast start, smooth arrival
         const rawT = Math.min(1, elapsed / duration);
-        const t = 1 - (1 - rawT) * (1 - rawT);
+        const t = 1 - (1 - rawT) * (1 - rawT); // ease-out
 
         const lat = entry.fromLat + (entry.toLat - entry.fromLat) * t;
         const lon = entry.fromLon + (entry.toLon - entry.fromLon) * t;
@@ -1000,8 +967,11 @@ function lerpVehicles() {
         entry.displayLon = lon;
 
         const wPos = latLonToWorld(lat, lon);
-        // Offset from where geometry was originally built
-        entry.obj.position.set(wPos.x - entry.buildX, 0, wPos.z - entry.buildZ);
+        const posArr = entry.obj.geometry.getAttribute('position').array;
+        posArr[0] = wPos.x;
+        posArr[1] = CROSS_Y;
+        posArr[2] = wPos.z;
+        entry.obj.geometry.getAttribute('position').needsUpdate = true;
     }
 }
 
