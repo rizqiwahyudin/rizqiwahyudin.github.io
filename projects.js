@@ -91,6 +91,15 @@ const projects = [
         classification: "webgl // navigation",
         sim: "citywatch.html",
         tags: ["three.js", "osm", "gps", "real-time"]
+    },
+    {
+        type: "sim",
+        title: "transit",
+        subtitle: "live metro // stockholm",
+        desc: "",
+        classification: "webgl // gtfs-rt",
+        sim: "transit.html",
+        tags: ["three.js", "osm", "gtfs", "schedule interpolation"]
     }
 ];
 
