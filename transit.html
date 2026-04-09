@@ -245,6 +245,8 @@ const GROUND_GRID_SPACING = 18; // world units between ground points (tuned afte
 let scene, camera, renderer, controls, composer;
 let buildingLines = null;      // current THREE.LineSegments
 let buildingLineMaterial = null;
+let buildingMesh = null;       // dark solid faces for occlusion
+let buildingMeshMaterial = null;
 let aspect = window.innerWidth / window.innerHeight;
 
 // coordinate system origin, set per city load
@@ -270,6 +272,7 @@ let _buildChunks = [];         // array of way elements
 let _buildChunkIdx = 0;
 let _buildPositions = [];      // accumulated line vertex data
 let _buildColors = [];
+let _buildFacePositions = [];  // accumulated triangle vertex data for solid faces
 let _buildNodes = {};          // node id -> {lat, lon}
 let _buildTotal = 0;
 let _isBuildingChunks = false;
@@ -382,10 +385,11 @@ function latLonToWorld(lat, lon) {
 // Matches citywatch.html heightColor: dark blue-teal at base, full #33ccff at top.
 // verticalT: 0 (base) to 1 (top)
 function columnColor(normalizedH, verticalT) {
-    const t = verticalT;
-    const r = 0.1 + t * 0.1;
-    const g = 0.5 + t * 0.3;
-    const b = 0.8 + t * 0.2;
+    // Bright at base, fading to dark/transparent at top
+    const fade = 1.0 - verticalT * 0.75; // base=1.0, top=0.25
+    const r = (0.1 + normalizedH * 0.15) * fade;
+    const g = (0.5 + normalizedH * 0.3)  * fade;
+    const b = (0.8 + normalizedH * 0.2)  * fade;
     return [r, g, b];
 }
 
@@ -493,6 +497,13 @@ out body;>;out skel qt;`;
 // ─── Geometry ────────────────────────────────────────────────────────────────
 
 function clearPointCloud() {
+    if (buildingMesh) {
+        scene.remove(buildingMesh);
+        buildingMesh.geometry.dispose();
+        if (buildingMeshMaterial) buildingMeshMaterial.dispose();
+        buildingMesh = null;
+        buildingMeshMaterial = null;
+    }
     if (buildingLines) {
         scene.remove(buildingLines);
         buildingLines.geometry.dispose();
@@ -517,6 +528,7 @@ function resetBuildState() {
     _buildChunkIdx = 0;
     _buildPositions = [];
     _buildColors = [];
+    _buildFacePositions = [];
     _buildNodes = {};
     _buildTotal = 0;
     _isBuildingChunks = false;
@@ -583,15 +595,50 @@ function processChunk(chunk) {
                 _buildColors.push(rb, gb, bb,  rt, gt, bt);
             }
 
+            // Wall face: two triangles per edge (a-bottom, a-top, b-top, b-bottom)
+            _buildFacePositions.push(
+                a.x, 0, a.z,  a.x, h, a.z,  b.x, h, b.z,
+                a.x, 0, a.z,  b.x, h, b.z,  b.x, 0, b.z
+            );
+
             // Track bounds
             if (a.x < _minX) _minX = a.x; if (a.x > _maxX) _maxX = a.x;
             if (a.z < _minZ) _minZ = a.z; if (a.z > _maxZ) _maxZ = a.z;
         }
+
+        // Roof face: simple fan triangulation from first vertex
+        if (footprint.length >= 3) {
+            const p0 = footprint[0];
+            for (let i = 1; i < footprint.length - 2; i++) {
+                const p1 = footprint[i];
+                const p2 = footprint[i + 1];
+                _buildFacePositions.push(
+                    p0.x, h, p0.z,  p1.x, h, p1.z,  p2.x, h, p2.z
+                );
+            }
+        }
+
         if (h > _maxY) _maxY = h;
     }
 }
 
 function finalizePointCloud(cityName, totalBuildings) {
+    // Dark solid faces (rendered first for occlusion)
+    const facePositions = new Float32Array(_buildFacePositions);
+    const faceGeo = new THREE.BufferGeometry();
+    faceGeo.setAttribute('position', new THREE.BufferAttribute(facePositions, 3));
+    buildingMeshMaterial = new THREE.MeshBasicMaterial({
+        color: 0x050810,
+        transparent: true,
+        opacity: 0.08,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+    });
+    buildingMesh = new THREE.Mesh(faceGeo, buildingMeshMaterial);
+    buildingMesh.renderOrder = 0;
+    scene.add(buildingMesh);
+
+    // Wireframe edges on top
     const positions = new Float32Array(_buildPositions);
     const colors    = new Float32Array(_buildColors);
 
@@ -599,10 +646,20 @@ function finalizePointCloud(cityName, totalBuildings) {
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
 
-    buildingLineMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
+    buildingLineMaterial = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        depthTest: true,
+    });
 
     buildingLines = new THREE.LineSegments(geo, buildingLineMaterial);
+    buildingLines.renderOrder = 1;
     scene.add(buildingLines);
+
+    // Free build arrays
+    _buildPositions = [];
+    _buildColors = [];
+    _buildFacePositions = [];
 
     fitCamera();
     buildGroundPlane(_minX, _maxX, _minZ, _maxZ);
