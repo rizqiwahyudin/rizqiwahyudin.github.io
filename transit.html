@@ -903,6 +903,7 @@ async function pollTransit() {
 
     const incoming = data.vehicles || [];
     const seenIds = new Set();
+    const now = performance.now();
 
     for (const v of incoming) {
         const id = v.id;
@@ -910,49 +911,30 @@ async function pollTransit() {
         const lat     = v.lat;
         const lon     = v.lon;
         const bearing = v.bearing || 0;
-        const speed   = v.speed != null && v.speed >= 0 ? v.speed : 0;
         const color   = LINE_COLORS[v.color] || [0.9, 0.65, 0.1];
-        const wPos    = latLonToWorld(lat, lon);
 
         if (_vehicles.has(id)) {
             const entry = _vehicles.get(id);
-            // Compute observed speed from actual position delta
-            const prevW = latLonToWorld(entry.serverLat, entry.serverLon);
-            const currW = wPos;
-            const distWorld = Math.sqrt((currW.x - prevW.x) ** 2 + (currW.z - prevW.z) ** 2);
-            const dtSec = (performance.now() - entry.serverUpdateTime) / 1000;
-            let observedSpeed = 0;
-            if (dtSec > 1 && distWorld > 0.1) {
-                // Convert world distance back to meters
-                const distM = distWorld / worldScale;
-                const measured = distM / dtSec;
-                observedSpeed = (measured > 0.5 && measured < 100) ? measured : 0;
-            }
-
-            disposeVehicle(entry);
-            const obj = buildVehicleDiamond(wPos.x, CROSS_Y, wPos.z, color, bearing);
-            scene.add(obj);
-            entry.obj             = obj;
-            entry.serverLat       = lat;
-            entry.serverLon       = lon;
-            entry.interpLat       = lat;
-            entry.interpLon       = lon;
-            entry.bearing         = bearing;
-            entry.observedSpeed   = observedSpeed;
-            entry.serverUpdateTime = performance.now();
-            entry.color           = color;
+            // Previous target becomes the lerp origin
+            entry.fromLat  = entry.displayLat;
+            entry.fromLon  = entry.displayLon;
+            entry.toLat    = lat;
+            entry.toLon    = lon;
+            entry.bearing  = bearing;
+            entry.lerpStart = now;
+            entry.color    = color;
         } else {
+            const wPos = latLonToWorld(lat, lon);
             const obj = buildVehicleDiamond(wPos.x, CROSS_Y, wPos.z, color, bearing);
             scene.add(obj);
             _vehicles.set(id, {
                 obj,
-                serverLat:       lat,
-                serverLon:       lon,
-                interpLat:       lat,
-                interpLon:       lon,
+                fromLat: lat, fromLon: lon,
+                toLat: lat,   toLon: lon,
+                displayLat: lat, displayLon: lon,
                 bearing,
-                observedSpeed:   speed,
-                serverUpdateTime: performance.now(),
+                lerpStart: now,
+                buildX: wPos.x, buildZ: wPos.z,
                 color,
             });
         }
@@ -1002,39 +984,24 @@ function stopTransit() {
     updateHud();
 }
 
-function deadReckonVehicles() {
+function lerpVehicles() {
     const now = performance.now();
+    const duration = TRANSIT_POLL_MS; // lerp over the full poll interval
     for (const entry of _vehicles.values()) {
         if (!entry.obj) continue;
-        const elapsed = (now - entry.serverUpdateTime) / 1000;
-        if (elapsed <= 0 || elapsed > TRANSIT_POLL_MS / 1000 + 2) continue;
+        const elapsed = now - entry.lerpStart;
+        // Ease-out: fast start, smooth arrival
+        const rawT = Math.min(1, elapsed / duration);
+        const t = 1 - (1 - rawT) * (1 - rawT);
 
-        const speed   = entry.observedSpeed || 0;
-        const bearing = entry.bearing || 0;
-        if (speed < 0.5) continue;
+        const lat = entry.fromLat + (entry.toLat - entry.fromLat) * t;
+        const lon = entry.fromLon + (entry.toLon - entry.fromLon) * t;
+        entry.displayLat = lat;
+        entry.displayLon = lon;
 
-        // Interpolate from server position, don't compound
-        const bearingRad = bearing * Math.PI / 180;
-        const latRad     = entry.serverLat * Math.PI / 180;
-        const newLat     = entry.serverLat + Math.cos(bearingRad) * speed * elapsed / 111320;
-        const newLon     = entry.serverLon + Math.sin(bearingRad) * speed * elapsed / (111320 * Math.cos(latRad));
-
-        if (!isFinite(newLat) || !isFinite(newLon)) continue;
-
-        entry.interpLat = newLat;
-        entry.interpLon = newLon;
-
-        const wPos = latLonToWorld(newLat, newLon);
-        entry.obj.position.set(0, 0, 0); // reset group position; geometry is absolute
-        // Move all children
-        entry.obj.traverse(child => {
-            if (child === entry.obj) return;
-            // Rebuild is cheap but let's just move the group
-        });
-        // Simpler: rebuild position. Since the group is at origin, just set group position offset
-        // Actually: the geometry was built at absolute coords. Let's use group translation.
-        const origW = latLonToWorld(entry.serverLat, entry.serverLon);
-        entry.obj.position.set(wPos.x - origW.x, 0, wPos.z - origW.z);
+        const wPos = latLonToWorld(lat, lon);
+        // Offset from where geometry was originally built
+        entry.obj.position.set(wPos.x - entry.buildX, 0, wPos.z - entry.buildZ);
     }
 }
 
@@ -1191,9 +1158,9 @@ function animate() {
         tickBuildChunks(_pendingCityName);
     }
 
-    // dead reckon transit vehicles between polls
+    // smoothly interpolate metro vehicles between polls
     if (_transitActive && _vehicles.size > 0) {
-        deadReckonVehicles();
+        lerpVehicles();
     }
 
     // Animate ground wave so empty areas feel alive
