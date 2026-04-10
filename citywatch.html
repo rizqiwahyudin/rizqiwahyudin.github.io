@@ -614,7 +614,30 @@
         footway:     { r: 0.22, g: 0.28, b: 0.18 },
       }
     };
+    // Derive internal color fields from defaults
+    function deriveColorFields() {
+        const b = cwColors.building;
+        b._baseR = b.base.r; b._baseG = b.base.g; b._baseB = b.base.b;
+        b._rangeR = b.range.r; b._rangeG = b.range.g; b._rangeB = b.range.b;
+        b._jitter = b.jitter || 0.08;
+    }
+    deriveColorFields();
+
+    // Flush tile cache and force rebuild with current colors
+    function flushTilesForRecolor() {
+        if (typeof tileCache === 'undefined' || typeof scene === 'undefined') return;
+        for (const [key, entry] of tileCache.entries()) {
+            if (entry.points) { scene.remove(entry.points); entry.points.geometry.dispose(); entry.points.material.dispose(); }
+            if (entry.streamPoints) { scene.remove(entry.streamPoints); entry.streamPoints.geometry.dispose(); entry.streamPoints.material.dispose(); }
+        }
+        tileCache.clear();
+        if (typeof loadingSet !== 'undefined') loadingSet.clear();
+        // Re-trigger tile loading
+        if (smoothLat !== null && typeof updateTileManager === 'function') updateTileManager(smoothLat, smoothLon);
+    }
+
     // Fetch server palette; fallback to defaults above if unreachable
+    let colorsReady = false;
     (async () => {
       try {
         const res = await fetch(`${VPS_URL}/colors`, { signal: AbortSignal.timeout(4000) });
@@ -622,14 +645,13 @@
           const c = await res.json();
           if (c.building) cwColors.building = c.building;
           if (c.roads) cwColors.roads = Object.assign(cwColors.roads, c.roads);
-          // Derive base/top from base+range for the heightColor function
-          const b = cwColors.building;
-          b._baseR = b.base.r; b._baseG = b.base.g; b._baseB = b.base.b;
-          b._rangeR = b.range.r; b._rangeG = b.range.g; b._rangeB = b.range.b;
-          b._jitter = b.jitter || 0.08;
+          deriveColorFields();
           console.log('[CW] Color config loaded from server');
+          // Flush any tiles built with stale defaults, they'll rebuild with correct colors
+          flushTilesForRecolor();
         }
       } catch (e) { console.warn('[CW] Color config fetch failed, using defaults'); }
+      colorsReady = true;
     })();
 
     // ─── Time-of-day color temperature ───────────────────────────────────────
