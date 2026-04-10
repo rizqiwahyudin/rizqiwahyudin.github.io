@@ -463,63 +463,7 @@
         #zoom-indicator span { color: #c4a96a; }
 
         /* ── Transit search panel ── */
-        #transit-search-panel {
-            position: fixed;
-            bottom: 152px;
-            left: 14px;
-            z-index: 25;
-            display: none;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 6px;
-            background: rgba(13,15,12,0.84);
-            border: 1px solid rgba(221,213,192,0.18);
-            padding: 7px 10px;
-            pointer-events: all;
-        }
-        #transit-search-input-container {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        #transit-search-input {
-            font-family: 'DotGothic16', monospace;
-            font-size: 11px;
-            letter-spacing: 1px;
-            text-transform: lowercase;
-            background: transparent;
-            border: none;
-            outline: none;
-            color: #ddd5c0;
-            width: 80px;
-            caret-color: #c4a96a;
-        }
-        #transit-search-input::placeholder { color: rgba(221,213,192,0.28); }
-        #transit-search-btn, #transit-search-clear-btn {
-            font-family: 'DotGothic16', monospace;
-            font-size: 11px;
-            letter-spacing: 1px;
-            text-transform: lowercase;
-            background: transparent;
-            border: 1px solid rgba(221,213,192,0.28);
-            color: #ddd5c0;
-            padding: 2px 8px;
-            cursor: pointer;
-            transition: border-color 0.15s, color 0.15s;
-        }
-        #transit-search-btn:hover { border-color: #c4a96a; color: #c4a96a; }
-        #transit-search-clear-btn {
-            border-color: rgba(255,255,255,0.15);
-            color: rgba(221,213,192,0.4);
-            display: none;
-            padding: 2px 6px;
-        }
-        #transit-search-clear-btn:hover { border-color: #c45c30; color: #c45c30; }
-        #transit-search-results {
-            margin-top: 4px;
-            font-size: 10px;
-            color: rgba(255,255,255,0.5);
-        }
+
 
         /* ── Transit sidebar (SL real-time) ── */
         #transit-sidebar {
@@ -529,6 +473,7 @@
             top: 50%;
             transform: translateY(-50%);
             width: 200px;
+            box-sizing: border-box;
             background: rgba(8,14,18,0.92);
             border-left: 1px solid rgba(61,214,200,0.18);
             padding: 16px 12px;
@@ -593,19 +538,16 @@
         <label class="layer-toggle"><input type="checkbox" id="layer-transit"> transit</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-traffic"> traffic</label>
         <label class="layer-toggle"><input type="checkbox" id="layer-weather" checked> weather</label>
+        <label class="layer-toggle" style="margin-top:6px;border-top:1px solid rgba(221,213,192,0.12);padding-top:6px"><input type="checkbox" id="layer-extended-range"> extended range</label>
     </div>
-        <!-- Transit search panel -->
-    <div id="transit-search-panel">
-        <input id="transit-search-input" type="text" placeholder="line..." autocomplete="off" spellcheck="false" />
-        <button id="transit-search-btn">find</button>
-        <button id="transit-search-clear-btn" title="clear search">×</button>
-    </div>
+
 
     <button id="surveillance-btn">surveillance // off</button>
     <button id="regen-btn" title="regenerate city">regen</button>
 
     <!-- Transit info sidebar (SL real-time) -->
     <div id="transit-sidebar">
+        <button id="transit-sidebar-close" style="position:absolute;top:6px;right:6px;background:none;border:1px solid rgba(221,213,192,0.25);color:rgba(221,213,192,0.5);font-family:'DotGothic16',monospace;font-size:12px;cursor:pointer;padding:1px 5px;line-height:1;">×</button>
         <div id="transit-sidebar-line"></div>
         <div id="transit-sidebar-headsign"></div>
         <div id="transit-sidebar-stops"></div>
@@ -2103,7 +2045,7 @@
     // Called whenever GPS position updates -- manages the tile grid
     // Surveillance OFF: 2x2 grid (4 tiles); Surveillance ON: 5x5 grid (25 tiles)
     function updateTileManager(lat, lon) {
-        const desired = surveillanceOn ? get5x5Tiles(lat, lon) : get3x3Tiles(lat, lon);
+        const desired = (surveillanceOn && layerExtendedRange) ? get5x5Tiles(lat, lon) : get3x3Tiles(lat, lon);
         const desiredKeys = new Set(desired.map(t => `${ZOOM}/${t.x}/${t.y}`));
 
         // Hide tiles outside desired set but keep them in cache -- they'll be instantly
@@ -2322,7 +2264,7 @@
     const aircraftLabelsEl = document.getElementById('aircraft-labels');
     function updateAircraftLabels() {
         if (!aircraftLabelsEl) return;
-        if (aircraftData.size === 0) { aircraftLabelsEl.innerHTML = ''; return; }
+        if (!surveillanceOn || aircraftData.size === 0) { aircraftLabelsEl.innerHTML = ''; return; }
         if (worldOriginLat === null) return;
 
         const cam = cameraMode === 'birdseye' ? camera :
@@ -2440,12 +2382,13 @@
     let layerTransit = false;
     let layerTraffic = false;
     let layerWeather = true;
+    let layerExtendedRange = false;
 
     // ─── Transit State (schedule interpolation) ─────────────────────────────
     let transitFocused = null;              // focused tripId or null
     let transitShapePoints = null;          // THREE.Points for focused route shape
     let transitPollInterval = null;         // setInterval handle
-    let transitSearchResults = new Set();   // line numbers from search
+
     let _transitSchedule = null;            // raw schedule payload from server
     let _transitTripLookup = {};            // tripId -> {line, color, shapeId, stops}
     let _transitShapeLookup = {};           // shapeId -> [{dist, lat, lon}]
@@ -2461,7 +2404,7 @@
     const layerPanel       = document.getElementById('layer-panel');
     const zoomIndicator    = document.getElementById('zoom-indicator');
     const zoomLevelLabel   = document.getElementById('zoom-level-label');
-    const transitSearchPanel = document.getElementById('transit-search-panel');
+
 
     // ─── Regen animation ─────────────────────────────────────────────────────
     const REGEN_DURATION = 2200; // ms per tile
@@ -2535,6 +2478,7 @@
     const cbTransit        = document.getElementById('layer-transit');
     const cbTraffic        = document.getElementById('layer-traffic');
     const cbWeather        = document.getElementById('layer-weather');
+    const cbExtendedRange  = document.getElementById('layer-extended-range');
 
     // Compute effective view radius in meters for LOD determination
     function computeViewRadius() {
@@ -2585,17 +2529,18 @@
         zoomLevelLabel.textContent = newLOD;
 
         if (!surveillanceOn) {
-            // Surveillance off: always street LOD appearance
-            // Only restore tile colors if no route focus mode is active
+            // Surveillance off: clean map, no overlays
             if (!routeState.active) {
                 applyLODToTiles(1.0);
             }
             windParticles.visible = true;
-            aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
+            aircraftPoints.visible = false;
             aircraftTrailLines.visible = false;
+            aircraftLabelsEl.innerHTML = '';
             if (airportPoints) airportPoints.visible = false;
-            if (_transitBatch) _transitBatch.visible = false; for (const _tl of _transitMetroLines) _tl.visible = false;
-            if (cameraPoints) cameraPoints.visible = layerCameras;
+            if (_transitBatch) _transitBatch.visible = false;
+            for (const _tl of _transitMetroLines) _tl.visible = false;
+            if (cameraPoints) cameraPoints.visible = false;
             return;
         }
 
@@ -2630,14 +2575,30 @@
         if (cameraPoints) cameraPoints.visible = layerCameras && (newLOD === 'street' || newLOD === 'district');
     }
 
+    function hideTransitOverlays() {
+        if (transitPollInterval) { clearInterval(transitPollInterval); transitPollInterval = null; }
+        if (_transitBatch) _transitBatch.visible = false;
+        for (const line of _transitMetroLines) line.visible = false;
+        transitFocused = null;
+        document.getElementById('transit-sidebar').classList.remove('visible');
+        if (transitShapePoints) {
+            scene.remove(transitShapePoints);
+            transitShapePoints.geometry.dispose();
+            transitShapePoints.material.dispose();
+            transitShapePoints = null;
+        }
+    }
+
     function updateSurveillanceLayers() {
         if (!surveillanceOn) {
             windParticles.visible = true;
-            aircraftPoints.visible = layerAircraft && aircraftData.size > 0;
+            aircraftPoints.visible = false;
             aircraftTrailLines.visible = false;
+            aircraftLabelsEl.innerHTML = '';
             if (airportPoints) airportPoints.visible = false;
-            if (_transitBatch) _transitBatch.visible = false; for (const _tl of _transitMetroLines) _tl.visible = false;
-            if (cameraPoints) cameraPoints.visible = layerCameras;
+            if (_transitBatch) _transitBatch.visible = false;
+            for (const _tl of _transitMetroLines) _tl.visible = false;
+            if (cameraPoints) cameraPoints.visible = false;
             return;
         }
         // Apply current LOD rules with current layer flags
@@ -2650,27 +2611,49 @@
         if (cameraPoints) cameraPoints.visible = layerCameras && (currentLOD === 'street' || currentLOD === 'district');
     }
 
+    document.getElementById('transit-sidebar-close').addEventListener('click', () => {
+        document.getElementById('transit-sidebar').classList.remove('visible');
+        transitFocused = null;
+        if (transitShapePoints) {
+            scene.remove(transitShapePoints);
+            transitShapePoints.geometry.dispose();
+            transitShapePoints.material.dispose();
+            transitShapePoints = null;
+        }
+    });
+
     surveillanceBtn.addEventListener('click', () => {
         surveillanceOn = !surveillanceOn;
         surveillanceBtn.textContent = surveillanceOn ? 'surveillance // on' : 'surveillance // off';
         surveillanceBtn.classList.toggle('active', surveillanceOn);
         layerPanel.style.display = surveillanceOn ? 'block' : 'none';
         zoomIndicator.style.display = surveillanceOn ? 'block' : 'none';
-        // Force LOD recalculation
-        onLODChange(currentLOD);
-        if (!surveillanceOn) {
-            // Restore tile colors/visibility (skip if route focus mode is active)
+
+        if (surveillanceOn) {
+            // Start aircraft polling
+            if (layerAircraft) startAircraftPolling();
+            // Fetch cameras if needed
+            if (layerCameras && !cameraPoints) fetchSurveillanceCameras();
+        } else {
+            // Clean state: hide all overlays
+            stopAircraftPolling();
+            if (cameraPoints) cameraPoints.visible = false;
+            hideTransitOverlays();
+            // Snap extended range back to 3x3
+            layerExtendedRange = false;
+            cbExtendedRange.checked = false;
+            // Restore tile colors/visibility
             for (const entry of tileCache.values()) {
                 if (entry.points) entry.points.visible = true;
             }
             if (!routeState.active) {
                 applyLODToTiles(1.0);
             } else {
-                // Re-apply focus mode to get correct dimming back
                 applyFocusModeAll();
             }
         }
-        // Switch tile grid size based on new surveillance state
+
+        onLODChange(currentLOD);
         if (smoothLat !== null) {
             updateTileManager(smoothLat, smoothLon);
         }
@@ -2678,18 +2661,22 @@
 
     cbAircraft.addEventListener('change', () => {
         layerAircraft = cbAircraft.checked;
+        if (surveillanceOn && layerAircraft) {
+            startAircraftPolling();
+        } else if (!layerAircraft) {
+            stopAircraftPolling();
+        }
         updateSurveillanceLayers();
     });
     cbCameras.addEventListener('change', () => {
         layerCameras = cbCameras.checked;
-        if (layerCameras && !cameraPoints) fetchSurveillanceCameras();
+        if (surveillanceOn && layerCameras && !cameraPoints) fetchSurveillanceCameras();
         updateSurveillanceLayers();
     });
     cbTransit.addEventListener('change', async () => {
         layerTransit = cbTransit.checked;
         updateSurveillanceLayers();
         if (layerTransit) {
-            transitSearchPanel.style.display = 'flex';
             if (!_transitSchedule) {
                 const ok = await fetchTransitSchedule();
                 if (!ok) { cbTransit.checked = false; layerTransit = false; return; }
@@ -2701,18 +2688,7 @@
             if (_transitBatch) _transitBatch.visible = true;
             for (const line of _transitMetroLines) line.visible = true;
         } else {
-            transitSearchPanel.style.display = 'none';
-            if (transitPollInterval) { clearInterval(transitPollInterval); transitPollInterval = null; }
-            if (_transitBatch) _transitBatch.visible = false;
-            for (const line of _transitMetroLines) line.visible = false;
-            transitFocused = null;
-            document.getElementById('transit-sidebar').classList.remove('visible');
-            if (transitShapePoints) {
-                scene.remove(transitShapePoints);
-                transitShapePoints.geometry.dispose();
-                transitShapePoints.material.dispose();
-                transitShapePoints = null;
-            }
+            hideTransitOverlays();
         }
     });
     cbTraffic.addEventListener('change', () => {
@@ -2723,6 +2699,10 @@
     cbWeather.addEventListener('change', () => {
         layerWeather = cbWeather.checked;
         updateSurveillanceLayers();
+    });
+    cbExtendedRange.addEventListener('change', () => {
+        layerExtendedRange = cbExtendedRange.checked;
+        if (smoothLat !== null) updateTileManager(smoothLat, smoothLon);
     });
 
     // ─── Airport data (nearest airport to GPS position) ───────────────────────
@@ -2843,58 +2823,7 @@
 
     fetchAirportData();
 
-    const transitSearchInput = document.getElementById('transit-search-input');
-    const transitSearchBtn = document.getElementById('transit-search-btn');
-    const transitSearchClearBtn = document.getElementById('transit-search-clear-btn');
 
-    transitSearchBtn.addEventListener('click', () => {
-        searchTransitLine(transitSearchInput.value);
-    });
-    transitSearchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') searchTransitLine(transitSearchInput.value);
-    });
-    transitSearchClearBtn.addEventListener('click', clearTransitSearch);
-
-    function searchTransitLine(line) {
-        if (!line.trim()) return;
-        const query = line.trim().toLowerCase();
-        transitSearchResults.clear();
-        // Client-side search from schedule data
-        for (const [tid, trip] of Object.entries(_transitTripLookup)) {
-            if (String(trip.line).toLowerCase() === query) {
-                transitSearchResults.add(String(trip.line));
-            }
-        }
-        highlightSearchedVehicles();
-        transitSearchClearBtn.style.display = 'inline-block';
-    }
-
-    function clearTransitSearch() {
-        transitSearchInput.value = '';
-        transitSearchClearBtn.style.display = 'none';
-        transitSearchResults.clear();
-        if (!_transitBatch) return;
-        // Reset all vehicle colors
-        const colArr = _transitBatch.geometry.getAttribute('color').array;
-        for (const [tid, entry] of _transitSlotMap.entries()) {
-            const s = entry.slot * 3;
-            colArr[s] = entry.color[0]; colArr[s+1] = entry.color[1]; colArr[s+2] = entry.color[2];
-        }
-        _transitBatch.geometry.getAttribute('color').needsUpdate = true;
-    }
-
-    function highlightSearchedVehicles() {
-        if (!_transitBatch) return;
-        const colArr = _transitBatch.geometry.getAttribute('color').array;
-        for (const [tid, entry] of _transitSlotMap.entries()) {
-            const trip = _transitTripLookup[tid];
-            const isMatch = trip && transitSearchResults.has(String(trip.line));
-            const c = isMatch ? [1.0, 1.0, 1.0] : [entry.color[0] * 0.3, entry.color[1] * 0.3, entry.color[2] * 0.3];
-            const s = entry.slot * 3;
-            colArr[s] = c[0]; colArr[s+1] = c[1]; colArr[s+2] = c[2];
-        }
-        _transitBatch.geometry.getAttribute('color').needsUpdate = true;
-    }
 
     // ─── Transit: schedule interpolation via VPS ─────────────────────────────
 
@@ -3024,8 +2953,22 @@
     }
 
     // Start aircraft fetch interval
-    fetchAircraft();
-    setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
+    // Aircraft polling is started/stopped by surveillance toggle
+    let aircraftPollInterval = null;
+    function startAircraftPolling() {
+        if (aircraftPollInterval) return;
+        fetchAircraft();
+        aircraftPollInterval = setInterval(fetchAircraft, AIRCRAFT_UPDATE_INTERVAL);
+    }
+    function stopAircraftPolling() {
+        if (aircraftPollInterval) { clearInterval(aircraftPollInterval); aircraftPollInterval = null; }
+        aircraftData.clear();
+        aircraftCount = 0;
+        aircraftPoints.visible = false;
+        aircraftTrailLines.visible = false;
+        aircraftLabelsEl.innerHTML = '';
+        if (airportPoints) airportPoints.visible = false;
+    }
 
     // SL real-time transit poll is started on-demand when the transit layer
     // is enabled via the checkbox handler (cbTransit 'change' listener).
@@ -3407,7 +3350,7 @@
         }
     }
 
-    fetchSurveillanceCameras();
+    // Camera fetch deferred to surveillance toggle-on
 
     // ─── HUD updates ──────────────────────────────────────────────────────────
     const coordsPanel = document.getElementById('coords-panel');
@@ -3438,7 +3381,7 @@
         const loading = loadingSet.size;
         const errors = [...tileCache.values()].filter(e => e.error).length;
         const offline = [...tileCache.values()].some(e => e.offline);
-        const tileTarget = surveillanceOn ? 25 : 9;
+        const tileTarget = (surveillanceOn && layerExtendedRange) ? 25 : 9;
 
         let html = `tiles     <span>${loaded}/${tileTarget}</span>`;
         if (loading > 0) {
@@ -3606,7 +3549,7 @@
         updateTileManager(lat, lon);
         // Re-fetch location-relative data
         fetchAirportData();
-        fetchSurveillanceCameras();
+        if (surveillanceOn && layerCameras) fetchSurveillanceCameras();
     }
 
     function applyGpsOverride(lat, lon) {
@@ -4134,7 +4077,7 @@
             ? Math.max(...[..._transitSlotMap.values()].map(e => e.slot)) + 1 : 0;
         _transitBatch.geometry.setDrawRange(0, maxSlot);
 
-        if (transitSearchResults.size > 0) highlightSearchedVehicles();
+
         updateTileHUD();
     }
 
