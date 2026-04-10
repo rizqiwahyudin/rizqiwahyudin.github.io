@@ -762,37 +762,7 @@
     // ─── Scene setup ──────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d0f0c);
-    scene.fog = new THREE.FogExp2(0x0d1008, 0.0005); // light fog, reduced from 0.0012
-
-    // ── Mist layer: sparse transparent sprites at low altitude ───────────────
-    // Gives the same volumetric haze feel as city.html without choking aircraft visibility
-    {
-        const MIST_COUNT = 600;
-        const MIST_SPAN  = 1200; // ±meters from origin
-        const mistPos = new Float32Array(MIST_COUNT * 3);
-        const mistCol = new Float32Array(MIST_COUNT * 3);
-        for (let i = 0; i < MIST_COUNT; i++) {
-            mistPos[i * 3]     = (Math.random() - 0.5) * MIST_SPAN * 2;
-            mistPos[i * 3 + 1] = Math.random() * 18; // 0-18m above ground
-            mistPos[i * 3 + 2] = (Math.random() - 0.5) * MIST_SPAN * 2;
-            const b = 0.06 + Math.random() * 0.06;
-            mistCol[i * 3]     = b * 0.55;
-            mistCol[i * 3 + 1] = b * 0.75;
-            mistCol[i * 3 + 2] = b * 1.0;
-        }
-        const mistGeo = new THREE.BufferGeometry();
-        mistGeo.setAttribute('position', new THREE.BufferAttribute(mistPos, 3));
-        mistGeo.setAttribute('color', new THREE.BufferAttribute(mistCol, 3));
-        const mistMat = new THREE.PointsMaterial({
-            size: 28,
-            sizeAttenuation: true,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.06,
-            depthWrite: false,
-        });
-        scene.add(new THREE.Points(mistGeo, mistMat));
-    }
+    scene.fog = new THREE.FogExp2(0x0a0a0a, 0.0005);
 
     // Orthographic camera, top-down
     const frustumSize = 400; // meters across initially
