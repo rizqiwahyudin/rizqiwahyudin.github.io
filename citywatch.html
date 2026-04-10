@@ -660,6 +660,36 @@
     const VPS_URL = CF_WORKER; // route VPS calls through CF Worker (HTTPS + cached)
     const SMOOTH_ALPHA = 0.2; // exponential smoothing: 0.8 * old + 0.2 * new
 
+    // ─── Server color config (fetched from /colors, single source of truth) ──
+    let cwColors = {
+      building: { base: { r: 0.35, g: 0.22, b: 0.05 }, range: { r: 0.55, g: 0.40, b: 0.14 }, jitter: 0.08 },
+      roads: {
+        primary:     { r: 0.62, g: 0.50, b: 0.30 },
+        secondary:   { r: 0.62, g: 0.50, b: 0.30 },
+        tertiary:    { r: 0.45, g: 0.36, b: 0.22 },
+        residential: { r: 0.45, g: 0.36, b: 0.22 },
+        service:     { r: 0.30, g: 0.24, b: 0.14 },
+        footway:     { r: 0.22, g: 0.28, b: 0.18 },
+      }
+    };
+    // Fetch server palette; fallback to defaults above if unreachable
+    (async () => {
+      try {
+        const res = await fetch(`${VPS_URL}/colors`, { signal: AbortSignal.timeout(4000) });
+        if (res.ok) {
+          const c = await res.json();
+          if (c.building) cwColors.building = c.building;
+          if (c.roads) cwColors.roads = Object.assign(cwColors.roads, c.roads);
+          // Derive base/top from base+range for the heightColor function
+          const b = cwColors.building;
+          b._baseR = b.base.r; b._baseG = b.base.g; b._baseB = b.base.b;
+          b._rangeR = b.range.r; b._rangeG = b.range.g; b._rangeB = b.range.b;
+          b._jitter = b.jitter || 0.08;
+          console.log('[CW] Color config loaded from server');
+        }
+      } catch (e) { console.warn('[CW] Color config fetch failed, using defaults'); }
+    })();
+
     // ─── Time-of-day color temperature ───────────────────────────────────────
     // Local hour = UTC + 2 (Riga EET approximation)
     function getTimeOfDayMultiplier() {
@@ -1591,24 +1621,61 @@
                         const origColArr = new Float32Array(pointCount * 3);
                         const tileStreamPoints = [];
 
+                        const todMult = getTimeOfDayMultiplier();
+                        const MAX_H = 40;
+                        // Average road color from config (road subtypes not in binary)
+                        const rd = cwColors.roads;
+                        const avgRoad = {
+                          r: (rd.primary.r + rd.tertiary.r + rd.service.r) / 3,
+                          g: (rd.primary.g + rd.tertiary.g + rd.service.g) / 3,
+                          b: (rd.primary.b + rd.tertiary.b + rd.service.b) / 3,
+                        };
+
                         for (let i = 0; i < pointCount; i++) {
                             const base = HEADER_BYTES + i * POINT_STRIDE * 4;
                             const px = view.getFloat32(base + 0, true);
                             const py = view.getFloat32(base + 4, true);
                             const pz = view.getFloat32(base + 8, true);
-                            const pr = view.getFloat32(base + 12, true);
-                            const pg = view.getFloat32(base + 16, true);
-                            const pb = view.getFloat32(base + 20, true);
-                            // Offset by tile world position
+                            // Skip baked r,g,b; recompute from Y coordinate
                             posArr[i * 3 + 0] = px + tileWorldOffset.x;
                             posArr[i * 3 + 1] = py;
                             posArr[i * 3 + 2] = pz + tileWorldOffset.z;
-                            colArr[i * 3 + 0] = pr;
-                            colArr[i * 3 + 1] = pg;
-                            colArr[i * 3 + 2] = pb;
-                            origColArr[i * 3 + 0] = pr;
-                            origColArr[i * 3 + 1] = pg;
-                            origColArr[i * 3 + 2] = pb;
+
+                            let cr, cg, cb;
+                            if (py <= -0.15) {
+                              // Ground point (Y = -0.2)
+                              cr = 0.08; cg = 0.12; cb = 0.15;
+                            } else if (py < 0) {
+                              // Road point (Y = -0.1)
+                              cr = avgRoad.r * todMult[0];
+                              cg = avgRoad.g * todMult[1];
+                              cb = avgRoad.b * todMult[2];
+                            } else {
+                              // Building point: recolor via heightColor
+                              const bc = cwColors.building;
+                              const bR = bc._baseR != null ? bc._baseR : bc.base.r;
+                              const bG = bc._baseG != null ? bc._baseG : bc.base.g;
+                              const bB = bc._baseB != null ? bc._baseB : bc.base.b;
+                              const rR = bc._rangeR != null ? bc._rangeR : bc.range.r;
+                              const rG = bc._rangeG != null ? bc._rangeG : bc.range.g;
+                              const rB = bc._rangeB != null ? bc._rangeB : bc.range.b;
+                              const t = Math.max(0, Math.min(1, py / MAX_H));
+                              const j = (Math.random() - 0.5) * (bc.jitter || 0.08);
+                              cr = (bR + t * rR) * todMult[0];
+                              cg = (bG + t * rG) * todMult[1];
+                              cb = (bB + t * rB) * todMult[2];
+                              const opMult = (py < 1) ? 0.45 : 1.0;
+                              cr *= opMult; cg *= opMult; cb *= opMult;
+                              cr = Math.max(0, Math.min(1, cr + j));
+                              cg = Math.max(0, Math.min(1, cg + j));
+                              cb = Math.max(0, Math.min(1, cb + j));
+                            }
+                            colArr[i * 3 + 0] = cr;
+                            colArr[i * 3 + 1] = cg;
+                            colArr[i * 3 + 2] = cb;
+                            origColArr[i * 3 + 0] = cr;
+                            origColArr[i * 3 + 1] = cg;
+                            origColArr[i * 3 + 2] = cb;
                         }
 
                         // Parse stream particles
@@ -1733,21 +1800,21 @@
             }
 
             function heightColor(t, worldY) {
-                const j = (Math.random() - 0.5) * 0.08;
-                let r, g, b;
-                // Base: deep amber-brown. Top: vivid dusty gold
-                r = 0.35 + t * 0.55;
-                g = 0.22 + t * 0.40;
-                b = 0.05 + t * 0.14;
-                // Apply time-of-day shift
-                r = r * todMult[0];
-                g = g * todMult[1];
-                b = b * todMult[2];
-                // Height-based opacity: ground points (y < 1) get multiplied by 0.45
+                const bc = cwColors.building;
+                const jAmt = bc.jitter || bc._jitter || 0.08;
+                const j = (Math.random() - 0.5) * jAmt;
+                const bR = bc._baseR != null ? bc._baseR : bc.base.r;
+                const bG = bc._baseG != null ? bc._baseG : bc.base.g;
+                const bB = bc._baseB != null ? bc._baseB : bc.base.b;
+                const rR = bc._rangeR != null ? bc._rangeR : bc.range.r;
+                const rG = bc._rangeG != null ? bc._rangeG : bc.range.g;
+                const rB = bc._rangeB != null ? bc._rangeB : bc.range.b;
+                let r = bR + t * rR;
+                let g = bG + t * rG;
+                let b = bB + t * rB;
+                r *= todMult[0]; g *= todMult[1]; b *= todMult[2];
                 const opacityMult = (worldY < 1) ? 0.45 : 1.0;
-                r = r * opacityMult;
-                g = g * opacityMult;
-                b = b * opacityMult;
+                r *= opacityMult; g *= opacityMult; b *= opacityMult;
                 return [Math.max(0,Math.min(1,r+j)), Math.max(0,Math.min(1,g+j)), Math.max(0,Math.min(1,b+j))];
             }
 
@@ -1910,26 +1977,28 @@
                         if (roadPts.length < 2) continue;
 
                         // Determine color and strip offsets by highway type
-                        // Brighter base colors so roads are visible after ToD and LOD multipliers
+                        const rdCfg = cwColors.roads;
                         let rc, gc, bc;
                         let strips;
                         if (hwType === 'primary') {
-                            rc = 0.62; gc = 0.55; bc = 0.42;
+                            rc = rdCfg.primary.r; gc = rdCfg.primary.g; bc = rdCfg.primary.b;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'secondary') {
-                            rc = 0.50; gc = 0.44; bc = 0.34;
+                            const s = rdCfg.secondary || rdCfg.primary;
+                            rc = s.r; gc = s.g; bc = s.b;
                             strips = [-3, 0, 3];
                         } else if (hwType === 'tertiary') {
-                            rc = 0.44; gc = 0.39; bc = 0.30;
+                            rc = rdCfg.tertiary.r; gc = rdCfg.tertiary.g; bc = rdCfg.tertiary.b;
                             strips = [-2, 2];
                         } else if (hwType === 'residential') {
-                            rc = 0.38; gc = 0.34; bc = 0.26;
+                            const r = rdCfg.residential || rdCfg.tertiary;
+                            rc = r.r; gc = r.g; bc = r.b;
                             strips = [-2, 2];
                         } else if (hwType === 'service' || hwType === 'pedestrian') {
-                            rc = 0.33; gc = 0.29; bc = 0.22;
+                            rc = rdCfg.service.r; gc = rdCfg.service.g; bc = rdCfg.service.b;
                             strips = [0];
                         } else { // footway, path
-                            rc = 0.30; gc = 0.36; bc = 0.26;
+                            rc = rdCfg.footway.r; gc = rdCfg.footway.g; bc = rdCfg.footway.b;
                             strips = [0];
                         }
 
