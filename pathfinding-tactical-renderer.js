@@ -348,14 +348,14 @@
 
         signalFrequency(edge, hot) {
             return hot
-                ? 2.4 + Math.min(4.2, edge.effectiveCost / 20)
-                : 1.5 + Math.min(2.0, edge.effectiveCost / 30);
+                ? 1.8 + Math.min(2.4, edge.effectiveCost / 24)
+                : 1.15 + Math.min(1.35, edge.effectiveCost / 36);
         }
 
         signalSubdivisions(edge, hot) {
             const frequency = this.signalFrequency(edge, hot);
-            const samplesPerCycle = hot ? 16 : 8;
-            const minimum = hot ? 36 : 18;
+            const samplesPerCycle = hot ? 20 : 12;
+            const minimum = hot ? 40 : 24;
             return Math.max(
                 minimum,
                 Math.round(frequency * samplesPerCycle)
@@ -371,7 +371,7 @@
                     edgeState => !this.signalHot(edgeState, snapshot)
                 ),
             ];
-            const floors = [28, 14];
+            const floors = [32, 20];
             const subdivisions = new Map();
             let remaining = MAX_SIGNAL_VERTICES;
             groups.forEach((group, groupIndex) => {
@@ -427,22 +427,25 @@
                     timeline.normalize(edgeState.f, 'f') * 190;
                 const settledFactor =
                     edgeState.settledAt !== null ? 0.42 : 1;
-                let routeFactor = 1;
-                if (edgeState.route && snapshot.routeFound) {
-                    const locked = Analytics.carrierLocked(
+                const locked =
+                    edgeState.route &&
+                    snapshot.routeFound &&
+                    Analytics.carrierLocked(
                         timeline.result.edgeIds.indexOf(edgeState.edgeId),
                         timeline.result.edgeIds.length,
                         snapshot.carrierLock
                     );
-                    routeFactor = locked ? 0.12 : 1;
-                }
+                const routeFactor = locked ? 0.12 : 1;
                 const height =
                     4 + fHeight * settledFactor * routeFactor;
                 const frequency = this.signalFrequency(edge, hot);
-                const amplitude =
-                    edgeState.route && snapshot.routeFound
-                        ? 2.5
-                        : 5 + edgeState.amplitude * 9;
+                const amplitude = locked
+                    ? 0.7
+                    : edgeState.route && snapshot.routeFound
+                      ? 2.1
+                      : hot
+                        ? 3.4 + edgeState.amplitude * 2.2
+                        : 1.7;
                 const subdivisions =
                     subdivisionsByEdge.get(edgeState.edgeId) || 16;
                 const dx = b.x - a.x;
