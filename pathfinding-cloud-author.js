@@ -28,7 +28,8 @@
         const profile = options.profile;
         let emitted = 0;
         for (let longitudinal = 0; longitudinal < profile.longitudinal; longitudinal++) {
-            const along = longitudinal / Math.max(1, profile.longitudinal - 1);
+            const baseAlong =
+                longitudinal / Math.max(1, profile.longitudinal - 1);
             for (let layer = 0; layer < profile.layers; layer++) {
                 const surface = layer === 0;
                 for (let radial = 0; radial < profile.radial; radial++) {
@@ -51,6 +52,18 @@
                     const radialDepth = surface
                         ? 0.88 + hash(particleSeed + 4.1) * 0.12
                         : 0.18 + Math.sqrt(hash(particleSeed + 5.9)) * 0.65;
+                    const spacing = 1 / Math.max(1, profile.longitudinal - 1);
+                    const alongJitter =
+                        longitudinal === 0 ||
+                        longitudinal === profile.longitudinal - 1
+                            ? 0
+                            : (hash(particleSeed + 6.7) - 0.5) *
+                              spacing *
+                              0.82;
+                    const along = Math.max(
+                        0,
+                        Math.min(1, baseAlong + alongJitter)
+                    );
                     emit({
                         limbIndex: options.limbIndex,
                         along,
