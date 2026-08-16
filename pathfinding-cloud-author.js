@@ -42,7 +42,12 @@
                         (Math.PI * 2 / profile.radial) *
                         0.7;
                     const radialAngle =
-                        radial / profile.radial * Math.PI * 2 + angleJitter;
+                        (
+                            radial / profile.radial * Math.PI * 2 +
+                            angleJitter +
+                            Math.PI * 2
+                        ) %
+                        (Math.PI * 2);
                     const radialDepth = surface
                         ? 0.88 + hash(particleSeed + 4.1) * 0.12
                         : 0.18 + Math.sqrt(hash(particleSeed + 5.9)) * 0.65;

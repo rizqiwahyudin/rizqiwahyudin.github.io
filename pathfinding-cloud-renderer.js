@@ -175,7 +175,7 @@
                         float progress = state.x;
                         float opacity = state.y;
                         float radius = state.z;
-                        float active = state.w;
+                        float activeState = state.w;
                         float scaled = aAlong * (uAtlasSize.x - 1.0);
                         float sampleA = floor(scaled);
                         float sampleB = min(uAtlasSize.x - 1.0, sampleA + 1.0);
@@ -230,7 +230,7 @@
                             densityThreshold + 0.08,
                             aSeed
                         );
-                        float visible = active * opacity * growth * density;
+                        float visible = activeState * opacity * growth * density;
                         vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
                         gl_Position = projectionMatrix * mvPosition;
                         float perspective = 480.0 / max(80.0, -mvPosition.z);
