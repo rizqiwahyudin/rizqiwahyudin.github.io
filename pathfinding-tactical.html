@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#080a0b">
+    <title>tactical interferometry // signal-field routing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ground: #080a0b; --panel: rgba(10,13,14,.94);
+            --ink: #d9e1e2; --muted: rgba(217,225,226,.48);
+            --line: rgba(217,225,226,.16); --amber: #ef9b35;
+            --blue: #7999aa; --red: #c55339;
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%; margin: 0; overflow: hidden;
+            background: var(--ground); color: var(--ink);
+            font-family: "DotGothic16", monospace; user-select: none;
+        }
+        body::after {
+            content: ""; position: fixed; inset: 0; z-index: 5;
+            pointer-events: none; opacity: .15;
+            background: repeating-linear-gradient(
+                0deg, transparent 0, transparent 3px, rgba(255,255,255,.025) 4px
+            );
+        }
+        canvas {
+            position: fixed; inset: 0; width: 100%; height: 100%;
+            display: block; cursor: crosshair; touch-action: none;
+        }
+        a, button, select, input { font: inherit; }
+        #back {
+            position: fixed; top: 14px; left: 16px; z-index: 10;
+            color: var(--muted); text-decoration: none; font-size: 9px;
+            letter-spacing: .16em;
+        }
+        .panel {
+            position: fixed; z-index: 10; background: var(--panel);
+            border: 1px solid var(--line); box-shadow: 5px 5px 0 rgba(0,0,0,.28);
+        }
+        .title { top: 40px; left: 16px; padding: 10px 13px; pointer-events: none; }
+        .eyebrow { color: var(--amber); font-size: 8px; letter-spacing: .26em; }
+        h1 { margin: 6px 0 3px; font-size: clamp(18px,2vw,28px); font-weight: 400; }
+        .subtitle { color: var(--muted); font-size: 8px; letter-spacing: .1em; }
+        .telemetry {
+            top: 14px; right: 14px; min-width: 218px; padding: 10px 12px;
+            font-size: 8px; line-height: 1.82; letter-spacing: .08em;
+        }
+        .row { display: flex; justify-content: space-between; gap: 22px; color: var(--muted); }
+        .row span:last-child { color: var(--ink); }
+        .specimen {
+            right: 14px; top: 228px; width: 218px; padding: 10px 12px;
+            font-size: 8px; line-height: 1.75; color: var(--muted);
+        }
+        .specimen div:not(.specimen-title):not(.specimen-empty) {
+            display: flex; justify-content: space-between;
+        }
+        .specimen span { color: var(--ink); }
+        .specimen-title {
+            color: var(--amber); padding-bottom: 6px; margin-bottom: 5px;
+            border-bottom: 1px solid var(--line); letter-spacing: .1em;
+        }
+        .specimen-empty { opacity: .5; }
+        .modes {
+            left: 16px; bottom: 112px; padding: 8px; display: flex;
+            flex-wrap: wrap; gap: 5px; width: 335px;
+        }
+        button, select {
+            min-height: 28px; padding: 0 9px; color: var(--muted);
+            background: transparent; border: 1px solid var(--line);
+            font-size: 8px; letter-spacing: .08em; text-transform: lowercase;
+        }
+        button { cursor: pointer; }
+        button:hover, select:hover { color: var(--ink); border-color: rgba(217,225,226,.42); }
+        button.active {
+            color: #090b0c; background: var(--amber); border-color: var(--amber);
+        }
+        button.danger.active { color: #fff; background: var(--red); border-color: var(--red); }
+        .timeline-panel {
+            left: 50%; bottom: 14px; transform: translateX(-50%);
+            width: min(1120px,calc(100vw - 28px)); padding: 8px;
+        }
+        .timeline-top { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; }
+        .timeline-top .spacer { flex: 1; }
+        .timeline-label { color: var(--muted); font-size: 8px; }
+        input[type=range] {
+            width: 100%; height: 3px; appearance: none;
+            background: linear-gradient(90deg,var(--amber),rgba(217,225,226,.15));
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            width: 9px; height: 13px; appearance: none;
+            background: var(--ink); border: 1px solid #000; cursor: ew-resize;
+        }
+        .speed { display: flex; gap: 6px; align-items: center; font-size: 8px; color: var(--muted); }
+        .speed input { width: 90px; }
+        .legend {
+            position: fixed; left: 16px; top: 142px; z-index: 10;
+            color: var(--muted); font-size: 8px; line-height: 1.7;
+            pointer-events: none;
+        }
+        .legend span { display: inline-block; width: 18px; height: 1px; margin-right: 6px; vertical-align: middle; }
+        @media (max-width: 720px) {
+            .title { top: 39px; max-width: 58vw; }
+            .telemetry { min-width: 152px; }
+            .specimen { display: none; }
+            .modes { left: 8px; bottom: 136px; width: calc(100vw - 16px); }
+            .timeline-panel { bottom: 8px; }
+            .timeline-top { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="scene" aria-label="3D tactical signal-field pathfinding analysis"></canvas>
+    <a id="back" href="index.html">&larr; portfolio</a>
+    <header class="title panel">
+        <div class="eyebrow">routing analysis // signal doctrine</div>
+        <h1>tactical interferometry</h1>
+        <div class="subtitle">graph search reconstructed as a phased transmission field</div>
+    </header>
+    <aside class="telemetry panel">
+        <div class="row"><span>state</span><span id="state">transmitting</span></div>
+        <div class="row"><span>algorithm</span><span id="algorithm-stat">a* phased</span></div>
+        <div class="row"><span>event</span><span id="event-index">0/0</span></div>
+        <div class="row"><span>event type</span><span id="event-type">ready</span></div>
+        <div class="row"><span>frontier</span><span id="frontier">0</span></div>
+        <div class="row"><span>settled</span><span id="settled">0</span></div>
+        <div class="row"><span>conflicts</span><span id="conflicts">0</span></div>
+        <div class="row"><span>route cost</span><span id="route-cost">--</span></div>
+        <div class="row"><span>carrier lock</span><span id="carrier-lock">0%</span></div>
+        <div class="row"><span>selected</span><span id="selected-readout">--</span></div>
+    </aside>
+    <aside id="specimen" class="specimen panel">
+        <div class="specimen-empty">select a conductor</div>
+    </aside>
+    <div class="legend">
+        <div><span style="background:#ef9b35"></span>active frontier</div>
+        <div><span style="background:#a4b1b4"></span>settled conductor</div>
+        <div><span style="background:#7999aa"></span>heuristic projection</div>
+        <div><span style="background:#c55339"></span>intervention</div>
+        <div><span style="background:#e7f1f3"></span>locked carrier</div>
+    </div>
+    <section class="modes panel">
+        <button id="astar" class="active">a* phased</button>
+        <button id="dijkstra">dijkstra uniform</button>
+        <button id="run">retransmit</button>
+        <button id="random">new terminals</button>
+        <button id="endpoints">set terminals</button>
+        <button id="scan" class="active">scan plane</button>
+        <select id="contour" aria-label="Cost contour channel">
+            <option value="off">contours off</option>
+            <option value="g">contours g</option>
+            <option value="h">contours h</option>
+            <option value="f" selected>contours f</option>
+        </select>
+        <button id="inspect" class="active">inspect</button>
+        <button id="cut" class="danger">cut</button>
+        <button id="resist" class="danger">resist</button>
+        <button id="amplify">amplify</button>
+        <button id="clear">clear edge</button>
+        <button id="reset-view">reset view</button>
+        <button id="top-view">top view</button>
+        <button id="side-view">cost side</button>
+    </section>
+    <section class="timeline-panel panel">
+        <div class="timeline-top">
+            <button id="step-back">&larr; event</button>
+            <button id="play">pause</button>
+            <button id="step-forward">event &rarr;</button>
+            <button id="acquisition">jump acquisition</button>
+            <span class="spacer"></span>
+            <span class="timeline-label">event scan</span>
+            <label class="speed">rate
+                <input id="speed" type="range" min="8" max="240" value="75">
+            </label>
+        </div>
+        <input id="timeline" type="range" min="0" max="1" value="0" aria-label="Search event timeline">
+    </section>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="pathfinding-core.js"></script>
+    <script src="pathfinding-graph.js"></script>
+    <script src="pathfinding-geometry.js"></script>
+    <script src="pathfinding-analytics.js"></script>
+    <script src="pathfinding-tactical-symbols.js"></script>
+    <script src="pathfinding-tactical-renderer.js"></script>
+    <script src="pathfinding-tactical-app.js"></script>
+</body>
+</html>

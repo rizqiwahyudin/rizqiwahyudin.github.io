@@ -294,7 +294,7 @@
         if (!event.persisted) view.dispose();
     });
 
-    graph = createGraph(graphSeed);
+    graph = SymbioteGraph.createGraph(graphSeed);
     simulation = new SymbioteOrganism.OrganismSimulation(graph);
     view = new SymbioteBiomass.BiomassRenderer(canvas, graph, WORLD, ROAD_STYLE);
     resize();

@@ -77,6 +77,15 @@ const projects = [
     },
     {
         type: "sim",
+        title: "tactical interferometry",
+        subtitle: "signal-field pathfinding analysis",
+        desc: "",
+        classification: "webgl // analytical routing",
+        sim: "pathfinding-tactical.html",
+        tags: ["three.js", "a*", "signals", "analysis"]
+    },
+    {
+        type: "sim",
         title: "transit",
         subtitle: "live metro // stockholm",
         desc: "",
