@@ -329,7 +329,7 @@
         if (!event.persisted && view) view.dispose();
     });
 
-    graph = createGraph(32841);
+    graph = SymbioteGraph.createGraph(32841);
     simulation = new SymbioteOrganism.OrganismSimulation(graph);
     try {
         view = new SymbioteCloudRenderer.PointCloudRenderer(
