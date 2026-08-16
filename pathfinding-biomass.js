@@ -39,6 +39,10 @@
             this.opacity = new Float32Array(MAX_VERTICES);
             this.route = new Float32Array(MAX_VERTICES);
             this.seed = new Float32Array(MAX_VERTICES);
+            this.routeStrandScratch = Array.from(
+                { length: 5 },
+                () => new Float32Array(34)
+            );
 
             this.dynamicGeometry = new THREE.BufferGeometry();
             this.dynamicGeometry.setAttribute(
@@ -172,12 +176,11 @@
         }
 
         resize(width, height) {
-            const pixelBudget = 2200000;
+            // Keep desktop output crisp. Geometry complexity adapts before
+            // resolution does, and DPR never drops below one physical pixel.
+            const pixelBudget = 5200000;
             const budgetRatio = Math.sqrt(pixelBudget / Math.max(1, width * height));
-            const dpr = Math.max(
-                0.75,
-                Math.min(window.devicePixelRatio || 1, 1.5, budgetRatio)
-            );
+            const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2, budgetRatio));
             this.renderer.setPixelRatio(dpr);
             this.renderer.setSize(width, height, false);
 
@@ -229,6 +232,7 @@
                     seed,
                     chain: null,
                     forkChain: null,
+                    visibility: 0,
                 })),
             };
             return tendril.biomass;
@@ -291,6 +295,80 @@
             }
         }
 
+        appendBridge(x0, y0, x1, y1, width, seed, opacity, z) {
+            const dx = x1 - x0;
+            const dy = y1 - y0;
+            const length = Math.max(0.001, Math.hypot(dx, dy));
+            const nx = -dy / length;
+            const ny = dx / length;
+            const a = { x: x0 + nx * width, y: y0 + ny * width };
+            const b = { x: x0 - nx * width, y: y0 - ny * width };
+            const c = { x: x1 + nx * width, y: y1 + ny * width };
+            const d = { x: x1 - nx * width, y: y1 - ny * width };
+            this.appendQuad(a, b, c, d, 0, 1, opacity, 1, seed, z);
+        }
+
+        appendBraidedRoute(chain, progress, seed, time, z) {
+            const count = chain.length / 2;
+            const strandCount = this.routeStrandScratch.length;
+            for (let strand = 0; strand < strandCount; strand++) {
+                const scratch = this.routeStrandScratch[strand];
+                const strandOffset = (strand - (strandCount - 1) * 0.5) * 5.2;
+                for (let index = 0; index < count; index++) {
+                    const previous = Math.max(0, index - 1) * 2;
+                    const next = Math.min(count - 1, index + 1) * 2;
+                    const dx = chain[next] - chain[previous];
+                    const dy = chain[next + 1] - chain[previous + 1];
+                    const length = Math.max(0.001, Math.hypot(dx, dy));
+                    const nx = -dy / length;
+                    const ny = dx / length;
+                    const u = index / (count - 1);
+                    const joinEnvelope = Math.pow(Math.sin(Math.PI * u), 0.42);
+                    const weave =
+                        Math.sin(
+                            u * Math.PI * (2.1 + strand * 0.46) +
+                            time * 0.0014 +
+                            seed * 1.7 +
+                            strand * 1.31
+                        ) *
+                        (1.45 + strand * 0.19);
+                    const offset = (strandOffset + weave) * joinEnvelope;
+                    scratch[index * 2] = chain[index * 2] + nx * offset;
+                    scratch[index * 2 + 1] = chain[index * 2 + 1] + ny * offset;
+                }
+                this.appendRibbon(
+                    scratch,
+                    progress,
+                    strand === 2 ? 1.0 : 0.72,
+                    seed + strand * 13.7,
+                    strand === 2 ? 0.98 : 0.86,
+                    1,
+                    z + strand * 0.01
+                );
+            }
+
+            // Irregular vascular bridges bind the separate strands together.
+            for (let bridge = 0; bridge < 6; bridge++) {
+                const u = 0.14 + Geo.hash(seed * 11.3 + bridge * 29.7) * 0.72;
+                if (u > progress) continue;
+                const point = Geo.sampleChain(chain, u);
+                const envelope = Math.pow(Math.sin(Math.PI * u), 0.42);
+                const pulse = 0.82 + Math.sin(time * 0.004 + seed + bridge) * 0.18;
+                const span = 10.8 * envelope * pulse;
+                const skew = (Geo.hash(seed + bridge * 7.1) - 0.5) * 5.2;
+                this.appendBridge(
+                    point.x - point.nx * span - point.tx * skew,
+                    point.y - point.ny * span - point.ty * skew,
+                    point.x + point.nx * span + point.tx * skew,
+                    point.y + point.ny * span + point.ty * skew,
+                    0.46,
+                    seed + bridge * 23.9,
+                    0.78,
+                    z + 0.08
+                );
+            }
+        }
+
         appendDisc(x, y, radius, opacity, route, seed, z) {
             const segments = this.quality === 0 ? 6 : 10;
             for (let index = 0; index < segments; index++) {
@@ -347,7 +425,7 @@
                 2.6
             );
 
-            if (branch.seed.forkAt !== null && life > branch.seed.forkAt && this.quality > 0) {
+            if (branch.seed.forkAt !== null && life > branch.seed.forkAt) {
                 const forkParent = Geo.sampleChain(branch.chain.position, branch.seed.forkAt);
                 const forkSeed = {
                     ...branch.seed,
@@ -444,9 +522,10 @@
 
                 const contraction =
                     0.82 + Math.sin(time * 0.006 - tendril.cost * 0.02 + tendril.edgeId) * 0.18;
-                const baseWidth =
+                let baseWidth =
                     (edge.kind === 'artery' ? 7.6 : edge.kind === 'track' ? 4.2 : 5.8) *
                     contraction;
+                if (state.routeStart && isRoute) baseWidth *= 0.2;
                 this.appendRibbon(
                     biomass.chain.position,
                     visibleProgress,
@@ -457,32 +536,45 @@
                     2
                 );
 
-                const allowBranches =
+                const qualityAllowsBranch =
                     this.quality === 2 ||
                     (this.quality === 1 && tendril.edgeId % 2 === 0) ||
                     (this.quality === 0 && edge.kind === 'artery' && tendril.edgeId % 3 === 0);
-                if (allowBranches && creep > 0.03) {
-                    for (const branch of biomass.branches) {
-                        if (visibleProgress <= branch.seed.at) continue;
-                        const sprout = Geo.easeOutCubic(
-                            (visibleProgress - branch.seed.at) / 0.2
-                        );
-                        const life = sprout * (1 - decay);
-                        if (life <= 0.01) continue;
-                        const parent = Geo.sampleChain(
-                            biomass.chain.position,
-                            Math.min(branch.seed.at, visibleProgress)
-                        );
-                        this.updateBranch(
-                            branch,
-                            parent,
-                            life * (0.4 + creep * 0.6),
-                            decay,
-                            time,
-                            deltaSeconds,
-                            isRoute ? 1 : 0
-                        );
+                for (const branch of biomass.branches) {
+                    let visibilityTarget =
+                        qualityAllowsBranch && creep > 0.03 && visibleProgress > branch.seed.at
+                            ? 1
+                            : 0;
+                    if (state.routeStart && isRoute) visibilityTarget *= 0.32;
+                    // Once a solved, suppressed branch has fully retracted,
+                    // quality recovery must not pop it back into the old search.
+                    if (state.routeStart && !isRoute && branch.visibility < 0.02) {
+                        visibilityTarget = 0;
                     }
+                    const transitionRate = visibilityTarget > branch.visibility ? 4.6 : 2.8;
+                    const transition = 1 - Math.exp(-transitionRate * deltaSeconds);
+                    branch.visibility +=
+                        (visibilityTarget - branch.visibility) * transition;
+                    if (branch.visibility <= 0.005 || visibleProgress <= branch.seed.at) continue;
+
+                    const sprout = Geo.easeOutCubic(
+                        (visibleProgress - branch.seed.at) / 0.2
+                    );
+                    const life = sprout * (1 - decay) * branch.visibility;
+                    if (life <= 0.005) continue;
+                    const parent = Geo.sampleChain(
+                        biomass.chain.position,
+                        Math.min(branch.seed.at, visibleProgress)
+                    );
+                    this.updateBranch(
+                        branch,
+                        parent,
+                        life * (0.4 + creep * 0.6),
+                        decay,
+                        time,
+                        deltaSeconds,
+                        isRoute ? 1 : 0
+                    );
                 }
             }
 
@@ -494,7 +586,7 @@
                 const age = time - organismNode.spawnTime;
                 const arrival = Geo.easeOutCubic(age / 260);
                 const pulse = 0.78 + Math.sin(time * 0.005 + organismNode.phase) * 0.16;
-                const radius = (isRoute ? 8.5 : 5.8) * pulse * arrival * (1 - decay);
+                const radius = (isRoute ? 3.1 : 5.8) * pulse * arrival * (1 - decay);
                 this.appendDisc(
                     node.x,
                     node.y,
@@ -518,13 +610,11 @@
                     const chain = tendril
                         ? this.ensureLimb(tendril, creep).chain.position
                         : Geo.quadraticSpine(edge, this.graph.nodes, state.result.nodeIds[index], 16);
-                    this.appendRibbon(
+                    this.appendBraidedRoute(
                         chain,
                         localProgress,
-                        10.5,
                         edgeId * 0.713,
-                        1,
-                        1,
+                        time,
                         3
                     );
                 }
