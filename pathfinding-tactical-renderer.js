@@ -13,7 +13,7 @@
 ) {
     'use strict';
 
-    const MAX_SIGNAL_VERTICES = 60000;
+    const MAX_SIGNAL_VERTICES = 120000;
 
     class Renderer {
         constructor(canvas, graph) {
@@ -337,15 +337,86 @@
             return [0.16, 0.2, 0.21];
         }
 
-        buildSignals(snapshot, timeline, time, algorithm) {
-            let cursor = 0;
-            const subdivisions =
-                snapshot.settledCount > 350 ? 7 : 12;
+        signalHot(edgeState, snapshot) {
+            if (edgeState.settledAt === null) return true;
+            return (
+                edgeState.route &&
+                snapshot.routeFound &&
+                snapshot.carrierLock < 1
+            );
+        }
+
+        signalFrequency(edge, hot) {
+            return hot
+                ? 1.8 + Math.min(2.4, edge.effectiveCost / 24)
+                : 1.15 + Math.min(1.35, edge.effectiveCost / 36);
+        }
+
+        signalSubdivisions(edge, hot) {
+            const frequency = this.signalFrequency(edge, hot);
+            const samplesPerCycle = hot ? 20 : 12;
+            const minimum = hot ? 40 : 24;
+            return Math.max(
+                minimum,
+                Math.round(frequency * samplesPerCycle)
+            );
+        }
+
+        allocateSubdivisions(active, snapshot) {
+            const groups = [
+                active.filter(edgeState =>
+                    this.signalHot(edgeState, snapshot)
+                ),
+                active.filter(
+                    edgeState => !this.signalHot(edgeState, snapshot)
+                ),
+            ];
+            const floors = [32, 20];
+            const subdivisions = new Map();
+            let remaining = MAX_SIGNAL_VERTICES;
+            groups.forEach((group, groupIndex) => {
+                if (!group.length || remaining < floors[groupIndex] * 2) {
+                    return;
+                }
+                let need = 0;
+                const desired = group.map(edgeState => {
+                    const count = this.signalSubdivisions(
+                        this.graph.edges[edgeState.edgeId],
+                        groupIndex === 0
+                    );
+                    need += count * 2;
+                    return count;
+                });
+                const scale = need > remaining ? remaining / need : 1;
+                group.forEach((edgeState, index) => {
+                    const count = Math.max(
+                        floors[groupIndex],
+                        Math.round(desired[index] * scale)
+                    );
+                    subdivisions.set(edgeState.edgeId, count);
+                    remaining -= count * 2;
+                });
+            });
+            return subdivisions;
+        }
+
+        buildSignals(snapshot, timeline, time) {
+            const active = [];
             for (const edgeState of snapshot.edges) {
                 if (edgeState.discoveredAt === null) continue;
+                active.push(edgeState);
+            }
+            const subdivisionsByEdge = this.allocateSubdivisions(
+                active,
+                snapshot
+            );
+
+            let cursor = 0;
+            for (const edgeState of active) {
                 const edge = this.graph.edges[edgeState.edgeId];
                 const a = this.graph.nodes[edge.a];
                 const b = this.graph.nodes[edge.b];
+                const hot = this.signalHot(edgeState, snapshot);
                 const color = this.signalColor(
                     edgeState,
                     snapshot,
@@ -356,34 +427,37 @@
                     timeline.normalize(edgeState.f, 'f') * 190;
                 const settledFactor =
                     edgeState.settledAt !== null ? 0.42 : 1;
-                let routeFactor = 1;
-                if (edgeState.route && snapshot.routeFound) {
-                    const locked = Analytics.carrierLocked(
+                const locked =
+                    edgeState.route &&
+                    snapshot.routeFound &&
+                    Analytics.carrierLocked(
                         timeline.result.edgeIds.indexOf(edgeState.edgeId),
                         timeline.result.edgeIds.length,
                         snapshot.carrierLock
                     );
-                    routeFactor = locked ? 0.12 : 1;
-                }
+                const routeFactor = locked ? 0.12 : 1;
                 const height =
                     4 + fHeight * settledFactor * routeFactor;
-                const frequency =
-                    2.5 +
-                    Math.min(8, edge.effectiveCost / 12);
-                const amplitude =
-                    edgeState.route && snapshot.routeFound
-                        ? 2.5
-                        : 5 + edgeState.amplitude * 9;
+                const frequency = this.signalFrequency(edge, hot);
+                const amplitude = locked
+                    ? 0.7
+                    : edgeState.route && snapshot.routeFound
+                      ? 2.1
+                      : hot
+                        ? 3.4 + edgeState.amplitude * 2.2
+                        : 1.7;
+                const subdivisions =
+                    subdivisionsByEdge.get(edgeState.edgeId) || 16;
+                const dx = b.x - a.x;
+                const dz = -(b.y - a.y);
+                const length = Math.max(0.001, Math.hypot(dx, dz));
+                const nx = -dz / length;
+                const nz = dx / length;
                 let previous = null;
                 for (let sample = 0; sample <= subdivisions; sample++) {
                     const t = sample / subdivisions;
                     const x = a.x + (b.x - a.x) * t;
                     const z = -(a.y + (b.y - a.y) * t);
-                    const dx = b.x - a.x;
-                    const dz = -(b.y - a.y);
-                    const length = Math.max(0.001, Math.hypot(dx, dz));
-                    const nx = -dz / length;
-                    const nz = dx / length;
                     const phase =
                         time * 0.004 -
                         t * frequency * Math.PI * 2 +
@@ -391,9 +465,7 @@
                     const wave = Math.sin(phase) * amplitude;
                     const point = {
                         x: x + nx * wave,
-                        y:
-                            height +
-                            Math.sin(phase * 0.73) * amplitude * 0.28,
+                        y: height + wave * 0.22,
                         z: z + nz * wave,
                     };
                     if (previous) {
@@ -548,7 +620,7 @@
                 originId,
                 destinationId,
             } = options;
-            this.buildSignals(snapshot, timeline, time, algorithm);
+            this.buildSignals(snapshot, timeline, time);
             this.updateNodes(snapshot, timeline);
             this.rebuildContours(contourMode, snapshot, timeline);
             this.updateGuidance(snapshot, destinationId, algorithm);
