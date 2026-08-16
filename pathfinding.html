@@ -176,7 +176,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            width: min(730px, calc(100vw - 28px));
+            width: min(850px, calc(100vw - 28px));
             padding: 7px;
             border: 1px solid var(--faint);
             background: var(--panel);
@@ -224,7 +224,7 @@
         }
 
         input[type="range"] {
-            width: 94px;
+            width: 82px;
             height: 2px;
             appearance: none;
             background: rgba(204, 225, 213, 0.18);
@@ -313,6 +313,10 @@
             propagation
             <input id="speed" type="range" min="25" max="260" value="105">
         </label>
+        <label class="speed">
+            creep
+            <input id="creep" type="range" min="0" max="100" value="78">
+        </label>
     </nav>
 
     <script src="pathfinding-core.js"></script>
@@ -334,6 +338,7 @@
             random: document.getElementById('random'),
             pause: document.getElementById('pause'),
             speed: document.getElementById('speed'),
+            creep: document.getElementById('creep'),
         };
 
         const WORLD = { width: 1600, height: 900, marginX: 90, marginY: 80 };
@@ -356,7 +361,9 @@
         let eventCursor = 0;
         let eventCredit = 0;
         let tendrils = new Map();
+        let settledNodes = new Map();
         let routeEdgeIds = new Set();
+        let routeNodeIds = new Set();
         let routeStart = 0;
         let routeReveal = 0;
         let state = 'idle';
@@ -556,11 +563,133 @@
             return 1 - Math.pow(1 - Math.max(0, Math.min(1, value)), 3);
         }
 
+        function clamp01(value) {
+            return Math.max(0, Math.min(1, value));
+        }
+
+        function organicPoints(edge, fromId, progress, tendril, time, creep) {
+            const points = curvePoints(edge, fromId, progress, 16);
+            if (points.length < 3 || creep <= 0.01) return points;
+            for (let index = 1; index < points.length - 1; index++) {
+                const u = index / (points.length - 1);
+                const previous = points[index - 1];
+                const next = points[index + 1];
+                const dx = next.x - previous.x;
+                const dy = next.y - previous.y;
+                const length = Math.max(0.001, Math.hypot(dx, dy));
+                const envelope = Math.sin(Math.PI * u);
+                const tipElasticity = progress < 0.995
+                    ? 0.7 + u * u * 1.8
+                    : 0.7;
+                const wobble = (
+                    Math.sin(time * 0.0042 + u * 13 + tendril.phase) +
+                    Math.sin(time * 0.0027 - u * 7 + tendril.phase * 1.7) * 0.45
+                ) * envelope * tipElasticity * creep * 2.8;
+                points[index].x += -dy / length * wobble;
+                points[index].y += dx / length * wobble;
+            }
+            return points;
+        }
+
+        function drawFeeler(parentPoints, feeler, growth, decay, time, creep, alpha) {
+            const parentProgress = feeler.at;
+            if (growth <= parentProgress || parentPoints.length < 3) return;
+            const sprout = easeOutCubic(clamp01((growth - parentProgress) / 0.22));
+            const life = sprout * (1 - decay);
+            if (life < 0.01) return;
+
+            const index = Math.min(
+                parentPoints.length - 2,
+                Math.max(1, Math.round(parentProgress * (parentPoints.length - 1)))
+            );
+            const anchor = parentPoints[index];
+            const previous = parentPoints[index - 1];
+            const next = parentPoints[index + 1];
+            const dx = next.x - previous.x;
+            const dy = next.y - previous.y;
+            const tangentLength = Math.max(0.001, Math.hypot(dx, dy));
+            const nx = -dy / tangentLength * feeler.side;
+            const ny = dx / tangentLength * feeler.side;
+            const tx = dx / tangentLength;
+            const ty = dy / tangentLength;
+            const contraction = 0.76 + Math.sin(time * 0.007 + feeler.phase) * 0.2;
+            const length = feeler.length * life * contraction * (0.55 + creep * 0.72);
+            const curl = feeler.curl * (0.5 + decay * 2.4);
+            const points = [];
+
+            for (let step = 0; step <= 7; step++) {
+                const u = step / 7;
+                const wave = Math.sin(u * Math.PI * 2.2 + time * 0.006 + feeler.phase);
+                const sideways = length * u;
+                const along = Math.sin(Math.PI * u) * curl + wave * creep * u * 3.2;
+                points.push({
+                    x: anchor.x + nx * sideways + tx * along,
+                    y: anchor.y + ny * sideways + ty * along,
+                });
+            }
+
+            trace(points);
+            ctx.strokeStyle = `rgba(72, 230, 153, ${alpha * 0.16 * life})`;
+            ctx.lineWidth = Math.max(0.45, 3.8 * viewport.scale * (1 - decay));
+            ctx.stroke();
+            trace(points);
+            ctx.strokeStyle = `rgba(132, 255, 198, ${alpha * 0.72 * life})`;
+            ctx.lineWidth = Math.max(0.35, 0.82 * viewport.scale);
+            ctx.stroke();
+
+            const tip = screenPoint(points[points.length - 1]);
+            ctx.beginPath();
+            ctx.arc(tip.x, tip.y, Math.max(0.65, 1.1 * viewport.scale * life), 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(194, 255, 221, ${alpha * life})`;
+            ctx.fill();
+        }
+
+        function drawFlowCell(points, tendril, time, decay, isRoute, alpha) {
+            if (points.length < 3 || tendril.edgeId % 3 !== 0) return;
+            const direction = decay > 0.02 && !isRoute ? -1 : 1;
+            const base = (time * 0.00042 * direction + tendril.phase * 0.13) % 1;
+            const normalized = base < 0 ? base + 1 : base;
+            const index = Math.min(points.length - 1, Math.floor(normalized * points.length));
+            const point = screenPoint(points[index]);
+            const pulse = 1.1 + Math.sin(time * 0.012 + tendril.phase) * 0.45;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, Math.max(0.7, pulse * viewport.scale), 0, Math.PI * 2);
+            ctx.fillStyle = isRoute
+                ? `rgba(255, 224, 162, ${alpha})`
+                : `rgba(205, 255, 225, ${alpha * (1 - decay)})`;
+            ctx.shadowColor = isRoute ? '#ffd68a' : '#72ffc2';
+            ctx.shadowBlur = 7;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawSettledNodes(time, collapse) {
+            ctx.globalCompositeOperation = 'lighter';
+            for (const [nodeId, organismNode] of settledNodes) {
+                const isRoute = routeNodeIds.has(nodeId);
+                const decay = isRoute ? 0 : collapse;
+                if (decay >= 0.99) continue;
+                const age = time - organismNode.spawnTime;
+                const arrival = easeOutCubic(age / 260);
+                const contraction = 0.5 + 0.5 * Math.sin(time * 0.008 + organismNode.phase);
+                const radius = (1.15 + contraction * 1.35) * arrival * (1 - decay);
+                const point = screenPoint(graph.nodes[nodeId]);
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, Math.max(0.55, radius * viewport.scale), 0, Math.PI * 2);
+                ctx.fillStyle = isRoute
+                    ? `rgba(255, 215, 138, ${0.46 + contraction * 0.3})`
+                    : `rgba(114, 255, 194, ${(0.18 + contraction * 0.2) * (1 - decay)})`;
+                ctx.fill();
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
         function drawTendrils(time) {
             const solvedElapsed = routeStart ? time - routeStart : 0;
             const collapse = routeStart
                 ? Math.max(0, Math.min(1, (solvedElapsed - 620) / 1800))
                 : 0;
+            const creep = Number(ui.creep.value) / 100;
             let visibleCount = 0;
 
             ctx.globalCompositeOperation = 'lighter';
@@ -574,23 +703,48 @@
                 if (visibleProgress <= 0.002) continue;
                 visibleCount++;
 
-                const breath = 0.74 + Math.sin(time * 0.004 + tendril.phase) * 0.16;
-                const alpha = (isRoute ? 0.16 : 0.42) * breath * (1 - decay);
-                const points = curvePoints(edge, tendril.from, visibleProgress, 14);
+                const contractionWave = 0.5 + 0.5 * Math.sin(
+                    time * 0.008 - tendril.cost * 0.028 + tendril.phase
+                );
+                const breath = 0.62 + contractionWave * (0.25 + creep * 0.18);
+                const alpha = (isRoute ? 0.18 : 0.46) * breath * (1 - decay);
+                const points = organicPoints(
+                    edge,
+                    tendril.from,
+                    visibleProgress,
+                    tendril,
+                    time,
+                    creep
+                );
 
                 trace(points);
-                ctx.strokeStyle = `rgba(80, 255, 176, ${alpha * 0.2})`;
-                ctx.lineWidth = 9 * viewport.scale;
+                ctx.strokeStyle = `rgba(22, 94, 61, ${alpha * 0.28})`;
+                ctx.lineWidth = (8 + contractionWave * creep * 5) * viewport.scale;
                 ctx.stroke();
 
                 trace(points);
-                ctx.strokeStyle = `rgba(105, 255, 194, ${alpha})`;
-                ctx.lineWidth = Math.max(0.7, 1.55 * viewport.scale);
+                ctx.strokeStyle = `rgba(58, 220, 143, ${alpha * 0.72})`;
+                ctx.lineWidth = Math.max(
+                    0.8,
+                    (2.7 + contractionWave * 2.4 * creep) * viewport.scale
+                );
                 ctx.stroke();
+
+                trace(points);
+                ctx.strokeStyle = `rgba(177, 255, 216, ${alpha * 0.9})`;
+                ctx.lineWidth = Math.max(0.45, (0.75 + contractionWave * 0.5) * viewport.scale);
+                ctx.stroke();
+
+                for (const feeler of tendril.feelers) {
+                    drawFeeler(points, feeler, growth, decay, time, creep, alpha);
+                }
+                drawFlowCell(points, tendril, time, decay, isRoute, alpha);
 
                 if (growth < 0.995 && decay < 0.1) {
                     const tip = screenPoint(points[points.length - 1]);
-                    const radius = (2.3 + Math.sin(time * 0.014 + tendril.phase)) * viewport.scale;
+                    const radius = (
+                        2.9 + Math.sin(time * 0.014 + tendril.phase) * 1.25
+                    ) * viewport.scale * (0.7 + creep * 0.5);
                     ctx.beginPath();
                     ctx.arc(tip.x, tip.y, Math.max(1.2, radius), 0, Math.PI * 2);
                     ctx.fillStyle = 'rgba(190,255,225,0.88)';
@@ -601,6 +755,7 @@
                 }
             }
             ctx.globalCompositeOperation = 'source-over';
+            drawSettledNodes(time, collapse);
             ui.tendrils.textContent = visibleCount;
         }
 
@@ -617,7 +772,19 @@
                 const edgeId = result.edgeIds[index];
                 const from = result.nodeIds[index];
                 const edge = graph.edges[edgeId];
-                const points = curvePoints(edge, from, localProgress, 16);
+                const tendril = tendrils.get(edgeId) || {
+                    edgeId,
+                    phase: edgeId * 0.713,
+                    cost: index,
+                };
+                const points = organicPoints(
+                    edge,
+                    from,
+                    localProgress,
+                    tendril,
+                    time,
+                    Number(ui.creep.value) / 100 * 0.42
+                );
 
                 trace(points);
                 ctx.strokeStyle = 'rgba(255, 190, 90, 0.12)';
@@ -639,6 +806,24 @@
                 }
             }
             ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function createFeelers(edge, phase) {
+            const count = edge.kind === 'artery'
+                ? 2
+                : 1 + (edge.id % 4 === 0 ? 1 : 0);
+            const feelers = [];
+            for (let index = 0; index < count; index++) {
+                const hash = Math.abs(Math.sin((edge.id + 1) * 91.17 + index * 17.43));
+                feelers.push({
+                    at: 0.27 + ((index + 1) / (count + 1)) * 0.5,
+                    side: (edge.id + index) % 2 === 0 ? 1 : -1,
+                    length: 10 + hash * 20,
+                    curl: (hash - 0.5) * 18,
+                    phase: phase + index * 2.17,
+                });
+            }
+            return feelers;
         }
 
         function drawEndpoint(nodeId, type, time) {
@@ -667,6 +852,12 @@
         function processEvent(event, time) {
             if (event.type === 'node-settled') {
                 settledCount++;
+                if (!settledNodes.has(event.nodeId)) {
+                    settledNodes.set(event.nodeId, {
+                        spawnTime: time,
+                        phase: settledCount * 0.917,
+                    });
+                }
                 return;
             }
             if (event.type === 'edge-relaxed') {
@@ -680,12 +871,14 @@
                         spawnTime: time,
                         duration: 260 + Math.min(520, edge.distance * 3.1),
                         phase: event.edgeId * 0.713,
+                        feelers: createFeelers(edge, event.edgeId * 0.713),
                     });
                 }
                 return;
             }
             if (event.type === 'route-found') {
                 routeEdgeIds = new Set(event.edgeIds);
+                routeNodeIds = new Set(event.nodeIds);
                 routeStart = time;
                 state = 'resolved';
                 ui.state.textContent = 'route bonded';
@@ -739,7 +932,9 @@
                 algorithm
             );
             tendrils = new Map();
+            settledNodes = new Map();
             routeEdgeIds = new Set();
+            routeNodeIds = new Set();
             eventCursor = 0;
             eventCredit = 0;
             settledCount = 0;
