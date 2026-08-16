@@ -181,7 +181,8 @@
                 smoothNoise(u * 5 + time * 0.00045, seed.seed) *
                 4.5 *
                 life *
-                (0.25 + u);
+                (0.25 + u) *
+                u;
             const reach = totalLength * u;
             target[index * 2] =
                 parent.x +
