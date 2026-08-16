@@ -77,24 +77,17 @@
             snapshot.routeCost === null
                 ? '--'
                 : `${Math.round(snapshot.routeCost)} units`;
-        const lock =
-            snapshot.eventIndex < timeline.acquisitionIndex()
-                ? 0
-                : Math.min(
-                    100,
-                    Math.round(
-                        ((snapshot.eventIndex -
-                            timeline.acquisitionIndex() +
-                            1) /
-                            8) *
-                            100
-                    )
-                );
-        ui['carrier-lock'].textContent = `${lock}%`;
+        ui['carrier-lock'].textContent =
+            `${Math.round(snapshot.carrierLock * 100)}%`;
         ui.timeline.value = String(snapshot.eventIndex);
-        if (snapshot.routeFound) {
-            ui.state.textContent = 'carrier locked';
-        }
+        ui.state.textContent =
+            snapshot.carrierLock >= 1
+                ? 'carrier locked'
+                : snapshot.routeFound
+                  ? 'acquiring carrier'
+                  : playing
+                    ? 'transmitting'
+                    : 'scan hold';
         updateSpecimen();
     }
 

@@ -2,9 +2,15 @@
     root.TacticalInterferometryRenderer = factory(
         root.THREE,
         root.SymbioteGeometry,
-        root.TacticalSymbols
+        root.TacticalSymbols,
+        root.PathfindingAnalytics
     );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (THREE, Geo, Symbols) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (
+    THREE,
+    Geo,
+    Symbols,
+    Analytics
+) {
     'use strict';
 
     const MAX_SIGNAL_VERTICES = 60000;
@@ -257,6 +263,7 @@
 
         setGraph(graph) {
             this.graph = graph;
+            this.lastContourMode = null;
             this.buildConductors();
         }
 
@@ -303,9 +310,20 @@
             return index + 1;
         }
 
-        signalColor(edgeState, snapshot, currentIndex) {
+        signalColor(edgeState, snapshot, currentIndex, timeline) {
             if (edgeState.route && snapshot.routeFound) {
-                return [0.88, 0.94, 0.96];
+                const locked = Analytics.carrierLocked(
+                    timeline.result.edgeIds.indexOf(edgeState.edgeId),
+                    timeline.result.edgeIds.length,
+                    snapshot.carrierLock
+                )
+                    ? 1
+                    : 0;
+                return [
+                    0.74 + locked * 0.18,
+                    0.8 + locked * 0.16,
+                    0.82 + locked * 0.16,
+                ];
             }
             if (edgeState.settledAt !== null) {
                 return [0.55, 0.62, 0.64];
@@ -331,14 +349,22 @@
                 const color = this.signalColor(
                     edgeState,
                     snapshot,
-                    snapshot.eventIndex
+                    snapshot.eventIndex,
+                    timeline
                 );
                 const fHeight =
                     timeline.normalize(edgeState.f, 'f') * 190;
                 const settledFactor =
                     edgeState.settledAt !== null ? 0.42 : 1;
-                const routeFactor =
-                    edgeState.route && snapshot.routeFound ? 0.12 : 1;
+                let routeFactor = 1;
+                if (edgeState.route && snapshot.routeFound) {
+                    const locked = Analytics.carrierLocked(
+                        timeline.result.edgeIds.indexOf(edgeState.edgeId),
+                        timeline.result.edgeIds.length,
+                        snapshot.carrierLock
+                    );
+                    routeFactor = locked ? 0.12 : 1;
+                }
                 const height =
                     4 + fHeight * settledFactor * routeFactor;
                 const frequency =
@@ -411,8 +437,8 @@
             this.nodeGeometry.attributes.color.needsUpdate = true;
         }
 
-        rebuildContours(mode, snapshot, timeline, originId) {
-            const key = `${mode}:${snapshot.eventIndex}`;
+        rebuildContours(mode, snapshot, timeline) {
+            const key = `${mode}:${Math.floor(snapshot.eventIndex / 12)}:${snapshot.settledCount}`;
             if (key === this.lastContourMode) return;
             this.lastContourMode = key;
             while (this.contourGroup.children.length) {
@@ -421,7 +447,6 @@
                 child.material.dispose();
             }
             if (mode === 'off') return;
-            const origin = this.graph.nodes[originId];
             const max =
                 mode === 'g'
                     ? timeline.maxG
@@ -429,24 +454,45 @@
                       ? timeline.maxH
                       : timeline.maxF;
             for (let band = 1; band <= 7; band++) {
-                const radius =
-                    (band / 7) *
-                    Math.min(700, max * 0.9);
-                const points = [];
-                for (let sample = 0; sample < 80; sample++) {
-                    const angle = sample / 80 * Math.PI * 2;
-                    points.push(
-                        new THREE.Vector3(
-                            origin.x + Math.cos(angle) * radius,
-                            1,
-                            -origin.y + Math.sin(angle) * radius
-                        )
+                const threshold = (band / 7) * max;
+                const positions = [];
+                for (const edge of this.graph.edges) {
+                    const a = this.graph.nodes[edge.a];
+                    const b = this.graph.nodes[edge.b];
+                    const crossing = Analytics.isolineCrossing(
+                        a.x,
+                        a.y,
+                        snapshot.nodes[edge.a][mode],
+                        b.x,
+                        b.y,
+                        snapshot.nodes[edge.b][mode],
+                        threshold
+                    );
+                    if (!crossing) continue;
+                    const dx = b.x - a.x;
+                    const dz = -(b.y - a.y);
+                    const length = Math.max(0.001, Math.hypot(dx, dz));
+                    const nx = -dz / length;
+                    const nz = dx / length;
+                    const half = 5.5;
+                    const x = crossing.x;
+                    const z = -crossing.y;
+                    positions.push(
+                        x - nx * half,
+                        1,
+                        z - nz * half,
+                        x + nx * half,
+                        1,
+                        z + nz * half
                     );
                 }
-                const geometry = new THREE.BufferGeometry().setFromPoints(
-                    points
+                if (!positions.length) continue;
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute(
+                    'position',
+                    new THREE.Float32BufferAttribute(positions, 3)
                 );
-                const line = new THREE.LineLoop(
+                const line = new THREE.LineSegments(
                     geometry,
                     new THREE.LineBasicMaterial({
                         color:
@@ -504,12 +550,7 @@
             } = options;
             this.buildSignals(snapshot, timeline, time, algorithm);
             this.updateNodes(snapshot, timeline);
-            this.rebuildContours(
-                contourMode,
-                snapshot,
-                timeline,
-                originId
-            );
+            this.rebuildContours(contourMode, snapshot, timeline);
             this.updateGuidance(snapshot, destinationId, algorithm);
 
             const origin = this.graph.nodes[originId];

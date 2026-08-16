@@ -16,6 +16,33 @@
         );
     }
 
+    function carrierLocked(routeIndex, routeLength, carrierLock) {
+        if (carrierLock <= 0 || routeIndex < 0) return false;
+        if (carrierLock >= 1) return true;
+        const start = Math.ceil(
+            (1 - carrierLock) * Math.max(1, routeLength)
+        );
+        return routeIndex >= start;
+    }
+
+    function isolineCrossing(ax, ay, valueA, bx, by, valueB, threshold) {
+        if (
+            valueA == null ||
+            valueB == null ||
+            valueA === valueB ||
+            (valueA - threshold) * (valueB - threshold) > 0
+        ) {
+            return null;
+        }
+        const t = (threshold - valueA) / (valueB - valueA);
+        if (t < 0 || t > 1) return null;
+        return {
+            x: ax + (bx - ax) * t,
+            y: ay + (by - ay) * t,
+            t,
+        };
+    }
+
     function createEdgeState(edge) {
         return {
             edgeId: edge.id,
@@ -60,6 +87,7 @@
             conflictCount: 0,
             routeCost: null,
             routeFound: false,
+            carrierLock: 0,
             eventType: 'ready',
         };
     }
@@ -81,6 +109,7 @@
             conflictCount: state.conflictCount,
             routeCost: state.routeCost,
             routeFound: state.routeFound,
+            carrierLock: state.carrierLock,
             eventType: state.eventType,
         };
     }
@@ -182,6 +211,15 @@
                         cost: source.cost,
                         frontierSize: frontier.size,
                     });
+                    for (let step = 1; step <= 8; step++) {
+                        events.push({
+                            type: 'carrier-lock',
+                            sequence: sequence++,
+                            step,
+                            progress: step / 8,
+                            frontierSize: frontier.size,
+                        });
+                    }
                 }
                 if (source.type === 'route-missing') {
                     events.push({
@@ -251,6 +289,10 @@
                 for (const edgeId of event.edgeIds) {
                     state.edges[edgeId].route = true;
                 }
+                return;
+            }
+            if (event.type === 'carrier-lock') {
+                state.carrierLock = event.progress;
             }
         }
 
@@ -318,5 +360,7 @@
         blankState,
         cloneState,
         heuristic,
+        carrierLocked,
+        isolineCrossing,
     };
 });
