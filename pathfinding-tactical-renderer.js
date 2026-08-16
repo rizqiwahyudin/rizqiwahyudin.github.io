@@ -13,7 +13,7 @@
 ) {
     'use strict';
 
-    const MAX_SIGNAL_VERTICES = 60000;
+    const MAX_SIGNAL_VERTICES = 120000;
 
     class Renderer {
         constructor(canvas, graph) {
@@ -337,17 +337,67 @@
             return [0.16, 0.2, 0.21];
         }
 
-        signalFrequency(edge) {
-            return 2.2 + Math.min(5.5, edge.effectiveCost / 16);
+        signalHot(edgeState, snapshot) {
+            if (edgeState.settledAt === null) return true;
+            return (
+                edgeState.route &&
+                snapshot.routeFound &&
+                snapshot.carrierLock < 1
+            );
         }
 
-        signalSubdivisions(edgeState, edge, samplesPerCycle, scale) {
-            const frequency = this.signalFrequency(edge);
-            const desired = Math.max(
-                24,
+        signalFrequency(edge, hot) {
+            return hot
+                ? 2.4 + Math.min(4.2, edge.effectiveCost / 20)
+                : 1.5 + Math.min(2.0, edge.effectiveCost / 30);
+        }
+
+        signalSubdivisions(edge, hot) {
+            const frequency = this.signalFrequency(edge, hot);
+            const samplesPerCycle = hot ? 16 : 8;
+            const minimum = hot ? 36 : 18;
+            return Math.max(
+                minimum,
                 Math.round(frequency * samplesPerCycle)
             );
-            return Math.max(16, Math.round(desired * scale));
+        }
+
+        allocateSubdivisions(active, snapshot) {
+            const groups = [
+                active.filter(edgeState =>
+                    this.signalHot(edgeState, snapshot)
+                ),
+                active.filter(
+                    edgeState => !this.signalHot(edgeState, snapshot)
+                ),
+            ];
+            const floors = [28, 14];
+            const subdivisions = new Map();
+            let remaining = MAX_SIGNAL_VERTICES;
+            groups.forEach((group, groupIndex) => {
+                if (!group.length || remaining < floors[groupIndex] * 2) {
+                    return;
+                }
+                let need = 0;
+                const desired = group.map(edgeState => {
+                    const count = this.signalSubdivisions(
+                        this.graph.edges[edgeState.edgeId],
+                        groupIndex === 0
+                    );
+                    need += count * 2;
+                    return count;
+                });
+                const scale = need > remaining ? remaining / need : 1;
+                group.forEach((edgeState, index) => {
+                    const count = Math.max(
+                        floors[groupIndex],
+                        Math.round(desired[index] * scale)
+                    );
+                    subdivisions.set(edgeState.edgeId, count);
+                    remaining -= count * 2;
+                });
+            });
+            return subdivisions;
         }
 
         buildSignals(snapshot, timeline, time) {
@@ -356,28 +406,17 @@
                 if (edgeState.discoveredAt === null) continue;
                 active.push(edgeState);
             }
-            const samplesPerCycle =
-                snapshot.settledCount > 350 ? 8 : 12;
-            let estimatedVertices = 0;
-            for (const edgeState of active) {
-                estimatedVertices +=
-                    this.signalSubdivisions(
-                        edgeState,
-                        this.graph.edges[edgeState.edgeId],
-                        samplesPerCycle,
-                        1
-                    ) * 2;
-            }
-            const scale =
-                estimatedVertices > MAX_SIGNAL_VERTICES
-                    ? MAX_SIGNAL_VERTICES / estimatedVertices
-                    : 1;
+            const subdivisionsByEdge = this.allocateSubdivisions(
+                active,
+                snapshot
+            );
 
             let cursor = 0;
             for (const edgeState of active) {
                 const edge = this.graph.edges[edgeState.edgeId];
                 const a = this.graph.nodes[edge.a];
                 const b = this.graph.nodes[edge.b];
+                const hot = this.signalHot(edgeState, snapshot);
                 const color = this.signalColor(
                     edgeState,
                     snapshot,
@@ -399,17 +438,13 @@
                 }
                 const height =
                     4 + fHeight * settledFactor * routeFactor;
-                const frequency = this.signalFrequency(edge);
+                const frequency = this.signalFrequency(edge, hot);
                 const amplitude =
                     edgeState.route && snapshot.routeFound
                         ? 2.5
                         : 5 + edgeState.amplitude * 9;
-                const subdivisions = this.signalSubdivisions(
-                    edgeState,
-                    edge,
-                    samplesPerCycle,
-                    scale
-                );
+                const subdivisions =
+                    subdivisionsByEdge.get(edgeState.edgeId) || 16;
                 const dx = b.x - a.x;
                 const dz = -(b.y - a.y);
                 const length = Math.max(0.001, Math.hypot(dx, dz));
