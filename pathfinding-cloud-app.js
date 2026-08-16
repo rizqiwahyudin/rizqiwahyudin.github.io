@@ -8,39 +8,43 @@
         visited: document.getElementById('visited'),
         tendrils: document.getElementById('tendrils'),
         quality: document.getElementById('quality'),
+        points: document.getElementById('points'),
         cost: document.getElementById('cost'),
         astar: document.getElementById('astar'),
         dijkstra: document.getElementById('dijkstra'),
         run: document.getElementById('run'),
         random: document.getElementById('random'),
         pause: document.getElementById('pause'),
+        resetView: document.getElementById('reset-view'),
+        topView: document.getElementById('top-view'),
         speed: document.getElementById('speed'),
         creep: document.getElementById('creep'),
+        unsupported: document.getElementById('unsupported'),
     };
 
     const WORLD = { width: 1600, height: 900, marginX: 90, marginY: 80 };
     const ROAD_STYLE = {
-        artery: { width: 1.25, speed: 2.2 },
-        street: { width: 0.72, speed: 1.35 },
-        alley: { width: 0.48, speed: 0.92 },
-        track: { width: 0.42, speed: 0.62 },
+        artery: { speed: 2.2 },
+        street: { speed: 1.35 },
+        alley: { speed: 0.92 },
+        track: { speed: 0.62 },
     };
-
     let graph;
     let view;
-    let graphSeed = 32841;
+    let simulation;
     let originId = '2:13';
     let destinationId = '26:3';
     let selecting = 'origin';
     let algorithm = 'astar';
-    let simulation;
-    let lastPhase = 'idle';
     let paused = false;
-    let documentHidden = document.hidden;
+    let hidden = document.hidden;
     let simulationTime = 0;
     let lastFrame = performance.now();
     let lastRenderAt = 0;
     let lastRenderSimulationTime = 0;
+    let lastPhase = 'idle';
+    let pointerStart = null;
+    let topView = false;
 
     function mulberry32(seed) {
         return function random() {
@@ -60,27 +64,34 @@
         const nodes = {};
         const adjacency = {};
         const edges = [];
-
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const id = `${col}:${row}`;
                 const arterialCol = col % 7 === 0;
                 const arterialRow = row % 5 === 0;
-                const jitterX =
-                    (arterialCol ? 0.24 : 0.68) * (random() - 0.5) * xGap;
-                const jitterY =
-                    (arterialRow ? 0.24 : 0.68) * (random() - 0.5) * yGap;
                 nodes[id] = {
                     id,
-                    x: WORLD.marginX + col * xGap + jitterX,
-                    y: WORLD.marginY + row * yGap + jitterY,
+                    x:
+                        WORLD.marginX +
+                        col * xGap +
+                        (arterialCol ? 0.24 : 0.68) *
+                            (random() - 0.5) *
+                            xGap,
+                    y:
+                        WORLD.marginY +
+                        row * yGap +
+                        (arterialRow ? 0.24 : 0.68) *
+                            (random() - 0.5) *
+                            yGap,
                 };
                 adjacency[id] = [];
             }
         }
 
         function classify(col, row, diagonal) {
-            if (!diagonal && (col % 7 === 0 || row % 5 === 0)) return 'artery';
+            if (!diagonal && (col % 7 === 0 || row % 5 === 0)) {
+                return 'artery';
+            }
             if (diagonal) return random() > 0.42 ? 'alley' : 'track';
             return random() > 0.24 ? 'street' : 'alley';
         }
@@ -88,7 +99,6 @@
         function addEdge(aId, bId, kind) {
             const a = nodes[aId];
             const b = nodes[bId];
-            if (!a || !b) return;
             const id = edges.length;
             const distance = Math.hypot(b.x - a.x, b.y - a.y);
             const bend = (random() - 0.5) * Math.min(32, distance * 0.24);
@@ -109,7 +119,6 @@
                 }
             }
         }
-
         for (let row = 0; row < rows - 1; row++) {
             for (let col = 0; col < cols - 1; col++) {
                 if (random() < 0.17) {
@@ -122,7 +131,6 @@
                 }
             }
         }
-
         const maximumSpeed = Math.max(
             ...Object.values(ROAD_STYLE).map(style => style.speed)
         );
@@ -137,7 +145,7 @@
     }
 
     function update(deltaSeconds) {
-        if (paused || documentHidden || !simulation.result) return;
+        if (paused || hidden || !simulation.result) return;
         simulation.update(
             deltaSeconds,
             simulationTime,
@@ -163,33 +171,37 @@
             Number(ui.creep.value) / 100
         );
         ui.tendrils.textContent = metrics.visibleCount;
-        ui.quality.textContent = ['adaptive low', 'adaptive medium', 'full'][metrics.quality];
+        ui.quality.textContent = [
+            'adaptive low',
+            'adaptive medium',
+            'full',
+        ][metrics.quality];
+        ui.points.textContent = metrics.points.toLocaleString();
     }
 
     function animate(now) {
         requestAnimationFrame(animate);
-        const rawDeltaMs = Math.max(0, now - lastFrame);
+        const rawDelta = Math.max(0, now - lastFrame);
         lastFrame = now;
-        if (documentHidden) return;
-
+        if (hidden || !view) return;
         if (!paused) {
-            simulationTime += rawDeltaMs;
-            update(rawDeltaMs / 1000);
+            simulationTime += rawDelta;
+            update(rawDelta / 1000);
         }
-        if (paused) return;
-
-        // High-refresh monitors do not need to redraw this scene above 60 Hz.
-        const renderInterval = 1000 / 60;
-        if (lastRenderAt === 0) lastRenderAt = now - renderInterval;
-        if (now - lastRenderAt < renderInterval) return;
+        const interval = 1000 / 60;
+        if (lastRenderAt === 0) lastRenderAt = now - interval;
+        if (now - lastRenderAt < interval) return;
         const renderDelta = Math.min(
             1 / 20,
-            Math.max(0, (simulationTime - lastRenderSimulationTime) / 1000)
+            Math.max(
+                0,
+                (simulationTime - lastRenderSimulationTime) / 1000
+            )
         );
-        lastRenderAt += renderInterval;
-        if (now - lastRenderAt > renderInterval * 2) lastRenderAt = now;
+        lastRenderAt += interval;
+        if (now - lastRenderAt > interval * 2) lastRenderAt = now;
         lastRenderSimulationTime = simulationTime;
-        render(renderDelta);
+        render(paused ? 0 : renderDelta);
     }
 
     function runSearch() {
@@ -200,6 +212,7 @@
         ui.state.textContent = 'propagating';
         ui.visited.textContent = '0';
         ui.tendrils.textContent = '0';
+        ui.points.textContent = '0';
         ui.cost.textContent = '--';
         ui.pause.textContent = 'pause';
     }
@@ -213,50 +226,61 @@
     }
 
     function randomEndpoints() {
-        const random = mulberry32(Math.floor(performance.now() * 1000) ^ graphSeed);
-        const leftCol = 1 + Math.floor(random() * 5);
-        const rightCol = graph.cols - 2 - Math.floor(random() * 5);
-        originId = `${leftCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
-        destinationId = `${rightCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+        const random = mulberry32(
+            Math.floor(performance.now() * 1000) ^ 32841
+        );
+        const left = 1 + Math.floor(random() * 5);
+        const right = graph.cols - 2 - Math.floor(random() * 5);
+        originId = `${left}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+        destinationId = `${right}:${1 + Math.floor(random() * (graph.rows - 2))}`;
         selecting = 'origin';
         runSearch();
     }
 
-    function nearestNode(clientX, clientY) {
-        const worldPoint = view.clientToWorld(clientX, clientY);
-        let bestId = null;
+    function nearestNode(point) {
+        let best = null;
         let bestDistance = Infinity;
         for (const node of Object.values(graph.nodes)) {
             const distance =
-                (node.x - worldPoint.x) ** 2 + (node.y - worldPoint.y) ** 2;
+                (node.x - point.x) ** 2 + (node.y - point.y) ** 2;
             if (distance < bestDistance) {
                 bestDistance = distance;
-                bestId = node.id;
+                best = node.id;
             }
         }
-        return bestId;
+        return best;
     }
 
-    function resize() {
-        view.resize(window.innerWidth, window.innerHeight);
-    }
-
-    canvas.addEventListener('pointerup', event => {
-        const nodeId = nearestNode(event.clientX, event.clientY);
-        if (!nodeId) return;
+    function handleGroundPick(clientX, clientY) {
+        const point = view.groundPoint(clientX, clientY);
+        if (!point) return;
+        const nodeId = nearestNode(point);
         if (selecting === 'origin') {
             originId = nodeId;
             selecting = 'destination';
             ui.state.textContent = 'select destination';
-        } else {
-            destinationId = nodeId;
-            selecting = 'origin';
-            if (destinationId === originId) {
-                ui.state.textContent = 'choose another node';
-                return;
-            }
-            runSearch();
+            return;
         }
+        destinationId = nodeId;
+        selecting = 'origin';
+        if (destinationId === originId) {
+            ui.state.textContent = 'choose another node';
+            return;
+        }
+        runSearch();
+    }
+
+    canvas.addEventListener('pointerdown', event => {
+        pointerStart = { x: event.clientX, y: event.clientY };
+    });
+    canvas.addEventListener('pointerup', event => {
+        if (!pointerStart) return;
+        const distance = Math.hypot(
+            event.clientX - pointerStart.x,
+            event.clientY - pointerStart.y
+        );
+        pointerStart = null;
+        if (distance <= 4) handleGroundPick(event.clientX, event.clientY);
     });
 
     ui.astar.addEventListener('click', () => setAlgorithm('astar'));
@@ -272,6 +296,16 @@
               ? 'route bonded'
               : 'propagating';
     });
+    ui.resetView.addEventListener('click', () => {
+        topView = false;
+        ui.topView.classList.remove('active');
+        view.resetCamera();
+    });
+    ui.topView.addEventListener('click', () => {
+        topView = !topView;
+        ui.topView.classList.toggle('active', topView);
+        view.setTopDownReference(topView);
+    });
 
     window.addEventListener('keydown', event => {
         if (event.code === 'Space') {
@@ -283,21 +317,40 @@
             setAlgorithm(algorithm === 'astar' ? 'dijkstra' : 'astar');
         }
     });
-
+    window.addEventListener('resize', () => {
+        if (view) view.resize(window.innerWidth, window.innerHeight);
+    });
     document.addEventListener('visibilitychange', () => {
-        documentHidden = document.hidden;
+        hidden = document.hidden;
         lastFrame = performance.now();
         lastRenderAt = 0;
     });
-    window.addEventListener('resize', resize);
     window.addEventListener('pagehide', event => {
-        if (!event.persisted) view.dispose();
+        if (!event.persisted && view) view.dispose();
     });
 
-    graph = createGraph(graphSeed);
+    graph = createGraph(32841);
     simulation = new SymbioteOrganism.OrganismSimulation(graph);
-    view = new SymbioteBiomass.BiomassRenderer(canvas, graph, WORLD, ROAD_STYLE);
-    resize();
-    requestAnimationFrame(animate);
-    setTimeout(runSearch, 450);
+    try {
+        view = new SymbioteCloudRenderer.PointCloudRenderer(
+            canvas,
+            graph,
+            WORLD,
+            {
+                onContextLost() {
+                    ui.state.textContent = 'graphics context lost';
+                },
+                onContextRestored() {
+                    ui.state.textContent = 'graphics restored';
+                },
+            }
+        );
+        view.resize(window.innerWidth, window.innerHeight);
+        requestAnimationFrame(animate);
+        setTimeout(runSearch, 500);
+    } catch (error) {
+        console.error(error);
+        ui.unsupported.hidden = false;
+        ui.unsupported.querySelector('span').textContent = error.message;
+    }
 })();

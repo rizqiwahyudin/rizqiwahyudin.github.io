@@ -68,6 +68,15 @@ const projects = [
     },
     {
         type: "sim",
+        title: "symbiote cloud",
+        subtitle: "3D point-cloud pathfinding organism",
+        desc: "",
+        classification: "webgl // point cloud",
+        sim: "pathfinding-cloud.html",
+        tags: ["three.js", "a*", "point cloud", "pathfinding"]
+    },
+    {
+        type: "sim",
         title: "transit",
         subtitle: "live metro // stockholm",
         desc: "",

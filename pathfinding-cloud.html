@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f2f1ed">
+    <title>symbiote cloud // 3D pathfinding study</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --paper: #f2f1ed;
+            --panel: rgba(247, 246, 242, 0.94);
+            --ink: #080908;
+            --muted: rgba(8, 9, 8, 0.5);
+            --faint: rgba(8, 9, 8, 0.15);
+            --ghost: rgba(8, 9, 8, 0.055);
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%; margin: 0; overflow: hidden;
+            background: var(--paper); color: var(--ink);
+            font-family: "DotGothic16", monospace; user-select: none;
+        }
+        body::after {
+            content: ""; position: fixed; inset: 0; z-index: 5;
+            pointer-events: none; opacity: 0.14;
+            background-image: radial-gradient(rgba(0,0,0,.08) .45px, transparent .55px);
+            background-size: 4px 4px; mix-blend-mode: multiply;
+        }
+        canvas {
+            position: fixed; inset: 0; width: 100%; height: 100%;
+            display: block; cursor: grab; touch-action: none;
+        }
+        canvas:active { cursor: grabbing; }
+        a, button, input { font: inherit; }
+        #back {
+            position: fixed; top: 16px; left: 16px; z-index: 10;
+            color: var(--muted); text-decoration: none; font-size: 10px;
+            letter-spacing: .14em;
+        }
+        #back:hover { color: var(--ink); }
+        .title, .stats, .controls {
+            color: #000; background: var(--panel); border: 1px solid var(--faint);
+            box-shadow: 5px 5px 0 var(--ghost);
+        }
+        .title {
+            position: fixed; top: 44px; left: 16px; z-index: 10;
+            padding: 10px 12px; pointer-events: none;
+        }
+        .eyebrow { font-size: 9px; letter-spacing: .25em; }
+        h1 {
+            margin: 7px 0 4px; font-size: clamp(19px,2.4vw,32px);
+            line-height: 1; font-weight: 400;
+        }
+        .subtitle { font-size: 9px; letter-spacing: .09em; opacity: .58; }
+        .stats {
+            position: fixed; top: 16px; right: 16px; z-index: 10;
+            min-width: 194px; padding: 10px 12px; font-size: 9px;
+            line-height: 1.85; letter-spacing: .08em; text-transform: lowercase;
+        }
+        .stats-row {
+            display: flex; justify-content: space-between; gap: 24px;
+            color: var(--muted);
+        }
+        .stats-row span:last-child { color: var(--ink); }
+        .stats-row .alive::before {
+            content: ""; display: inline-block; width: 5px; height: 5px;
+            margin-right: 6px; border-radius: 50%; background: var(--ink);
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%,100% { transform: scale(.65); opacity: .4; }
+            50% { transform: scale(1.3); opacity: 1; }
+        }
+        .hint {
+            position: fixed; left: 16px; bottom: 96px; z-index: 10;
+            color: var(--muted); font-size: 8px; line-height: 1.7;
+            letter-spacing: .09em; pointer-events: none;
+        }
+        .hint strong { color: var(--ink); font-weight: 400; }
+        .controls {
+            position: fixed; left: 50%; bottom: 17px; transform: translateX(-50%);
+            z-index: 12; display: flex; align-items: center; gap: 6px;
+            width: min(1020px,calc(100vw - 28px)); padding: 7px;
+        }
+        button {
+            min-height: 31px; padding: 0 11px; border: 1px solid var(--faint);
+            background: transparent; color: var(--muted); font-size: 9px;
+            letter-spacing: .08em; text-transform: lowercase; cursor: pointer;
+        }
+        button:hover { color: var(--ink); border-color: var(--ink); }
+        button.active {
+            color: var(--paper); border-color: var(--ink); background: var(--ink);
+        }
+        .speed {
+            display: flex; align-items: center; gap: 7px; padding: 0 4px;
+            color: var(--muted); font-size: 8px; white-space: nowrap;
+        }
+        .speed:first-of-type { margin-left: auto; }
+        input[type=range] {
+            width: 74px; height: 2px; appearance: none;
+            background: rgba(8,9,8,.2); outline: 0;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            width: 9px; height: 9px; appearance: none; border-radius: 50%;
+            background: var(--ink); border: 1px solid var(--paper);
+            box-shadow: 0 0 0 1px var(--ink);
+        }
+        #unsupported {
+            position: fixed; inset: 50% auto auto 50%; transform: translate(-50%,-50%);
+            z-index: 20; width: min(430px,calc(100vw - 32px)); padding: 18px;
+            border: 1px solid var(--ink); background: var(--paper); color: var(--ink);
+            font-size: 11px; line-height: 1.7;
+        }
+        #unsupported a { text-decoration: underline; }
+        @media (max-width: 760px) {
+            .stats { top: 12px; right: 12px; min-width: 154px; }
+            .title { top: 47px; left: 12px; max-width: 55vw; }
+            #back { top: 14px; left: 12px; }
+            .controls { flex-wrap: wrap; justify-content: center; }
+            .speed:first-of-type { margin-left: 0; }
+            .hint { bottom: 126px; left: 12px; }
+            button { padding: 0 8px; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="scene" aria-label="Freely rotatable 3D point-cloud pathfinding organism"></canvas>
+    <a id="back" href="index.html">&larr; portfolio</a>
+    <header class="title">
+        <div class="eyebrow">routing organism // point-cloud study</div>
+        <h1>symbiote cloud</h1>
+        <div class="subtitle">shortest-path tissue suspended in three dimensions</div>
+    </header>
+    <aside class="stats" aria-live="polite">
+        <div class="stats-row"><span>state</span><span id="state" class="alive">germinating</span></div>
+        <div class="stats-row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
+        <div class="stats-row"><span>nodes settled</span><span id="visited">0</span></div>
+        <div class="stats-row"><span>living limbs</span><span id="tendrils">0</span></div>
+        <div class="stats-row"><span>cloud points</span><span id="points">0</span></div>
+        <div class="stats-row"><span>render</span><span id="quality">full</span></div>
+        <div class="stats-row"><span>route cost</span><span id="cost">--</span></div>
+    </aside>
+    <div class="hint">
+        <strong>drag</strong> orbit&nbsp;&nbsp; wheel zoom&nbsp;&nbsp; click ground selects endpoints<br>
+        space pauses organism&nbsp;&nbsp; camera remains free
+    </div>
+    <nav class="controls" aria-label="3D point-cloud pathfinding controls">
+        <button id="astar" class="active">a* search</button>
+        <button id="dijkstra">dijkstra</button>
+        <button id="run">regrow</button>
+        <button id="random">new endpoints</button>
+        <button id="pause">pause</button>
+        <button id="reset-view">reset view</button>
+        <button id="top-view">top view</button>
+        <label class="speed">propagation
+            <input id="speed" type="range" min="25" max="260" value="105">
+        </label>
+        <label class="speed">biomass
+            <input id="creep" type="range" min="0" max="100" value="82">
+        </label>
+    </nav>
+    <div id="unsupported" hidden>
+        <strong>3D point-cloud mode unavailable</strong><br>
+        <span>This browser does not expose the required GPU features.</span><br>
+        <a href="pathfinding.html">open the 2D organism instead</a>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="pathfinding-core.js"></script>
+    <script src="pathfinding-organism.js"></script>
+    <script src="pathfinding-geometry.js"></script>
+    <script src="pathfinding-cloud-author.js"></script>
+    <script src="pathfinding-cloud-renderer.js"></script>
+    <script src="pathfinding-cloud-app.js"></script>
+</body>
+</html>
