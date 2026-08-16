@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#050807">
+    <title>symbiote // pathfinding study</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ink: #d9e8df;
+            --muted: rgba(204, 225, 213, 0.42);
+            --faint: rgba(204, 225, 213, 0.13);
+            --green: #72ffc2;
+            --green-soft: rgba(114, 255, 194, 0.28);
+            --amber: #ffd68a;
+            --violet: #b69cff;
+            --panel: rgba(6, 11, 9, 0.79);
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #050807;
+            color: var(--ink);
+            font-family: "DotGothic16", monospace;
+            user-select: none;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 4;
+            opacity: 0.22;
+            background:
+                repeating-linear-gradient(
+                    0deg,
+                    transparent 0,
+                    transparent 3px,
+                    rgba(180, 255, 220, 0.025) 4px
+                ),
+                radial-gradient(circle at 50% 45%, transparent 0, rgba(0, 0, 0, 0.48) 78%);
+        }
+
+        canvas {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        a, button, input { font: inherit; }
+
+        #back {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 10;
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            transition: color 160ms ease;
+        }
+
+        #back:hover { color: var(--ink); }
+
+        .title {
+            position: fixed;
+            top: 43px;
+            left: 16px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            color: var(--green);
+            font-size: 9px;
+            letter-spacing: 0.24em;
+            opacity: 0.72;
+        }
+
+        h1 {
+            margin: 6px 0 3px;
+            font-size: clamp(18px, 2.4vw, 31px);
+            line-height: 1;
+            font-weight: 400;
+            letter-spacing: 0.03em;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            font-size: 9px;
+            letter-spacing: 0.1em;
+        }
+
+        .stats {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            min-width: 176px;
+            padding: 10px 12px;
+            z-index: 10;
+            border: 1px solid var(--faint);
+            background: var(--panel);
+            backdrop-filter: blur(12px);
+            font-size: 9px;
+            line-height: 1.9;
+            letter-spacing: 0.08em;
+            text-transform: lowercase;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 24px;
+            color: var(--muted);
+        }
+
+        .stats-row span:last-child { color: var(--ink); }
+        .stats-row .alive { color: var(--green); }
+
+        .legend {
+            position: fixed;
+            right: 16px;
+            bottom: 96px;
+            z-index: 10;
+            display: grid;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 8px;
+            letter-spacing: 0.1em;
+            pointer-events: none;
+        }
+
+        .legend-row {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .swatch {
+            width: 20px;
+            height: 1px;
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green);
+        }
+
+        .swatch.route {
+            height: 2px;
+            background: var(--amber);
+            box-shadow: 0 0 10px var(--amber);
+        }
+
+        .swatch.road {
+            background: rgba(204, 225, 213, 0.22);
+            box-shadow: none;
+        }
+
+        .controls {
+            position: fixed;
+            left: 50%;
+            bottom: 17px;
+            transform: translateX(-50%);
+            z-index: 12;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: min(730px, calc(100vw - 28px));
+            padding: 7px;
+            border: 1px solid var(--faint);
+            background: var(--panel);
+            backdrop-filter: blur(16px);
+        }
+
+        button {
+            min-height: 31px;
+            padding: 0 12px;
+            border: 1px solid rgba(204, 225, 213, 0.16);
+            background: rgba(204, 225, 213, 0.035);
+            color: var(--muted);
+            font-size: 9px;
+            letter-spacing: 0.09em;
+            text-transform: lowercase;
+            cursor: pointer;
+            transition: color 130ms, border-color 130ms, background 130ms;
+        }
+
+        button:hover {
+            color: var(--ink);
+            border-color: rgba(114, 255, 194, 0.36);
+        }
+
+        button.active {
+            color: #06100b;
+            border-color: var(--green);
+            background: var(--green);
+        }
+
+        button.primary {
+            color: var(--green);
+            border-color: rgba(114, 255, 194, 0.38);
+        }
+
+        .speed {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            padding: 0 6px;
+            color: var(--muted);
+            font-size: 8px;
+            white-space: nowrap;
+        }
+
+        input[type="range"] {
+            width: 94px;
+            height: 2px;
+            appearance: none;
+            background: rgba(204, 225, 213, 0.18);
+            outline: 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            width: 9px;
+            height: 9px;
+            appearance: none;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 7px var(--green);
+            cursor: pointer;
+        }
+
+        .hint {
+            position: fixed;
+            left: 16px;
+            bottom: 93px;
+            z-index: 10;
+            color: var(--muted);
+            font-size: 8px;
+            line-height: 1.7;
+            letter-spacing: 0.09em;
+            pointer-events: none;
+        }
+
+        .hint strong {
+            color: var(--green);
+            font-weight: 400;
+        }
+
+        @media (max-width: 680px) {
+            .stats { top: 12px; right: 12px; min-width: 146px; }
+            .title { top: 46px; left: 12px; }
+            #back { top: 14px; left: 12px; }
+            .controls { flex-wrap: wrap; justify-content: center; }
+            .speed { margin-left: 0; }
+            .legend { display: none; }
+            .hint { bottom: 112px; left: 12px; }
+            button { padding: 0 9px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            body::before { opacity: 0.1; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="scene" aria-label="Animated shortest-path search on a synthetic street network"></canvas>
+    <a id="back" href="index.html">&larr; portfolio</a>
+
+    <header class="title">
+        <div class="eyebrow">routing organism // 001</div>
+        <h1>symbiote pathfinder</h1>
+        <div class="subtitle">a* and dijkstra search rendered as living infrastructure</div>
+    </header>
+
+    <aside class="stats" aria-live="polite">
+        <div class="stats-row"><span>state</span><span id="state" class="alive">germinating</span></div>
+        <div class="stats-row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
+        <div class="stats-row"><span>nodes settled</span><span id="visited">0</span></div>
+        <div class="stats-row"><span>tendrils</span><span id="tendrils">0</span></div>
+        <div class="stats-row"><span>route cost</span><span id="cost">--</span></div>
+    </aside>
+
+    <div class="legend">
+        <div class="legend-row">dormant street <span class="swatch road"></span></div>
+        <div class="legend-row">search organism <span class="swatch"></span></div>
+        <div class="legend-row">selected route <span class="swatch route"></span></div>
+    </div>
+
+    <div class="hint">
+        <strong>click network</strong> to move origin / destination<br>
+        space pauses&nbsp;&nbsp; r restarts&nbsp;&nbsp; a changes algorithm
+    </div>
+
+    <nav class="controls" aria-label="Pathfinding controls">
+        <button id="astar" class="active">a* search</button>
+        <button id="dijkstra">dijkstra</button>
+        <button id="run" class="primary">regrow</button>
+        <button id="random">new endpoints</button>
+        <button id="pause">pause</button>
+        <label class="speed">
+            propagation
+            <input id="speed" type="range" min="25" max="260" value="105">
+        </label>
+    </nav>
+
+    <script src="pathfinding-core.js"></script>
+    <script>
+    (() => {
+        'use strict';
+
+        const canvas = document.getElementById('scene');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const ui = {
+            state: document.getElementById('state'),
+            algorithm: document.getElementById('algorithm-stat'),
+            visited: document.getElementById('visited'),
+            tendrils: document.getElementById('tendrils'),
+            cost: document.getElementById('cost'),
+            astar: document.getElementById('astar'),
+            dijkstra: document.getElementById('dijkstra'),
+            run: document.getElementById('run'),
+            random: document.getElementById('random'),
+            pause: document.getElementById('pause'),
+            speed: document.getElementById('speed'),
+        };
+
+        const WORLD = { width: 1600, height: 900, marginX: 90, marginY: 80 };
+        const ROAD_STYLE = {
+            artery: { width: 1.25, alpha: 0.18, speed: 2.2 },
+            street: { width: 0.72, alpha: 0.115, speed: 1.35 },
+            alley:  { width: 0.48, alpha: 0.075, speed: 0.92 },
+            track:  { width: 0.42, alpha: 0.055, speed: 0.62 },
+        };
+
+        let dpr = 1;
+        let viewport = { width: 1, height: 1, scale: 1, ox: 0, oy: 0 };
+        let graph;
+        let graphSeed = 32841;
+        let originId;
+        let destinationId;
+        let selecting = 'origin';
+        let algorithm = 'astar';
+        let result = null;
+        let eventCursor = 0;
+        let eventCredit = 0;
+        let tendrils = new Map();
+        let routeEdgeIds = new Set();
+        let routeStart = 0;
+        let routeReveal = 0;
+        let state = 'idle';
+        let paused = false;
+        let lastFrame = performance.now();
+        let simulationTime = 0;
+        let settledCount = 0;
+
+        function mulberry32(seed) {
+            return function random() {
+                let t = seed += 0x6D2B79F5;
+                t = Math.imul(t ^ t >>> 15, t | 1);
+                t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        function createGraph(seed) {
+            const random = mulberry32(seed);
+            const cols = 29;
+            const rows = 17;
+            const xGap = (WORLD.width - WORLD.marginX * 2) / (cols - 1);
+            const yGap = (WORLD.height - WORLD.marginY * 2) / (rows - 1);
+            const nodes = {};
+            const adjacency = {};
+            const edges = [];
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const id = `${col}:${row}`;
+                    const arterialCol = col % 7 === 0;
+                    const arterialRow = row % 5 === 0;
+                    const jitterX = (arterialCol ? 0.24 : 0.68) * (random() - 0.5) * xGap;
+                    const jitterY = (arterialRow ? 0.24 : 0.68) * (random() - 0.5) * yGap;
+                    nodes[id] = {
+                        id,
+                        x: WORLD.marginX + col * xGap + jitterX,
+                        y: WORLD.marginY + row * yGap + jitterY,
+                    };
+                    adjacency[id] = [];
+                }
+            }
+
+            function classify(col, row, diagonal) {
+                if (!diagonal && (col % 7 === 0 || row % 5 === 0)) return 'artery';
+                if (diagonal) return random() > 0.42 ? 'alley' : 'track';
+                return random() > 0.24 ? 'street' : 'alley';
+            }
+
+            function addEdge(aId, bId, kind) {
+                const a = nodes[aId];
+                const b = nodes[bId];
+                if (!a || !b) return;
+                const id = edges.length;
+                const distance = Math.hypot(b.x - a.x, b.y - a.y);
+                const bend = (random() - 0.5) * Math.min(32, distance * 0.24);
+                const edge = { id, a: aId, b: bId, kind, distance, bend };
+                edges.push(edge);
+                const cost = distance / ROAD_STYLE[kind].speed;
+                adjacency[aId].push({ to: bId, edgeId: id, cost });
+                adjacency[bId].push({ to: aId, edgeId: id, cost });
+            }
+
+            // A connected street lattice forms the dependable substrate.
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const id = `${col}:${row}`;
+                    if (col < cols - 1) addEdge(id, `${col + 1}:${row}`, classify(col, row, false));
+                    if (row < rows - 1) addEdge(id, `${col}:${row + 1}`, classify(col, row, false));
+                }
+            }
+
+            // Diagonal alleys and rough tracks create shortcuts and organic branching.
+            for (let row = 0; row < rows - 1; row++) {
+                for (let col = 0; col < cols - 1; col++) {
+                    if (random() < 0.17) {
+                        const rising = random() > 0.5;
+                        addEdge(
+                            `${col}:${rising ? row + 1 : row}`,
+                            `${col + 1}:${rising ? row : row + 1}`,
+                            classify(col, row, true)
+                        );
+                    }
+                }
+            }
+
+            const maximumSpeed = Math.max(
+                ...Object.values(ROAD_STYLE).map(style => style.speed)
+            );
+            return {
+                nodes,
+                adjacency,
+                edges,
+                cols,
+                rows,
+                // Straight-line distance divided by maximum speed never
+                // overestimates remaining cost, preserving A* optimality.
+                heuristicScale: 1 / maximumSpeed,
+            };
+        }
+
+        function resize() {
+            dpr = Math.min(window.devicePixelRatio || 1, 2);
+            viewport.width = window.innerWidth;
+            viewport.height = window.innerHeight;
+            canvas.width = Math.floor(viewport.width * dpr);
+            canvas.height = Math.floor(viewport.height * dpr);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
+            viewport.scale = Math.min(
+                viewport.width / WORLD.width,
+                viewport.height / WORLD.height
+            );
+            viewport.ox = (viewport.width - WORLD.width * viewport.scale) * 0.5;
+            viewport.oy = (viewport.height - WORLD.height * viewport.scale) * 0.5;
+        }
+
+        function screenPoint(node) {
+            return {
+                x: viewport.ox + node.x * viewport.scale,
+                y: viewport.oy + node.y * viewport.scale,
+            };
+        }
+
+        function curvePoints(edge, fromId, progress, steps = 12) {
+            const reverse = fromId === edge.b;
+            const start = graph.nodes[reverse ? edge.b : edge.a];
+            const end = graph.nodes[reverse ? edge.a : edge.b];
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const length = Math.max(1, Math.hypot(dx, dy));
+            const control = {
+                x: (start.x + end.x) * 0.5 - dy / length * edge.bend,
+                y: (start.y + end.y) * 0.5 + dx / length * edge.bend,
+            };
+            const points = [];
+            const count = Math.max(2, Math.ceil(steps * progress));
+            for (let index = 0; index <= count; index++) {
+                const t = progress * index / count;
+                const oneMinus = 1 - t;
+                points.push({
+                    x: oneMinus * oneMinus * start.x + 2 * oneMinus * t * control.x + t * t * end.x,
+                    y: oneMinus * oneMinus * start.y + 2 * oneMinus * t * control.y + t * t * end.y,
+                });
+            }
+            return points;
+        }
+
+        function trace(points) {
+            if (points.length < 2) return;
+            const first = screenPoint(points[0]);
+            ctx.beginPath();
+            ctx.moveTo(first.x, first.y);
+            for (let index = 1; index < points.length; index++) {
+                const point = screenPoint(points[index]);
+                ctx.lineTo(point.x, point.y);
+            }
+        }
+
+        function drawBackground(time) {
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const gradient = ctx.createRadialGradient(
+                viewport.width * 0.48,
+                viewport.height * 0.45,
+                20,
+                viewport.width * 0.48,
+                viewport.height * 0.45,
+                Math.max(viewport.width, viewport.height) * 0.72
+            );
+            gradient.addColorStop(0, '#09110e');
+            gradient.addColorStop(0.58, '#060b09');
+            gradient.addColorStop(1, '#030504');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, viewport.width, viewport.height);
+
+            const pulse = 0.5 + Math.sin(time * 0.00018) * 0.5;
+            ctx.fillStyle = `rgba(75, 160, 118, ${0.012 + pulse * 0.008})`;
+            ctx.fillRect(0, 0, viewport.width, viewport.height);
+        }
+
+        function drawRoadNetwork() {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (const edge of graph.edges) {
+                const style = ROAD_STYLE[edge.kind];
+                trace(curvePoints(edge, edge.a, 1, 8));
+                ctx.strokeStyle = `rgba(190, 221, 203, ${style.alpha})`;
+                ctx.lineWidth = Math.max(0.35, style.width * viewport.scale);
+                if (edge.kind === 'track') ctx.setLineDash([2, 5]);
+                else ctx.setLineDash([]);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+
+        function easeOutCubic(value) {
+            return 1 - Math.pow(1 - Math.max(0, Math.min(1, value)), 3);
+        }
+
+        function drawTendrils(time) {
+            const solvedElapsed = routeStart ? time - routeStart : 0;
+            const collapse = routeStart
+                ? Math.max(0, Math.min(1, (solvedElapsed - 620) / 1800))
+                : 0;
+            let visibleCount = 0;
+
+            ctx.globalCompositeOperation = 'lighter';
+            for (const tendril of tendrils.values()) {
+                const edge = graph.edges[tendril.edgeId];
+                const age = time - tendril.spawnTime;
+                const growth = easeOutCubic(age / tendril.duration);
+                const isRoute = routeEdgeIds.has(tendril.edgeId);
+                const decay = isRoute ? 0 : collapse;
+                const visibleProgress = growth * (1 - decay * decay);
+                if (visibleProgress <= 0.002) continue;
+                visibleCount++;
+
+                const breath = 0.74 + Math.sin(time * 0.004 + tendril.phase) * 0.16;
+                const alpha = (isRoute ? 0.16 : 0.42) * breath * (1 - decay);
+                const points = curvePoints(edge, tendril.from, visibleProgress, 14);
+
+                trace(points);
+                ctx.strokeStyle = `rgba(80, 255, 176, ${alpha * 0.2})`;
+                ctx.lineWidth = 9 * viewport.scale;
+                ctx.stroke();
+
+                trace(points);
+                ctx.strokeStyle = `rgba(105, 255, 194, ${alpha})`;
+                ctx.lineWidth = Math.max(0.7, 1.55 * viewport.scale);
+                ctx.stroke();
+
+                if (growth < 0.995 && decay < 0.1) {
+                    const tip = screenPoint(points[points.length - 1]);
+                    const radius = (2.3 + Math.sin(time * 0.014 + tendril.phase)) * viewport.scale;
+                    ctx.beginPath();
+                    ctx.arc(tip.x, tip.y, Math.max(1.2, radius), 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(190,255,225,0.88)';
+                    ctx.shadowColor = '#72ffc2';
+                    ctx.shadowBlur = 10;
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            }
+            ctx.globalCompositeOperation = 'source-over';
+            ui.tendrils.textContent = visibleCount;
+        }
+
+        function drawRoute(time) {
+            if (!result || !result.found || routeReveal <= 0) return;
+            const totalEdges = result.edgeIds.length;
+            const scaled = routeReveal * totalEdges;
+            const pulsePosition = ((time - routeStart) * 0.00022) % 1;
+            ctx.globalCompositeOperation = 'lighter';
+
+            for (let index = 0; index < totalEdges; index++) {
+                const localProgress = Math.max(0, Math.min(1, scaled - index));
+                if (localProgress <= 0) break;
+                const edgeId = result.edgeIds[index];
+                const from = result.nodeIds[index];
+                const edge = graph.edges[edgeId];
+                const points = curvePoints(edge, from, localProgress, 16);
+
+                trace(points);
+                ctx.strokeStyle = 'rgba(255, 190, 90, 0.12)';
+                ctx.lineWidth = 13 * viewport.scale;
+                ctx.stroke();
+
+                trace(points);
+                ctx.strokeStyle = 'rgba(255, 220, 153, 0.94)';
+                ctx.lineWidth = Math.max(1.25, 2.5 * viewport.scale);
+                ctx.stroke();
+
+                const normalized = index / Math.max(1, totalEdges - 1);
+                const pulseDistance = Math.abs(normalized - pulsePosition);
+                if (pulseDistance < 0.045 && localProgress >= 1) {
+                    trace(points);
+                    ctx.strokeStyle = `rgba(255,255,232,${1 - pulseDistance / 0.045})`;
+                    ctx.lineWidth = Math.max(2, 4.2 * viewport.scale);
+                    ctx.stroke();
+                }
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function drawEndpoint(nodeId, type, time) {
+            const node = screenPoint(graph.nodes[nodeId]);
+            const isOrigin = type === 'origin';
+            const color = isOrigin ? '#72ffc2' : '#ffd68a';
+            const pulse = 7 + Math.sin(time * 0.004 + (isOrigin ? 0 : 2)) * 1.5;
+
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, pulse * viewport.scale, 0, Math.PI * 2);
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = 0.72;
+            ctx.lineWidth = Math.max(1, viewport.scale);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, Math.max(2, 2.7 * viewport.scale), 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 13;
+            ctx.globalAlpha = 1;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function processEvent(event, time) {
+            if (event.type === 'node-settled') {
+                settledCount++;
+                return;
+            }
+            if (event.type === 'edge-relaxed') {
+                const existing = tendrils.get(event.edgeId);
+                if (!existing || existing.cost > event.cost) {
+                    const edge = graph.edges[event.edgeId];
+                    tendrils.set(event.edgeId, {
+                        edgeId: event.edgeId,
+                        from: event.from,
+                        cost: event.cost,
+                        spawnTime: time,
+                        duration: 260 + Math.min(520, edge.distance * 3.1),
+                        phase: event.edgeId * 0.713,
+                    });
+                }
+                return;
+            }
+            if (event.type === 'route-found') {
+                routeEdgeIds = new Set(event.edgeIds);
+                routeStart = time;
+                state = 'resolved';
+                ui.state.textContent = 'route bonded';
+                ui.cost.textContent = `${Math.round(event.cost)} units`;
+            }
+            if (event.type === 'route-missing') {
+                state = 'failed';
+                ui.state.textContent = 'no connection';
+            }
+        }
+
+        function update(dt, time) {
+            if (paused || !result) return;
+            if (state === 'searching') {
+                eventCredit += dt * Number(ui.speed.value);
+                let allowance = Math.min(36, Math.floor(eventCredit));
+                eventCredit -= allowance;
+                while (allowance-- > 0 && eventCursor < result.events.length) {
+                    processEvent(result.events[eventCursor++], time);
+                }
+                ui.visited.textContent = settledCount;
+            }
+            if (routeStart) {
+                routeReveal = easeOutCubic((time - routeStart) / 1450);
+            }
+        }
+
+        function render(time) {
+            drawBackground(time);
+            drawRoadNetwork();
+            drawTendrils(time);
+            drawRoute(time);
+            drawEndpoint(originId, 'origin', time);
+            drawEndpoint(destinationId, 'destination', time);
+        }
+
+        function animate(time) {
+            const dt = Math.min(0.05, Math.max(0, (time - lastFrame) / 1000));
+            lastFrame = time;
+            if (!paused) simulationTime += dt * 1000;
+            update(dt, simulationTime);
+            render(simulationTime);
+            requestAnimationFrame(animate);
+        }
+
+        function runSearch() {
+            result = SymbiotePathfinding.search(
+                graph,
+                originId,
+                destinationId,
+                algorithm
+            );
+            tendrils = new Map();
+            routeEdgeIds = new Set();
+            eventCursor = 0;
+            eventCredit = 0;
+            settledCount = 0;
+            routeStart = 0;
+            routeReveal = 0;
+            state = 'searching';
+            paused = false;
+            ui.state.textContent = 'propagating';
+            ui.state.className = 'alive';
+            ui.visited.textContent = '0';
+            ui.tendrils.textContent = '0';
+            ui.cost.textContent = '--';
+            ui.pause.textContent = 'pause';
+        }
+
+        function setAlgorithm(next) {
+            algorithm = next;
+            ui.astar.classList.toggle('active', algorithm === 'astar');
+            ui.dijkstra.classList.toggle('active', algorithm === 'dijkstra');
+            ui.algorithm.textContent = algorithm === 'astar' ? 'a*' : 'dijkstra';
+            runSearch();
+        }
+
+        function randomEndpoints() {
+            const random = mulberry32(Math.floor(performance.now() * 1000) ^ graphSeed);
+            const leftCol = 1 + Math.floor(random() * 5);
+            const rightCol = graph.cols - 2 - Math.floor(random() * 5);
+            originId = `${leftCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+            destinationId = `${rightCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+            selecting = 'origin';
+            runSearch();
+        }
+
+        function nearestNode(clientX, clientY) {
+            const worldX = (clientX - viewport.ox) / viewport.scale;
+            const worldY = (clientY - viewport.oy) / viewport.scale;
+            let bestId = null;
+            let bestDistance = Infinity;
+            for (const node of Object.values(graph.nodes)) {
+                const distance = (node.x - worldX) ** 2 + (node.y - worldY) ** 2;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestId = node.id;
+                }
+            }
+            return bestId;
+        }
+
+        canvas.addEventListener('pointerup', event => {
+            const nodeId = nearestNode(event.clientX, event.clientY);
+            if (!nodeId) return;
+            if (selecting === 'origin') {
+                originId = nodeId;
+                selecting = 'destination';
+                ui.state.textContent = 'select destination';
+            } else {
+                destinationId = nodeId;
+                selecting = 'origin';
+                if (destinationId === originId) {
+                    ui.state.textContent = 'choose another node';
+                    return;
+                }
+                runSearch();
+            }
+        });
+
+        ui.astar.addEventListener('click', () => setAlgorithm('astar'));
+        ui.dijkstra.addEventListener('click', () => setAlgorithm('dijkstra'));
+        ui.run.addEventListener('click', runSearch);
+        ui.random.addEventListener('click', randomEndpoints);
+        ui.pause.addEventListener('click', () => {
+            paused = !paused;
+            ui.pause.textContent = paused ? 'resume' : 'pause';
+            ui.state.textContent = paused ? 'suspended' : (routeStart ? 'route bonded' : 'propagating');
+        });
+
+        window.addEventListener('keydown', event => {
+            if (event.code === 'Space') {
+                event.preventDefault();
+                ui.pause.click();
+            } else if (event.key.toLowerCase() === 'r') {
+                runSearch();
+            } else if (event.key.toLowerCase() === 'a') {
+                setAlgorithm(algorithm === 'astar' ? 'dijkstra' : 'astar');
+            }
+        });
+
+        window.addEventListener('resize', resize);
+
+        graph = createGraph(graphSeed);
+        originId = '2:13';
+        destinationId = '26:3';
+        resize();
+        requestAnimationFrame(animate);
+        setTimeout(runSearch, 550);
+    })();
+    </script>
+</body>
+</html>

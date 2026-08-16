@@ -59,6 +59,15 @@ const projects = [
     },
     {
         type: "sim",
+        title: "symbiote pathfinder",
+        subtitle: "living shortest-path search",
+        desc: "",
+        classification: "canvas // graph search",
+        sim: "pathfinding.html",
+        tags: ["a*", "dijkstra", "generative", "routing"]
+    },
+    {
+        type: "sim",
         title: "transit",
         subtitle: "live metro // stockholm",
         desc: "",
