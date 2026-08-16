@@ -337,12 +337,44 @@
             return [0.16, 0.2, 0.21];
         }
 
-        buildSignals(snapshot, timeline, time, algorithm) {
-            let cursor = 0;
-            const subdivisions =
-                snapshot.settledCount > 350 ? 7 : 12;
+        signalFrequency(edge) {
+            return 2.2 + Math.min(5.5, edge.effectiveCost / 16);
+        }
+
+        signalSubdivisions(edgeState, edge, samplesPerCycle, scale) {
+            const frequency = this.signalFrequency(edge);
+            const desired = Math.max(
+                24,
+                Math.round(frequency * samplesPerCycle)
+            );
+            return Math.max(16, Math.round(desired * scale));
+        }
+
+        buildSignals(snapshot, timeline, time) {
+            const active = [];
             for (const edgeState of snapshot.edges) {
                 if (edgeState.discoveredAt === null) continue;
+                active.push(edgeState);
+            }
+            const samplesPerCycle =
+                snapshot.settledCount > 350 ? 8 : 12;
+            let estimatedVertices = 0;
+            for (const edgeState of active) {
+                estimatedVertices +=
+                    this.signalSubdivisions(
+                        edgeState,
+                        this.graph.edges[edgeState.edgeId],
+                        samplesPerCycle,
+                        1
+                    ) * 2;
+            }
+            const scale =
+                estimatedVertices > MAX_SIGNAL_VERTICES
+                    ? MAX_SIGNAL_VERTICES / estimatedVertices
+                    : 1;
+
+            let cursor = 0;
+            for (const edgeState of active) {
                 const edge = this.graph.edges[edgeState.edgeId];
                 const a = this.graph.nodes[edge.a];
                 const b = this.graph.nodes[edge.b];
@@ -367,23 +399,27 @@
                 }
                 const height =
                     4 + fHeight * settledFactor * routeFactor;
-                const frequency =
-                    2.5 +
-                    Math.min(8, edge.effectiveCost / 12);
+                const frequency = this.signalFrequency(edge);
                 const amplitude =
                     edgeState.route && snapshot.routeFound
                         ? 2.5
                         : 5 + edgeState.amplitude * 9;
+                const subdivisions = this.signalSubdivisions(
+                    edgeState,
+                    edge,
+                    samplesPerCycle,
+                    scale
+                );
+                const dx = b.x - a.x;
+                const dz = -(b.y - a.y);
+                const length = Math.max(0.001, Math.hypot(dx, dz));
+                const nx = -dz / length;
+                const nz = dx / length;
                 let previous = null;
                 for (let sample = 0; sample <= subdivisions; sample++) {
                     const t = sample / subdivisions;
                     const x = a.x + (b.x - a.x) * t;
                     const z = -(a.y + (b.y - a.y) * t);
-                    const dx = b.x - a.x;
-                    const dz = -(b.y - a.y);
-                    const length = Math.max(0.001, Math.hypot(dx, dz));
-                    const nx = -dz / length;
-                    const nz = dx / length;
                     const phase =
                         time * 0.004 -
                         t * frequency * Math.PI * 2 +
@@ -391,9 +427,7 @@
                     const wave = Math.sin(phase) * amplitude;
                     const point = {
                         x: x + nx * wave,
-                        y:
-                            height +
-                            Math.sin(phase * 0.73) * amplitude * 0.28,
+                        y: height + wave * 0.22,
                         z: z + nz * wave,
                     };
                     if (previous) {
@@ -548,7 +582,7 @@
                 originId,
                 destinationId,
             } = options;
-            this.buildSignals(snapshot, timeline, time, algorithm);
+            this.buildSignals(snapshot, timeline, time);
             this.updateNodes(snapshot, timeline);
             this.rebuildContours(contourMode, snapshot, timeline);
             this.updateGuidance(snapshot, destinationId, algorithm);
