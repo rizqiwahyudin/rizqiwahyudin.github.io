@@ -500,7 +500,7 @@
                                 ? 0x58748a
                                 : 0x4d5659,
                         transparent: true,
-                        opacity: 0.2,
+                        opacity: 0.32,
                     })
                 );
                 this.contourGroup.add(line);

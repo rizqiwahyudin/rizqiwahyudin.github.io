@@ -106,6 +106,7 @@
             <div>distance <span>${edge.distance.toFixed(1)}</span></div>
             <div>base cost <span>${edge.baseCost.toFixed(2)}</span></div>
             <div>resistance <span>${edge.resistance.toFixed(2)}x</span></div>
+            <div>preferred <span>${edge.preferred ? 'yes' : 'no'}</span></div>
             <div>effective <span>${edge.effectiveCost.toFixed(2)}</span></div>
             <div>g <span>${state.g == null ? '--' : state.g.toFixed(2)}</span></div>
             <div>h <span>${state.h == null ? '--' : state.h.toFixed(2)}</span></div>
