@@ -362,7 +362,7 @@
         let state = 'idle';
         let paused = false;
         let lastFrame = performance.now();
-        let runStart = performance.now();
+        let simulationTime = 0;
         let settledCount = 0;
 
         function mulberry32(seed) {
@@ -443,7 +443,19 @@
                 }
             }
 
-            return { nodes, adjacency, edges, cols, rows };
+            const maximumSpeed = Math.max(
+                ...Object.values(ROAD_STYLE).map(style => style.speed)
+            );
+            return {
+                nodes,
+                adjacency,
+                edges,
+                cols,
+                rows,
+                // Straight-line distance divided by maximum speed never
+                // overestimates remaining cost, preserving A* optimality.
+                heuristicScale: 1 / maximumSpeed,
+            };
         }
 
         function resize() {
@@ -713,8 +725,9 @@
         function animate(time) {
             const dt = Math.min(0.05, Math.max(0, (time - lastFrame) / 1000));
             lastFrame = time;
-            update(dt, time);
-            render(time);
+            if (!paused) simulationTime += dt * 1000;
+            update(dt, simulationTime);
+            render(simulationTime);
             requestAnimationFrame(animate);
         }
 
@@ -732,7 +745,6 @@
             settledCount = 0;
             routeStart = 0;
             routeReveal = 0;
-            runStart = performance.now();
             state = 'searching';
             paused = false;
             ui.state.textContent = 'propagating';

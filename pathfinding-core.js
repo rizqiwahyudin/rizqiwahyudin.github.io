@@ -55,7 +55,8 @@
     function heuristic(graph, nodeId, destinationId) {
         const node = graph.nodes[nodeId];
         const destination = graph.nodes[destinationId];
-        return Math.hypot(node.x - destination.x, node.y - destination.y);
+        const scale = graph.heuristicScale ?? 1;
+        return Math.hypot(node.x - destination.x, node.y - destination.y) * scale;
     }
 
     function reconstructPath(previous, previousEdge, originId, destinationId) {
@@ -85,6 +86,7 @@
      * Graph shape:
      *   nodes: { [id]: { id, x, y } }
      *   adjacency: { [id]: [{ to, edgeId, cost }] }
+     *   heuristicScale?: minimum edge cost per coordinate unit
      */
     function search(graph, originId, destinationId, algorithm) {
         if (!graph.nodes[originId] || !graph.nodes[destinationId]) {

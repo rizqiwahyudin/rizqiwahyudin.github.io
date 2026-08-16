@@ -53,6 +53,35 @@ for (const algorithm of ['dijkstra', 'astar']) {
 }
 
 {
+    // Fast roads can cost less than one unit per coordinate unit. The graph's
+    // lower-bound scale keeps A* admissible and therefore as optimal as Dijkstra.
+    const graph = {
+        heuristicScale: 0.1,
+        nodes: {
+            a: { id: 'a', x: 0, y: 0 },
+            b: { id: 'b', x: 0, y: 1 },
+            c: { id: 'c', x: 10, y: 0 },
+        },
+        adjacency: {
+            a: [
+                { to: 'c', edgeId: 0, cost: 5 },
+                { to: 'b', edgeId: 1, cost: 1 },
+            ],
+            b: [
+                { to: 'a', edgeId: 1, cost: 1 },
+                { to: 'c', edgeId: 2, cost: 1 },
+            ],
+            c: [
+                { to: 'a', edgeId: 0, cost: 5 },
+                { to: 'b', edgeId: 2, cost: 1 },
+            ],
+        },
+    };
+    assert.equal(search(graph, 'a', 'c', 'astar').cost, 2);
+    assert.equal(search(graph, 'a', 'c', 'dijkstra').cost, 2);
+}
+
+{
     const graph = makeGraph();
     graph.adjacency.a = [];
     graph.adjacency.b = [];
