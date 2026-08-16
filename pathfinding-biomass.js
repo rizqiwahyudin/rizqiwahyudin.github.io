@@ -40,7 +40,7 @@
             this.route = new Float32Array(MAX_VERTICES);
             this.seed = new Float32Array(MAX_VERTICES);
             this.routeStrandScratch = Array.from(
-                { length: 4 },
+                { length: 5 },
                 () => new Float32Array(34)
             );
 
@@ -313,7 +313,7 @@
             const strandCount = this.routeStrandScratch.length;
             for (let strand = 0; strand < strandCount; strand++) {
                 const scratch = this.routeStrandScratch[strand];
-                const strandOffset = (strand - (strandCount - 1) * 0.5) * 2.15;
+                const strandOffset = (strand - (strandCount - 1) * 0.5) * 5.2;
                 for (let index = 0; index < count; index++) {
                     const previous = Math.max(0, index - 1) * 2;
                     const next = Math.min(count - 1, index + 1) * 2;
@@ -326,12 +326,12 @@
                     const joinEnvelope = Math.pow(Math.sin(Math.PI * u), 0.42);
                     const weave =
                         Math.sin(
-                            u * Math.PI * (2.4 + strand * 0.37) +
+                            u * Math.PI * (2.1 + strand * 0.46) +
                             time * 0.0014 +
                             seed * 1.7 +
                             strand * 1.31
                         ) *
-                        (0.65 + strand * 0.12);
+                        (1.45 + strand * 0.19);
                     const offset = (strandOffset + weave) * joinEnvelope;
                     scratch[index * 2] = chain[index * 2] + nx * offset;
                     scratch[index * 2 + 1] = chain[index * 2 + 1] + ny * offset;
@@ -339,29 +339,29 @@
                 this.appendRibbon(
                     scratch,
                     progress,
-                    strand === 1 || strand === 2 ? 1.45 : 1.05,
+                    strand === 2 ? 1.0 : 0.72,
                     seed + strand * 13.7,
-                    strand === 1 || strand === 2 ? 0.98 : 0.82,
+                    strand === 2 ? 0.98 : 0.86,
                     1,
                     z + strand * 0.01
                 );
             }
 
             // Irregular vascular bridges bind the separate strands together.
-            for (let bridge = 0; bridge < 4; bridge++) {
+            for (let bridge = 0; bridge < 6; bridge++) {
                 const u = 0.14 + Geo.hash(seed * 11.3 + bridge * 29.7) * 0.72;
                 if (u > progress) continue;
                 const point = Geo.sampleChain(chain, u);
                 const envelope = Math.pow(Math.sin(Math.PI * u), 0.42);
                 const pulse = 0.82 + Math.sin(time * 0.004 + seed + bridge) * 0.18;
-                const span = 4.2 * envelope * pulse;
-                const skew = (Geo.hash(seed + bridge * 7.1) - 0.5) * 3.2;
+                const span = 10.8 * envelope * pulse;
+                const skew = (Geo.hash(seed + bridge * 7.1) - 0.5) * 5.2;
                 this.appendBridge(
                     point.x - point.nx * span - point.tx * skew,
                     point.y - point.ny * span - point.ty * skew,
                     point.x + point.nx * span + point.tx * skew,
                     point.y + point.ny * span + point.ty * skew,
-                    0.52,
+                    0.46,
                     seed + bridge * 23.9,
                     0.78,
                     z + 0.08
@@ -525,7 +525,7 @@
                 let baseWidth =
                     (edge.kind === 'artery' ? 7.6 : edge.kind === 'track' ? 4.2 : 5.8) *
                     contraction;
-                if (state.routeStart && isRoute) baseWidth *= 0.44;
+                if (state.routeStart && isRoute) baseWidth *= 0.2;
                 this.appendRibbon(
                     biomass.chain.position,
                     visibleProgress,
@@ -545,6 +545,7 @@
                         qualityAllowsBranch && creep > 0.03 && visibleProgress > branch.seed.at
                             ? 1
                             : 0;
+                    if (state.routeStart && isRoute) visibilityTarget *= 0.32;
                     // Once a solved, suppressed branch has fully retracted,
                     // quality recovery must not pop it back into the old search.
                     if (state.routeStart && !isRoute && branch.visibility < 0.02) {
@@ -585,7 +586,7 @@
                 const age = time - organismNode.spawnTime;
                 const arrival = Geo.easeOutCubic(age / 260);
                 const pulse = 0.78 + Math.sin(time * 0.005 + organismNode.phase) * 0.16;
-                const radius = (isRoute ? 4.2 : 5.8) * pulse * arrival * (1 - decay);
+                const radius = (isRoute ? 3.1 : 5.8) * pulse * arrival * (1 - decay);
                 this.appendDisc(
                     node.x,
                     node.y,
