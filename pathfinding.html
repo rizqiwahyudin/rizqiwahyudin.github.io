@@ -37,7 +37,7 @@
             inset: 0;
             pointer-events: none;
             z-index: 5;
-            opacity: 0.28;
+            opacity: 0.16;
             background-image:
                 radial-gradient(rgba(0, 0, 0, 0.08) 0.45px, transparent 0.55px),
                 linear-gradient(90deg, rgba(0, 0, 0, 0.012), transparent 45%, rgba(0, 0, 0, 0.012));
@@ -75,7 +75,17 @@
             top: 44px;
             left: 16px;
             z-index: 10;
+            padding: 10px 12px;
+            color: #000;
+            background: rgba(242, 241, 237, 0.92);
+            border: 1px solid rgba(0, 0, 0, 0.13);
+            box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.055);
             pointer-events: none;
+        }
+
+        .title, .title * {
+            color: #000;
+            text-shadow: none;
         }
 
         .eyebrow {
@@ -93,7 +103,8 @@
         }
 
         .subtitle {
-            color: var(--muted);
+            color: #000;
+            opacity: 0.58;
             font-size: 9px;
             letter-spacing: 0.09em;
         }
