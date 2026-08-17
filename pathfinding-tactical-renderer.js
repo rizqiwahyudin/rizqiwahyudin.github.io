@@ -489,9 +489,10 @@
             }
             this.notes = notes || [];
             this.notes.forEach((note, index) => {
-                const lift = 88;
-                const cardX = note.x + (index - (this.notes.length - 1) / 2) * 130;
-                const cardZ = -note.y - 55;
+                const lift = 96;
+                const slot = index - (this.notes.length - 1) / 2;
+                const cardX = note.x + (800 - note.x) * 0.18 + slot * 110;
+                const cardZ = -note.y + (-450 + note.y) * 0.18;
                 const texture = this.makeCardTexture(note.title, note.body);
                 const sprite = new THREE.Sprite(
                     new THREE.SpriteMaterial({
