@@ -120,12 +120,10 @@
 
             this.ghost = new THREE.LineSegments(
                 new THREE.BufferGeometry(),
-                new THREE.LineDashedMaterial({
-                    color: 0x6a7376,
+                new THREE.LineBasicMaterial({
+                    color: 0xb08a5a,
                     transparent: true,
-                    opacity: 0.45,
-                    dashSize: 8,
-                    gapSize: 6,
+                    opacity: 0.55,
                     depthWrite: false,
                 })
             );
@@ -271,7 +269,7 @@
                 if (!edge) continue;
                 const a = this.graph.nodes[edge.a];
                 const b = this.graph.nodes[edge.b];
-                positions.push(a.x, 1.2, -a.y, b.x, 1.2, -b.y);
+                positions.push(a.x, 4.5, -a.y, b.x, 4.5, -b.y);
             }
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute(
@@ -481,7 +479,8 @@
 
         setNotes(notes) {
             while (this.cardGroup.children.length) {
-                const child = this.cardGroup.children.pop();
+                const child = this.cardGroup.children[0];
+                this.cardGroup.remove(child);
                 if (child.material) {
                     if (child.material.map) child.material.map.dispose();
                     child.material.dispose();
@@ -490,11 +489,9 @@
             }
             this.notes = notes || [];
             this.notes.forEach((note, index) => {
-                const angle = (index / Math.max(1, this.notes.length)) * Math.PI * 2;
-                const lift = 72;
-                const spread = 70;
-                const cardX = note.x + Math.cos(angle) * spread;
-                const cardZ = -note.y + Math.sin(angle) * spread;
+                const lift = 88;
+                const cardX = note.x + (index - (this.notes.length - 1) / 2) * 130;
+                const cardZ = -note.y - 55;
                 const texture = this.makeCardTexture(note.title, note.body);
                 const sprite = new THREE.Sprite(
                     new THREE.SpriteMaterial({
@@ -504,7 +501,7 @@
                         sizeAttenuation: true,
                     })
                 );
-                sprite.scale.set(240, 90, 1);
+                sprite.scale.set(360, 135, 1);
                 sprite.position.set(cardX, lift, cardZ);
                 sprite.renderOrder = 20;
                 sprite.userData.anchor = {
@@ -520,9 +517,9 @@
                         new THREE.Vector3(cardX, lift - 4, cardZ),
                     ]),
                     new THREE.LineBasicMaterial({
-                        color: 0xc5d0d2,
+                        color: 0xd5e0e2,
                         transparent: true,
-                        opacity: 0.45,
+                        opacity: 0.72,
                         depthWrite: false,
                     })
                 );
