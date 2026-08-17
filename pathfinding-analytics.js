@@ -5,7 +5,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
-    const CHECKPOINT_INTERVAL = 48;
+    const CHECKPOINT_INTERVAL = 8;
 
     function heuristic(graph, nodeId, destinationId) {
         const node = graph.nodes[nodeId];
@@ -16,30 +16,14 @@
         );
     }
 
-    function carrierLocked(routeIndex, routeLength, carrierLock) {
-        if (carrierLock <= 0 || routeIndex < 0) return false;
-        if (carrierLock >= 1) return true;
-        const start = Math.ceil(
-            (1 - carrierLock) * Math.max(1, routeLength)
-        );
-        return routeIndex >= start;
-    }
-
-    function isolineCrossing(ax, ay, valueA, bx, by, valueB, threshold) {
-        if (
-            valueA == null ||
-            valueB == null ||
-            valueA === valueB ||
-            (valueA - threshold) * (valueB - threshold) > 0
-        ) {
-            return null;
-        }
-        const t = (threshold - valueA) / (valueB - valueA);
-        if (t < 0 || t > 1) return null;
+    function edgeAnchor(graph, edgeId) {
+        const edge = graph.edges[edgeId];
+        const a = graph.nodes[edge.a];
+        const b = graph.nodes[edge.b];
         return {
-            x: ax + (bx - ax) * t,
-            y: ay + (by - ay) * t,
-            t,
+            x: (a.x + b.x) * 0.5,
+            y: (a.y + b.y) * 0.5,
+            edgeId,
         };
     }
 
@@ -83,6 +67,7 @@
             edges: graph.edges.map(createEdgeState),
             nodes,
             frontierSize: 0,
+            frontierNodeId: null,
             settledCount: 0,
             conflictCount: 0,
             routeCost: null,
@@ -105,6 +90,7 @@
                 ])
             ),
             frontierSize: state.frontierSize,
+            frontierNodeId: state.frontierNodeId,
             settledCount: state.settledCount,
             conflictCount: state.conflictCount,
             routeCost: state.routeCost,
@@ -114,12 +100,114 @@
         };
     }
 
+    function pathDistance(graph, edgeIds) {
+        let distance = 0;
+        for (const edgeId of edgeIds) {
+            distance += graph.edges[edgeId].distance;
+        }
+        return distance;
+    }
+
+    function buildBriefingNotes(graph, result, profile, previousResult) {
+        const notes = [];
+        if (!result?.found || !result.edgeIds.length) return notes;
+
+        const mid = edgeAnchor(
+            graph,
+            result.edgeIds[Math.floor(result.edgeIds.length / 2)]
+        );
+        notes.push({
+            id: 'summary',
+            title: 'path',
+            body:
+                `${result.edgeIds.length} legs  ·  ` +
+                `${Math.round(result.cost)} cost  ·  ` +
+                `${Math.round(pathDistance(graph, result.edgeIds))} dist`,
+            x: mid.x,
+            y: mid.y,
+        });
+
+        const blocked = profile?.blockedEdges || new Set();
+        for (const edgeId of blocked) {
+            const anchor = edgeAnchor(graph, edgeId);
+            notes.push({
+                id: `closed-${edgeId}`,
+                title: 'closed',
+                body: `edge ${edgeId}`,
+                x: anchor.x,
+                y: anchor.y,
+            });
+        }
+
+        const resistance = profile?.resistance || new Map();
+        for (const [edgeId, value] of resistance) {
+            const anchor = edgeAnchor(graph, edgeId);
+            notes.push({
+                id: `avoid-${edgeId}`,
+                title: 'avoid',
+                body: `${Number(value).toFixed(1)}x cost`,
+                x: anchor.x,
+                y: anchor.y,
+            });
+        }
+
+        const preferred = profile?.preferredEdges || new Set();
+        for (const edgeId of preferred) {
+            const anchor = edgeAnchor(graph, edgeId);
+            notes.push({
+                id: `preferred-${edgeId}`,
+                title: 'preferred',
+                body: `edge ${edgeId}`,
+                x: anchor.x,
+                y: anchor.y,
+            });
+        }
+
+        let longest = null;
+        for (const edgeId of result.edgeIds) {
+            const edge = graph.edges[edgeId];
+            if (!longest || edge.distance > longest.distance) longest = edge;
+        }
+        if (longest) {
+            const anchor = edgeAnchor(graph, longest.id);
+            notes.push({
+                id: `long-${longest.id}`,
+                title: 'long stretch',
+                body: `${longest.distance.toFixed(0)} dist`,
+                x: anchor.x,
+                y: anchor.y,
+            });
+        }
+
+        if (previousResult?.found && previousResult.edgeIds) {
+            const oldSet = new Set(previousResult.edgeIds);
+            const appeared = result.edgeIds.find(id => !oldSet.has(id));
+            const anchor = edgeAnchor(
+                graph,
+                appeared ?? result.edgeIds[0]
+            );
+            const delta = result.cost - previousResult.cost;
+            const sign = delta >= 0 ? '+' : '';
+            notes.push({
+                id: 'reroute',
+                title: 'reroute',
+                body:
+                    `${sign}${Math.round(delta)} cost  ·  ` +
+                    `${previousResult.edgeIds.length} → ${result.edgeIds.length} legs`,
+                x: anchor.x,
+                y: anchor.y,
+            });
+        }
+
+        return notes;
+    }
+
     class AnalyticalTimeline {
         constructor(graph, result, destinationId) {
             this.graph = graph;
             this.result = result;
             this.destinationId = destinationId;
-            this.events = this.instrument(result.events);
+            this.events = this.instrumentPath(result);
             this.checkpoints = new Map([[0, blankState(graph)]]);
             this.maxG = 1;
             this.maxH = 1;
@@ -127,114 +215,90 @@
             this.buildCheckpoints();
         }
 
-        instrument(sourceEvents) {
+        instrumentPath(result) {
             const events = [];
-            const predecessorByNode = new Map();
-            const frontier = new Set();
             let sequence = 0;
-
-            for (const source of sourceEvents) {
-                if (source.type === 'origin') {
-                    frontier.add(source.nodeId);
-                    events.push({
-                        type: 'origin',
-                        sequence: sequence++,
-                        nodeId: source.nodeId,
-                        frontierSize: frontier.size,
-                    });
-                    continue;
-                }
-                if (source.type === 'edge-relaxed') {
-                    const previous = predecessorByNode.get(source.to);
-                    if (previous && previous.edgeId !== source.edgeId) {
-                        events.push({
-                            type: 'predecessor-superseded',
-                            sequence: sequence++,
-                            nodeId: source.to,
-                            oldEdgeId: previous.edgeId,
-                            newEdgeId: source.edgeId,
-                            improvement: Math.max(
-                                0,
-                                previous.g - source.cost
-                            ),
-                            frontierSize: frontier.size,
-                        });
-                    }
-                    predecessorByNode.set(source.to, {
-                        edgeId: source.edgeId,
-                        g: source.cost,
-                    });
-                    frontier.add(source.to);
-                    const f = source.priority ?? source.cost;
-                    events.push({
-                        type: 'edge-relaxed',
-                        sequence: sequence++,
-                        edgeId: source.edgeId,
-                        from: source.from,
-                        to: source.to,
-                        g: source.cost,
-                        h: Math.max(0, f - source.cost),
-                        f,
-                        previousG: previous?.g ?? null,
-                        frontierSize: frontier.size,
-                    });
-                    continue;
-                }
-                if (source.type === 'node-settled') {
-                    frontier.delete(source.nodeId);
-                    const g = source.cost;
-                    const h =
-                        this.result.algorithm === 'dijkstra'
-                            ? 0
-                            : heuristic(
-                                this.graph,
-                                source.nodeId,
-                                this.destinationId
-                            );
-                    events.push({
-                        type: 'node-settled',
-                        sequence: sequence++,
-                        nodeId: source.nodeId,
-                        g,
-                        h,
-                        f: g + h,
-                        frontierSize: frontier.size,
-                    });
-                    continue;
-                }
-                if (source.type === 'route-found') {
-                    events.push({
-                        type: 'route-found',
-                        sequence: sequence++,
-                        edgeIds: [...source.edgeIds],
-                        nodeIds: [...source.nodeIds],
-                        cost: source.cost,
-                        frontierSize: frontier.size,
-                    });
-                    for (let step = 1; step <= 8; step++) {
-                        events.push({
-                            type: 'carrier-lock',
-                            sequence: sequence++,
-                            step,
-                            progress: step / 8,
-                            frontierSize: frontier.size,
-                        });
-                    }
-                }
-                if (source.type === 'route-missing') {
-                    events.push({
-                        type: 'route-missing',
-                        sequence: sequence++,
-                        frontierSize: frontier.size,
-                    });
-                }
+            const nodeIds = result.nodeIds || [];
+            const edgeIds = result.edgeIds || [];
+            if (!result.found || nodeIds.length === 0) {
+                events.push({
+                    type: 'route-missing',
+                    sequence: sequence++,
+                    frontierSize: 0,
+                    frontierNodeId: null,
+                });
+                return events;
             }
+
+            events.push({
+                type: 'origin',
+                sequence: sequence++,
+                nodeId: nodeIds[0],
+                frontierSize: 1,
+                frontierNodeId: nodeIds[0],
+            });
+
+            let cost = 0;
+            for (let index = 0; index < edgeIds.length; index++) {
+                const edge = this.graph.edges[edgeIds[index]];
+                const from = nodeIds[index];
+                const to = nodeIds[index + 1];
+                const fromCost = cost;
+                cost += edge.effectiveCost;
+                events.push({
+                    type: 'edge-relaxed',
+                    sequence: sequence++,
+                    edgeId: edgeIds[index],
+                    from,
+                    to,
+                    g: cost,
+                    h: 0,
+                    f: cost,
+                    previousG: null,
+                    frontierSize: 1,
+                    frontierNodeId: to,
+                });
+                events.push({
+                    type: 'node-settled',
+                    sequence: sequence++,
+                    nodeId: from,
+                    g: fromCost,
+                    h: 0,
+                    f: fromCost,
+                    frontierSize: 1,
+                    frontierNodeId: to,
+                });
+            }
+
+            events.push({
+                type: 'node-settled',
+                sequence: sequence++,
+                nodeId: nodeIds[nodeIds.length - 1],
+                g: cost,
+                h: 0,
+                f: cost,
+                frontierSize: 0,
+                frontierNodeId: null,
+            });
+            events.push({
+                type: 'route-found',
+                sequence: sequence++,
+                edgeIds: [...edgeIds],
+                nodeIds: [...nodeIds],
+                cost: result.cost,
+                frontierSize: 0,
+                frontierNodeId: null,
+            });
             return events;
         }
 
         apply(state, event, index) {
             state.eventType = event.type;
             state.frontierSize = event.frontierSize ?? state.frontierSize;
+            state.frontierNodeId =
+                event.frontierNodeId === undefined
+                    ? state.frontierNodeId
+                    : event.frontierNodeId;
             if (event.type === 'origin') {
                 state.nodes[event.nodeId].queueState = 'frontier';
                 return;
@@ -247,13 +311,7 @@
                 edge.h = event.h;
                 edge.f = event.f;
                 edge.phase = index;
-                edge.amplitude =
-                    event.previousG === null
-                        ? 0.5
-                        : Math.min(
-                            1,
-                            Math.max(0.2, event.previousG - event.g)
-                        );
+                edge.amplitude = 0.5;
                 if (target.predecessorEdgeId !== null) {
                     state.edges[target.predecessorEdgeId].predecessor = false;
                 }
@@ -263,12 +321,6 @@
                 target.h = event.h;
                 target.f = event.f;
                 edge.predecessor = true;
-                return;
-            }
-            if (event.type === 'predecessor-superseded') {
-                state.conflictCount++;
-                state.nodes[event.nodeId].conflictCount++;
-                state.edges[event.oldEdgeId].supersededAt.push(index);
                 return;
             }
             if (event.type === 'node-settled') {
@@ -289,10 +341,6 @@
                 for (const edgeId of event.edgeIds) {
                     state.edges[edgeId].route = true;
                 }
-                return;
-            }
-            if (event.type === 'carrier-lock') {
-                state.carrierLock = event.progress;
             }
         }
 
@@ -302,8 +350,6 @@
                 const event = this.events[index];
                 this.apply(state, event, index);
                 if (event.g != null) this.maxG = Math.max(this.maxG, event.g);
-                if (event.h != null) this.maxH = Math.max(this.maxH, event.h);
-                if (event.f != null) this.maxF = Math.max(this.maxF, event.f);
                 const applied = index + 1;
                 if (
                     applied % CHECKPOINT_INTERVAL === 0 ||
@@ -333,6 +379,14 @@
             }
             state.eventIndex = target;
             state.event = target > 0 ? this.events[target - 1] : null;
+            if (state.frontierNodeId == null) {
+                for (const node of Object.values(state.nodes)) {
+                    if (node.queueState === 'frontier') {
+                        state.frontierNodeId = node.nodeId;
+                        break;
+                    }
+                }
+            }
             return state;
         }
 
@@ -360,7 +414,8 @@
         blankState,
         cloneState,
         heuristic,
-        carrierLocked,
-        isolineCrossing,
+        buildBriefingNotes,
+        pathDistance,
+        edgeAnchor,
     };
 });

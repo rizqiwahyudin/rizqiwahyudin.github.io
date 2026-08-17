@@ -4,13 +4,12 @@
     const canvas = document.getElementById('scene');
     const ui = Object.fromEntries(
         [
-            'state', 'algorithm-stat', 'event-index', 'event-type',
-            'frontier', 'settled', 'conflicts', 'route-cost',
-            'carrier-lock', 'selected-readout', 'timeline', 'play',
+            'state', 'algorithm-stat', 'event-index',
+            'route-cost', 'selected-readout', 'timeline', 'play',
             'step-back', 'step-forward', 'acquisition', 'astar',
             'dijkstra', 'run', 'random', 'endpoints', 'scan',
-            'contour', 'inspect', 'cut', 'resist', 'amplify',
-            'clear', 'reset-view', 'top-view', 'side-view',
+            'inspect', 'cut', 'resist', 'amplify',
+            'clear', 'reset-view', 'top-view', 'iso-view', 'side-view',
             'speed', 'specimen',
         ].map(id => [id, document.getElementById(id)])
     );
@@ -18,6 +17,7 @@
     let algorithm = 'astar';
     let graph;
     let result;
+    let previousResult = null;
     let timeline;
     let snapshot;
     let renderer;
@@ -30,8 +30,7 @@
     let interactionMode = 'inspect';
     let endpointStage = null;
     let selectedEdgeId = null;
-    let scanVisible = true;
-    let contourMode = 'f';
+    let scanVisible = false;
     let pointerStart = null;
     const profile = {
         blockedEdges: new Set(),
@@ -39,7 +38,11 @@
         preferredEdges: new Set(),
     };
 
-    function runSearch() {
+    function runSearch(options) {
+        const keepGhost = Boolean(options && options.keepGhost && result);
+        if (keepGhost) previousResult = result;
+        else previousResult = null;
+
         graph = SymbioteGraph.createGraph(32841, profile);
         result = SymbiotePathfinding.search(
             graph,
@@ -57,10 +60,23 @@
         ui.timeline.max = String(timeline.events.length);
         ui.timeline.value = '0';
         ui.play.textContent = 'pause';
-        ui.state.textContent = 'transmitting';
-        ui['algorithm-stat'].textContent =
-            algorithm === 'astar' ? 'a* phased' : 'dijkstra uniform';
+        ui.state.textContent = 'searching';
+        ui['algorithm-stat'].textContent = algorithm === 'astar' ? 'a*' : 'dijkstra';
         renderer.setGraph(graph);
+        renderer.setGhost(
+            keepGhost && previousResult && previousResult.edgeIds
+                ? previousResult.edgeIds
+                : []
+        );
+        renderer.setNotes(
+            PathfindingAnalytics.buildBriefingNotes(
+                graph,
+                result,
+                profile,
+                keepGhost ? previousResult : null
+            )
+        );
+        renderer.setNotesVisible(false);
         updateSnapshot();
     }
 
@@ -68,33 +84,24 @@
         snapshot = timeline.snapshot(eventPosition);
         ui['event-index'].textContent =
             `${snapshot.eventIndex}/${timeline.events.length}`;
-        ui['event-type'].textContent =
-            snapshot.event?.type || 'ready';
-        ui.frontier.textContent = String(snapshot.frontierSize);
-        ui.settled.textContent = String(snapshot.settledCount);
-        ui.conflicts.textContent = String(snapshot.conflictCount);
         ui['route-cost'].textContent =
             snapshot.routeCost === null
                 ? '--'
-                : `${Math.round(snapshot.routeCost)} units`;
-        ui['carrier-lock'].textContent =
-            `${Math.round(snapshot.carrierLock * 100)}%`;
+                : `${Math.round(snapshot.routeCost)}`;
         ui.timeline.value = String(snapshot.eventIndex);
-        ui.state.textContent =
-            snapshot.carrierLock >= 1
-                ? 'carrier locked'
-                : snapshot.routeFound
-                  ? 'acquiring carrier'
-                  : playing
-                    ? 'transmitting'
-                    : 'scan hold';
+        ui.state.textContent = snapshot.routeFound
+            ? 'path found'
+            : playing
+              ? 'searching'
+              : 'paused';
+        renderer.setNotesVisible(Boolean(snapshot.routeFound));
         updateSpecimen();
     }
 
     function updateSpecimen() {
         if (selectedEdgeId === null || !snapshot) {
             ui.specimen.innerHTML =
-                '<div class="specimen-empty">select a conductor</div>';
+                '<div class="specimen-empty">select an edge</div>';
             ui['selected-readout'].textContent = '--';
             return;
         }
@@ -108,13 +115,8 @@
             <div>resistance <span>${edge.resistance.toFixed(2)}x</span></div>
             <div>preferred <span>${edge.preferred ? 'yes' : 'no'}</span></div>
             <div>effective <span>${edge.effectiveCost.toFixed(2)}</span></div>
-            <div>g <span>${state.g == null ? '--' : state.g.toFixed(2)}</span></div>
-            <div>h <span>${state.h == null ? '--' : state.h.toFixed(2)}</span></div>
-            <div>f <span>${state.f == null ? '--' : state.f.toFixed(2)}</span></div>
-            <div>discovered <span>${state.discoveredAt ?? '--'}</span></div>
-            <div>settled <span>${state.settledAt ?? '--'}</span></div>
-            <div>route <span>${state.route ? 'yes' : 'no'}</span></div>
-            <div>blocked <span>${edge.blocked ? 'yes' : 'no'}</span></div>
+            <div>on path <span>${state.route ? 'yes' : 'no'}</span></div>
+            <div>closed <span>${edge.blocked ? 'yes' : 'no'}</span></div>
         `;
     }
 
@@ -153,7 +155,7 @@
             profile.resistance.delete(edgeId);
             profile.preferredEdges.delete(edgeId);
         }
-        if (interactionMode !== 'inspect') runSearch();
+        if (interactionMode !== 'inspect') runSearch({ keepGhost: true });
     }
 
     function nearestNode(point) {
@@ -212,10 +214,8 @@
         lastRender = now;
         renderer.render({
             snapshot,
-            timeline,
             time: now,
             algorithm,
-            contourMode,
             scanVisible,
             selectedEdgeId,
             originId,
@@ -238,7 +238,7 @@
 
     ui.astar.addEventListener('click', () => setAlgorithm('astar'));
     ui.dijkstra.addEventListener('click', () => setAlgorithm('dijkstra'));
-    ui.run.addEventListener('click', runSearch);
+    ui.run.addEventListener('click', () => runSearch());
     ui.random.addEventListener('click', () => {
         const random = SymbioteGraph.mulberry32(
             Math.floor(performance.now() * 1000)
@@ -251,7 +251,7 @@
         endpointStage = endpointStage ? null : 'origin';
         ui.endpoints.classList.toggle('active', Boolean(endpointStage));
         ui.state.textContent = endpointStage
-            ? 'select transmitter'
+            ? 'select origin'
             : 'ready';
     });
     ui.play.addEventListener('click', () => {
@@ -285,14 +285,12 @@
         scanVisible = !scanVisible;
         ui.scan.classList.toggle('active', scanVisible);
     });
-    ui.contour.addEventListener('change', () => {
-        contourMode = ui.contour.value;
-    });
     for (const mode of ['inspect', 'cut', 'resist', 'amplify', 'clear']) {
         ui[mode].addEventListener('click', () => setInteraction(mode));
     }
     ui['reset-view'].addEventListener('click', () => renderer.resetCamera());
     ui['top-view'].addEventListener('click', () => renderer.topView());
+    ui['iso-view'].addEventListener('click', () => renderer.isoView());
     ui['side-view'].addEventListener('click', () => renderer.sideView());
     window.addEventListener('resize', () =>
         renderer.resize(window.innerWidth, window.innerHeight)
