@@ -10,8 +10,11 @@
             'dijkstra', 'run', 'random', 'endpoints', 'scan',
             'inspect', 'cut', 'resist', 'amplify',
             'clear', 'reset-view', 'top-view', 'iso-view', 'side-view',
-            'speed', 'specimen', 'place-name', 'place-query',
-            'place-form', 'locate', 'loading',
+            'speed', 'specimen', 'place-name', 'origin-name',
+            'destination-name', 'weather-readout', 'camera-readout',
+            'traffic-readout', 'osrm-readout', 'origin-query',
+            'destination-query', 'route-form', 'locate', 'loading',
+            'avoid-cameras', 'avoid-traffic', 'show-osrm',
         ].map(id => [id, document.getElementById(id)])
     );
 
@@ -25,6 +28,8 @@
     let renderer;
     let originId = '2:13';
     let destinationId = '26:3';
+    let originPlace = null;
+    let destinationPlace = null;
     let eventPosition = 0;
     let playing = true;
     let lastFrame = performance.now();
@@ -35,12 +40,16 @@
     let scanVisible = false;
     let pointerStart = null;
     let placeLabel = 'synthetic grid';
+    let originLabel = '--';
+    let destinationLabel = '--';
     let loading = false;
     let loadToken = 0;
     const profile = {
         blockedEdges: new Set(),
         resistance: new Map(),
         preferredEdges: new Set(),
+        avoidCameras: true,
+        avoidTraffic: true,
     };
 
     function setLoading(next, message) {
@@ -61,7 +70,7 @@
         return text.length > 36 ? `${text.slice(0, 34)}…` : text;
     }
 
-    function resetProfile() {
+    function resetEdits() {
         profile.blockedEdges.clear();
         profile.resistance.clear();
         profile.preferredEdges.clear();
@@ -75,14 +84,21 @@
     }
 
     function ensureTerminals(nextGraph) {
-        if (!nextGraph.nodes[originId]) {
-            originId = streetSource
-                ? TacticalOsm.nearestNodeToLatLon(
-                      nextGraph,
-                      streetSource.lat,
-                      streetSource.lon
-                  )
-                : Object.keys(nextGraph.nodes)[0];
+        if (originPlace && nextGraph.fit) {
+            originId = TacticalOsm.nearestNodeToLatLon(
+                nextGraph,
+                originPlace.lat,
+                originPlace.lon
+            );
+        } else if (!nextGraph.nodes[originId]) {
+            originId = Object.keys(nextGraph.nodes)[0];
+        }
+        if (destinationPlace && nextGraph.fit) {
+            destinationId = TacticalOsm.nearestNodeToLatLon(
+                nextGraph,
+                destinationPlace.lat,
+                destinationPlace.lon
+            );
         }
         if (!nextGraph.nodes[destinationId] || destinationId === originId) {
             destinationId =
@@ -90,6 +106,47 @@
                 Object.keys(nextGraph.nodes).find(id => id !== originId) ||
                 originId;
         }
+    }
+
+    function briefingNotes() {
+        const notes = PathfindingAnalytics.buildBriefingNotes(
+            graph,
+            result,
+            profile,
+            previousResult
+        );
+        if (streetSource) {
+            notes.push(...TacticalLive.overlayNotes(graph, result));
+        }
+        return notes;
+    }
+
+    function updateHud() {
+        ui['place-name'].textContent = placeLabel;
+        ui['origin-name'].textContent = originLabel;
+        ui['destination-name'].textContent = destinationLabel;
+        const weather = graph?.weather;
+        ui['weather-readout'].textContent = weather
+            ? `${Math.round(weather.temperature)}° ${weather.label}`
+            : '--';
+        const cameras = graph?.cameras || [];
+        const path = new Set(result?.edgeIds || []);
+        const camerasOnPath = cameras.filter(camera => path.has(camera.edgeId));
+        ui['camera-readout'].textContent = streetSource
+            ? `${camerasOnPath.length}/${cameras.length}`
+            : '--';
+        const traffic = graph?.traffic || [];
+        const trafficOnPath = traffic.filter(item => path.has(item.edgeId));
+        ui['traffic-readout'].textContent = streetSource
+            ? graph.trafficCoverage === false && !traffic.length
+                ? 'no coverage'
+                : `${trafficOnPath.length}/${traffic.length}`
+            : '--';
+        ui['osrm-readout'].textContent = graph?.osrm?.found
+            ? `${Math.round(graph.osrm.distance)}m`
+            : streetSource
+              ? graph?.osrm?.status || '--'
+              : '--';
     }
 
     function runSearch(options) {
@@ -117,54 +174,79 @@
         ui.play.textContent = 'pause';
         ui.state.textContent = 'searching';
         ui['algorithm-stat'].textContent = algorithm === 'astar' ? 'a*' : 'dijkstra';
-        ui['place-name'].textContent = placeLabel;
         renderer.setGraph(graph);
+        renderer.setOsrmVisible(ui['show-osrm'].classList.contains('active'));
         renderer.setGhost(
             keepGhost && previousResult && previousResult.edgeIds
                 ? previousResult.edgeIds
                 : []
         );
-        renderer.setNotes(
-            PathfindingAnalytics.buildBriefingNotes(
-                graph,
-                result,
-                profile,
-                keepGhost ? previousResult : null
-            )
-        );
+        renderer.setNotes(briefingNotes());
         renderer.setNotesVisible(false);
+        updateHud();
         updateSnapshot();
     }
 
-    async function loadStreets(lat, lon, label) {
+    async function loadRoute(origin, destination) {
         const token = loadToken;
         setLoading(true, 'loading streets');
         try {
-            const next = await TacticalOsm.graphFromLocation(lat, lon, {
-                profile: {
-                    blockedEdges: new Set(),
-                    resistance: new Map(),
-                    preferredEdges: new Set(),
-                },
-                label,
-            });
+            originPlace = origin;
+            destinationPlace = destination || null;
+            const next = destination
+                ? await TacticalOsm.graphFromEndpoints(origin, destination, {
+                      profile,
+                      label: origin.label,
+                      originLabel: origin.label,
+                      destinationLabel: destination.label,
+                  })
+                : await TacticalOsm.graphFromLocation(origin.lat, origin.lon, {
+                      profile,
+                      label: origin.label,
+                      originLabel: origin.label,
+                  });
             if (token !== loadToken) return;
             if (Object.keys(next.nodes).length < 4 || next.edges.length < 3) {
                 throw new Error('not enough streets');
             }
-            resetProfile();
-            streetSource = next;
-            placeLabel = shortLabel(
-                label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+            resetEdits();
+            originId = TacticalOsm.nearestNodeToLatLon(next, origin.lat, origin.lon);
+            if (destination) {
+                destinationId = TacticalOsm.nearestNodeToLatLon(
+                    next,
+                    destination.lat,
+                    destination.lon
+                );
+            } else {
+                destinationId = TacticalOsm.pickDestination(next, originId);
+            }
+            const originNode = next.nodes[originId];
+            const destNode = next.nodes[destinationId];
+            setLoading(true, 'loading live data');
+            streetSource = await TacticalLive.decorateGraph(
+                next,
+                { lat: originNode.lat, lon: originNode.lon },
+                destNode
+                    ? { lat: destNode.lat, lon: destNode.lon }
+                    : null,
+                { profile, fetch }
             );
-            originId = TacticalOsm.nearestNodeToLatLon(next, lat, lon);
-            destinationId = TacticalOsm.pickDestination(next, originId);
+            if (token !== loadToken) return;
+            placeLabel = shortLabel(origin.label || destination?.label);
+            originLabel = shortLabel(origin.label);
+            destinationLabel = destination
+                ? shortLabel(destination.label)
+                : shortLabel(
+                      await TacticalOsm.reverseGeocode(destNode.lat, destNode.lon)
+                  );
+            streetSource.originLabel = originLabel;
+            streetSource.destinationLabel = destinationLabel;
             runSearch();
         } catch (_error) {
             if (token !== loadToken) return;
             if (!streetSource) {
                 placeLabel = 'synthetic grid';
-                ui['place-name'].textContent = placeLabel;
+                updateHud();
             }
             ui.state.textContent = 'streets unavailable';
         } finally {
@@ -183,23 +265,39 @@
                 position.lon
             );
             if (token !== loadToken) return;
-            await loadStreets(position.lat, position.lon, label);
+            const destinationQuery = ui['destination-query'].value.trim();
+            let destination = null;
+            if (destinationQuery) {
+                destination = await TacticalOsm.searchPlace(destinationQuery);
+            }
+            await loadRoute(
+                { lat: position.lat, lon: position.lon, label },
+                destination
+            );
         } catch (_error) {
             if (token !== loadToken) return;
             setLoading(false);
-            if (!streetSource) ui.state.textContent = 'search a place';
+            if (!streetSource) ui.state.textContent = 'search origin and destination';
         }
     }
 
-    async function searchAndLoad(query) {
-        const trimmed = String(query || '').trim();
-        if (!trimmed) return;
+    async function searchAndLoad() {
+        const originQuery = ui['origin-query'].value.trim();
+        const destinationQuery = ui['destination-query'].value.trim();
+        if (!originQuery && !destinationQuery) return;
         const token = ++loadToken;
         setLoading(true, 'finding place');
         try {
-            const place = await TacticalOsm.searchPlace(trimmed);
+            const origin = originQuery
+                ? await TacticalOsm.searchPlace(originQuery)
+                : originPlace;
+            if (!origin) throw new Error('need an origin');
             if (token !== loadToken) return;
-            await loadStreets(place.lat, place.lon, place.label);
+            const destination = destinationQuery
+                ? await TacticalOsm.searchPlace(destinationQuery)
+                : null;
+            if (token !== loadToken) return;
+            await loadRoute(origin, destination);
         } catch (_error) {
             if (token !== loadToken) return;
             setLoading(false);
@@ -222,6 +320,7 @@
               ? 'searching'
               : 'paused';
         renderer.setNotesVisible(Boolean(snapshot.routeFound));
+        if (snapshot.routeFound) updateHud();
         updateSpecimen();
     }
 
@@ -234,12 +333,14 @@
         }
         const edge = graph.edges[selectedEdgeId];
         const state = snapshot.edges[selectedEdgeId];
-        ui['selected-readout'].textContent = `edge ${selectedEdgeId}`;
+        ui['selected-readout'].textContent = edge.name || `edge ${selectedEdgeId}`;
         ui.specimen.innerHTML = `
-            <div class="specimen-title">edge ${selectedEdgeId} // ${edge.kind}</div>
+            <div class="specimen-title">${edge.name || 'unnamed'} // ${edge.kind}</div>
             <div>distance <span>${edge.distance.toFixed(1)}</span></div>
             <div>base cost <span>${edge.baseCost.toFixed(2)}</span></div>
             <div>resistance <span>${edge.resistance.toFixed(2)}x</span></div>
+            <div>cameras <span>${edge.cameraCount || 0}</span></div>
+            <div>traffic <span>${edge.trafficSeverity || 0}</span></div>
             <div>preferred <span>${edge.preferred ? 'yes' : 'no'}</span></div>
             <div>effective <span>${edge.effectiveCost.toFixed(2)}</span></div>
             <div>on path <span>${state.route ? 'yes' : 'no'}</span></div>
@@ -285,22 +386,25 @@
         if (interactionMode !== 'inspect') runSearch({ keepGhost: true });
     }
 
-    function nearestNode(point) {
-        return TacticalOsm.nearestNodeToPoint(graph, point);
-    }
-
     function handleClick(clientX, clientY) {
         if (loading) return;
         const point = renderer.groundPoint(clientX, clientY);
         if (!point) return;
         if (endpointStage) {
-            const nodeId = nearestNode(point);
+            const nodeId = TacticalOsm.nearestNodeToPoint(graph, point);
+            const node = graph.nodes[nodeId];
             if (endpointStage === 'origin') {
                 originId = nodeId;
+                originPlace = node.lat
+                    ? { lat: node.lat, lon: node.lon, label: originLabel }
+                    : originPlace;
                 endpointStage = 'destination';
                 ui.state.textContent = 'select destination';
             } else {
                 destinationId = nodeId;
+                destinationPlace = node.lat
+                    ? { lat: node.lat, lon: node.lon, label: destinationLabel }
+                    : destinationPlace;
                 endpointStage = null;
                 ui.endpoints.classList.remove('active');
                 runSearch();
@@ -319,8 +423,7 @@
         if (playing && timeline) {
             eventPosition = Math.min(
                 timeline.events.length,
-                eventPosition +
-                    (delta / 1000) * Number(ui.speed.value)
+                eventPosition + (delta / 1000) * Number(ui.speed.value)
             );
             updateSnapshot();
             if (eventPosition >= timeline.events.length) {
@@ -366,6 +469,14 @@
             if (pair) {
                 originId = pair.originId;
                 destinationId = pair.destinationId;
+                const originNode = graph.nodes[originId];
+                const destNode = graph.nodes[destinationId];
+                originPlace = originNode.lat
+                    ? { lat: originNode.lat, lon: originNode.lon, label: originLabel }
+                    : null;
+                destinationPlace = destNode.lat
+                    ? { lat: destNode.lat, lon: destNode.lon, label: destinationLabel }
+                    : null;
             }
         } else {
             originId = `${1 + Math.floor(random() * 5)}:${1 + Math.floor(random() * 15)}`;
@@ -376,9 +487,7 @@
     ui.endpoints.addEventListener('click', () => {
         endpointStage = endpointStage ? null : 'origin';
         ui.endpoints.classList.toggle('active', Boolean(endpointStage));
-        ui.state.textContent = endpointStage
-            ? 'select origin'
-            : 'ready';
+        ui.state.textContent = endpointStage ? 'select origin' : 'ready';
     });
     ui.play.addEventListener('click', () => {
         playing = !playing;
@@ -414,17 +523,30 @@
     for (const mode of ['inspect', 'cut', 'resist', 'amplify', 'clear']) {
         ui[mode].addEventListener('click', () => setInteraction(mode));
     }
+    ui['avoid-cameras'].addEventListener('click', () => {
+        profile.avoidCameras = !profile.avoidCameras;
+        ui['avoid-cameras'].classList.toggle('active', profile.avoidCameras);
+        if (streetSource) runSearch({ keepGhost: true });
+    });
+    ui['avoid-traffic'].addEventListener('click', () => {
+        profile.avoidTraffic = !profile.avoidTraffic;
+        ui['avoid-traffic'].classList.toggle('active', profile.avoidTraffic);
+        if (streetSource) runSearch({ keepGhost: true });
+    });
+    ui['show-osrm'].addEventListener('click', () => {
+        const next = !ui['show-osrm'].classList.contains('active');
+        ui['show-osrm'].classList.toggle('active', next);
+        renderer.setOsrmVisible(next);
+    });
     ui['reset-view'].addEventListener('click', () => renderer.resetCamera());
     ui['top-view'].addEventListener('click', () => renderer.topView());
     ui['iso-view'].addEventListener('click', () => renderer.isoView());
     ui['side-view'].addEventListener('click', () => renderer.sideView());
-    ui['place-form'].addEventListener('submit', event => {
+    ui['route-form'].addEventListener('submit', event => {
         event.preventDefault();
-        searchAndLoad(ui['place-query'].value);
+        searchAndLoad();
     });
-    ui.locate.addEventListener('click', () => {
-        locateAndLoad();
-    });
+    ui.locate.addEventListener('click', () => locateAndLoad());
     window.addEventListener('resize', () =>
         renderer.resize(window.innerWidth, window.innerHeight)
     );
@@ -436,6 +558,9 @@
     renderer = new TacticalInterferometryRenderer.Renderer(canvas, graph);
     renderer.resize(window.innerWidth, window.innerHeight);
     setInteraction('inspect');
+    ui['avoid-cameras'].classList.add('active');
+    ui['avoid-traffic'].classList.add('active');
+    ui['show-osrm'].classList.add('active');
     runSearch();
     requestAnimationFrame(animate);
     locateAndLoad();

@@ -132,7 +132,13 @@
             color: var(--muted);
         }
 
-        .stats-row span:last-child { color: var(--ink); }
+        .stats-row span:last-child {
+            color: var(--ink);
+            max-width: 148px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .stats-row .alive::before {
             content: "";
             display: inline-block;
@@ -182,7 +188,7 @@
         .hint {
             position: fixed;
             left: 16px;
-            bottom: 92px;
+            bottom: 118px;
             z-index: 10;
             color: var(--muted);
             font-size: 8px;
@@ -202,12 +208,34 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            width: min(850px, calc(100vw - 28px));
+            width: min(1100px, calc(100vw - 28px));
             padding: 7px;
+            flex-wrap: wrap;
             border: 1px solid var(--faint);
             background: var(--paper-panel);
             box-shadow: 5px 5px 0 var(--ghost);
         }
+
+        .place-form {
+            display: flex;
+            gap: 6px;
+            flex: 1 1 100%;
+            min-width: 0;
+        }
+
+        .place-form input {
+            flex: 1;
+            min-width: 0;
+            min-height: 31px;
+            padding: 0 10px;
+            border: 1px solid var(--faint);
+            background: transparent;
+            color: var(--ink);
+            font-size: 9px;
+            letter-spacing: 0.09em;
+        }
+
+        .place-form input::placeholder { color: var(--muted); }
 
         button {
             min-height: 31px;
@@ -270,7 +298,7 @@
             .controls { flex-wrap: wrap; justify-content: center; }
             .speed:first-of-type { margin-left: 0; }
             .legend { display: none; }
-            .hint { bottom: 113px; left: 12px; }
+            .hint { bottom: 148px; left: 12px; }
             button { padding: 0 9px; }
         }
 
@@ -291,6 +319,7 @@
     </header>
 
     <aside class="stats" aria-live="polite">
+        <div class="stats-row"><span>place</span><span id="place-name">synthetic grid</span></div>
         <div class="stats-row"><span>state</span><span id="state" class="alive">germinating</span></div>
         <div class="stats-row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
         <div class="stats-row"><span>nodes settled</span><span id="visited">0</span></div>
@@ -307,10 +336,15 @@
 
     <div class="hint">
         <strong>click network</strong> to move origin / destination<br>
-        space pauses&nbsp;&nbsp; r restarts&nbsp;&nbsp; a changes algorithm
+        search any place or use location&nbsp;&nbsp; space pauses&nbsp;&nbsp; r restarts
     </div>
 
     <nav class="controls" aria-label="Pathfinding controls">
+        <form id="place-form" class="place-form">
+            <input id="place-query" type="search" placeholder="any place" autocomplete="off" aria-label="Search any place">
+            <button type="submit">load streets</button>
+            <button type="button" id="locate">use location</button>
+        </form>
         <button id="astar" class="active">a* search</button>
         <button id="dijkstra">dijkstra</button>
         <button id="run" class="primary">regrow</button>
@@ -332,6 +366,7 @@
     <script src="pathfinding-organism.js"></script>
     <script src="pathfinding-geometry.js"></script>
     <script src="pathfinding-biomass.js"></script>
+    <script src="pathfinding-tactical-osm.js"></script>
     <script src="pathfinding-app.js"></script>
 </body>
 </html>

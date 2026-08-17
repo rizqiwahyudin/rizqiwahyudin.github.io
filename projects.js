@@ -60,11 +60,11 @@ const projects = [
     {
         type: "sim",
         title: "symbiote pathfinder",
-        subtitle: "living shortest-path search",
+        subtitle: "living shortest-path search on real streets",
         desc: "",
         classification: "canvas // graph search",
         sim: "pathfinding.html",
-        tags: ["a*", "dijkstra", "generative", "routing"]
+        tags: ["a*", "dijkstra", "osm", "gps"]
     },
     {
         type: "sim",
@@ -78,11 +78,11 @@ const projects = [
     {
         type: "sim",
         title: "tactical interferometry",
-        subtitle: "path planning on real streets",
+        subtitle: "live street routing with cameras and traffic",
         desc: "",
         classification: "webgl // analytical routing",
         sim: "pathfinding-tactical.html",
-        tags: ["three.js", "a*", "osm", "gps"]
+        tags: ["three.js", "a*", "osm", "gps", "osrm"]
     },
     {
         type: "sim",

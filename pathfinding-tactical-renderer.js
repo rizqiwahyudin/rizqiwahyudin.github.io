@@ -156,8 +156,24 @@
                 this.selectedSymbol
             );
 
-            this.cardGroup = new THREE.Group();
-            this.scene.add(this.cardGroup);
+            this.osrmVisible = true;
+            this.cameraOverlay = null;
+            this.trafficOverlay = null;
+            this.osrmLine = new THREE.Line(
+                new THREE.BufferGeometry(),
+                new THREE.LineDashedMaterial({
+                    color: 0x7999aa,
+                    dashSize: 14,
+                    gapSize: 10,
+                    transparent: true,
+                    opacity: 0.82,
+                    depthWrite: false,
+                })
+            );
+            this.osrmLine.visible = false;
+            this.osrmLine.frustumCulled = false;
+            this.scene.add(this.osrmLine);
+            this.rebuildOverlays();
             this.notes = [];
             this.notesVisible = false;
 
@@ -319,6 +335,136 @@
             this.rebuildNodes();
             this.buildConductors();
             if (resetCamera || boundsChanged) this.applyBounds(true);
+            this.rebuildOverlays();
+        }
+
+        setOsrmVisible(visible) {
+            this.osrmVisible = visible;
+            if (this.osrmLine) this.osrmLine.visible = visible && Boolean(this.graph?.osrm?.points?.length);
+        }
+
+        rebuildOverlays() {
+            if (!this.osrmLine) return;
+            this.disposeObject(this.cameraOverlay);
+            this.disposeObject(this.trafficOverlay);
+            this.cameraOverlay = null;
+            this.trafficOverlay = null;
+
+            const cameras = this.graph.cameras || [];
+            if (cameras.length) {
+                const positions = [];
+                const colors = [];
+                for (const camera of cameras) {
+                    const cx = camera.x;
+                    const cz = -camera.y;
+                    positions.push(cx, 6.5, cz);
+                    colors.push(1, 0.22, 0.14);
+                    const arm = 4.2;
+                    for (const offset of [
+                        [arm, 0],
+                        [-arm, 0],
+                        [0, arm],
+                        [0, -arm],
+                    ]) {
+                        positions.push(cx + offset[0], 6.5, cz + offset[1]);
+                        colors.push(0.92, 0.16, 0.1);
+                    }
+                    const isDome =
+                        camera.type === 'dome' || camera.type === 'panning';
+                    if (Number.isFinite(camera.direction) && !isDome) {
+                        const dirRad = (camera.direction * Math.PI) / 180;
+                        const half = (70 / 2) * (Math.PI / 180);
+                        for (let ring = 1; ring <= 4; ring++) {
+                            const dist = (ring / 4) * 28;
+                            const width = dist * Math.tan(half);
+                            for (let p = 0; p < 6; p++) {
+                                const lateral = (p / 5) * 2 - 1;
+                                const fx = Math.sin(dirRad) * dist;
+                                const fz = -Math.cos(dirRad) * dist;
+                                const px = Math.sin(dirRad + Math.PI / 2) * width * lateral;
+                                const pz = -Math.cos(dirRad + Math.PI / 2) * width * lateral;
+                                positions.push(cx + fx + px, 5.2 - ring * 0.4, cz + fz + pz);
+                                const fade = 1 - ring / 4 * 0.7;
+                                colors.push(1 * fade, 0.2 * fade, 0.14 * fade);
+                            }
+                        }
+                    }
+                }
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute(
+                    'position',
+                    new THREE.Float32BufferAttribute(positions, 3)
+                );
+                geometry.setAttribute(
+                    'color',
+                    new THREE.Float32BufferAttribute(colors, 3)
+                );
+                this.cameraOverlay = new THREE.Points(
+                    geometry,
+                    new THREE.PointsMaterial({
+                        size: 7,
+                        vertexColors: true,
+                        transparent: true,
+                        opacity: 0.92,
+                        depthWrite: false,
+                        sizeAttenuation: true,
+                    })
+                );
+                this.cameraOverlay.frustumCulled = false;
+                this.cameraOverlay.renderOrder = 6;
+                this.scene.add(this.cameraOverlay);
+            }
+
+            const traffic = this.graph.traffic || [];
+            if (traffic.length) {
+                const positions = [];
+                const colors = [];
+                for (const item of traffic) {
+                    positions.push(item.x, 5.4, -item.y);
+                    if (item.severity >= 3) colors.push(1, 0.12, 0.1);
+                    else if (item.severity === 2) colors.push(1, 0.5, 0.08);
+                    else colors.push(1, 0.88, 0.12);
+                }
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute(
+                    'position',
+                    new THREE.Float32BufferAttribute(positions, 3)
+                );
+                geometry.setAttribute(
+                    'color',
+                    new THREE.Float32BufferAttribute(colors, 3)
+                );
+                this.trafficOverlay = new THREE.Points(
+                    geometry,
+                    new THREE.PointsMaterial({
+                        size: 9,
+                        vertexColors: true,
+                        transparent: true,
+                        opacity: 0.9,
+                        depthWrite: false,
+                        sizeAttenuation: true,
+                    })
+                );
+                this.trafficOverlay.frustumCulled = false;
+                this.trafficOverlay.renderOrder = 6;
+                this.scene.add(this.trafficOverlay);
+            }
+
+            if (this.osrmLine.geometry) this.osrmLine.geometry.dispose();
+            const osrmPoints = this.graph.osrm?.points || [];
+            if (osrmPoints.length > 1) {
+                const vectors = osrmPoints.map(
+                    point => new THREE.Vector3(point.x, 3.4, -point.y)
+                );
+                this.osrmLine.geometry = new THREE.BufferGeometry().setFromPoints(
+                    vectors
+                );
+                this.osrmLine.geometry.computeLineDistances();
+                this.osrmLine.visible = this.osrmVisible;
+            } else {
+                this.osrmLine.geometry = new THREE.BufferGeometry();
+                this.osrmLine.visible = false;
+            }
         }
 
         buildConductors() {
@@ -752,8 +898,10 @@
             this.signalMaterial.dispose();
             this.nodeGeometry.dispose();
             this.nodeMaterial.dispose();
-            this.disposeObject(this.table);
-            this.disposeObject(this.grid);
+            this.disposeObject(this.cameraOverlay);
+            this.disposeObject(this.trafficOverlay);
+            this.osrmLine.geometry.dispose();
+            this.osrmLine.material.dispose();
             this.conductors.geometry.dispose();
             this.conductors.material.dispose();
             this.ghost.geometry.dispose();
