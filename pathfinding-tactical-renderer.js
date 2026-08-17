@@ -102,7 +102,7 @@
                 )
             );
             this.nodeMaterial = new THREE.PointsMaterial({
-                size: 5,
+                size: 10,
                 sizeAttenuation: true,
                 vertexColors: true,
                 transparent: true,
@@ -135,9 +135,9 @@
             this.guidance = new THREE.Line(
                 new THREE.BufferGeometry(),
                 new THREE.LineBasicMaterial({
-                    color: 0x7999aa,
+                    color: 0x8eb0c0,
                     transparent: true,
-                    opacity: 0.55,
+                    opacity: 0.85,
                     depthWrite: false,
                 })
             );
@@ -362,21 +362,28 @@
                     color[1] * pulse,
                     color[2] * pulse,
                 ];
-                const height = highlighted ? 2.4 : frontier ? 3.2 : 1.6;
+                const height = highlighted ? 2.8 : frontier ? 4.2 : 1.8;
                 const samples = 10;
-                let previous = null;
-                for (let sample = 0; sample <= samples; sample++) {
-                    const t = sample / samples;
-                    const point = {
-                        x: a.x + (b.x - a.x) * t,
-                        y: height,
-                        z: -(a.y + (b.y - a.y) * t),
-                    };
-                    if (previous) {
-                        cursor = this.writeSignal(cursor, previous, lit);
-                        cursor = this.writeSignal(cursor, point, lit);
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const length = Math.max(0.001, Math.hypot(dx, dy));
+                const ox = (-dy / length) * (frontier ? 2.4 : 1.4);
+                const oz = (dx / length) * (frontier ? 2.4 : 1.4);
+                for (const offset of [0, 1, -1]) {
+                    let previous = null;
+                    for (let sample = 0; sample <= samples; sample++) {
+                        const t = sample / samples;
+                        const point = {
+                            x: a.x + dx * t + ox * offset,
+                            y: height,
+                            z: -(a.y + dy * t) + oz * offset,
+                        };
+                        if (previous) {
+                            cursor = this.writeSignal(cursor, previous, lit);
+                            cursor = this.writeSignal(cursor, point, lit);
+                        }
+                        previous = point;
                     }
-                    previous = point;
                 }
             }
             this.signalGeometry.setDrawRange(0, cursor);
@@ -484,8 +491,8 @@
             this.notes = notes || [];
             this.notes.forEach((note, index) => {
                 const angle = (index / Math.max(1, this.notes.length)) * Math.PI * 2;
-                const lift = 34;
-                const spread = 22;
+                const lift = 72;
+                const spread = 70;
                 const cardX = note.x + Math.cos(angle) * spread;
                 const cardZ = -note.y + Math.sin(angle) * spread;
                 const texture = this.makeCardTexture(note.title, note.body);
@@ -494,9 +501,10 @@
                         map: texture,
                         transparent: true,
                         depthTest: false,
+                        sizeAttenuation: true,
                     })
                 );
-                sprite.scale.set(78, 29, 1);
+                sprite.scale.set(240, 90, 1);
                 sprite.position.set(cardX, lift, cardZ);
                 sprite.renderOrder = 20;
                 sprite.userData.anchor = {
