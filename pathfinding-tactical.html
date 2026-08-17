@@ -47,17 +47,18 @@
         h1 { margin: 6px 0 3px; font-size: clamp(18px,2vw,28px); font-weight: 400; }
         .subtitle { color: var(--muted); font-size: 8px; letter-spacing: .1em; }
         .telemetry {
-            top: 14px; right: 14px; min-width: 218px; padding: 10px 12px;
-            font-size: 8px; line-height: 1.82; letter-spacing: .08em;
+            top: 14px; right: 14px; min-width: 228px; padding: 10px 12px;
+            font-size: 8px; line-height: 1.7; letter-spacing: .08em;
+            max-height: calc(100vh - 280px); overflow: auto;
+        }
+        .specimen {
+            right: 14px; top: 292px; width: 228px; padding: 10px 12px;
+            font-size: 8px; line-height: 1.75; color: var(--muted);
         }
         .row { display: flex; justify-content: space-between; gap: 22px; color: var(--muted); }
         .row span:last-child {
             color: var(--ink); max-width: 148px;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .specimen {
-            right: 14px; top: 228px; width: 218px; padding: 10px 12px;
-            font-size: 8px; line-height: 1.75; color: var(--muted);
         }
         .specimen div:not(.specimen-title):not(.specimen-empty) {
             display: flex; justify-content: space-between;
@@ -70,7 +71,7 @@
         .specimen-empty { opacity: .5; }
         .modes {
             left: 16px; bottom: 112px; padding: 8px; display: flex;
-            flex-wrap: wrap; gap: 5px; width: 420px;
+            flex-wrap: wrap; gap: 5px; width: 520px;
         }
         .place-form {
             display: flex; gap: 5px; flex-basis: 100%;
@@ -137,10 +138,16 @@
     <header class="title panel">
         <div class="eyebrow">routing analysis</div>
         <h1>tactical interferometry</h1>
-        <div class="subtitle">path planning on real streets</div>
+        <div class="subtitle">live street routing with cameras, traffic, and a router check</div>
     </header>
     <aside class="telemetry panel">
         <div class="row"><span>place</span><span id="place-name">synthetic grid</span></div>
+        <div class="row"><span>origin</span><span id="origin-name">--</span></div>
+        <div class="row"><span>destination</span><span id="destination-name">--</span></div>
+        <div class="row"><span>weather</span><span id="weather-readout">--</span></div>
+        <div class="row"><span>cameras</span><span id="camera-readout">--</span></div>
+        <div class="row"><span>traffic</span><span id="traffic-readout">--</span></div>
+        <div class="row"><span>osrm</span><span id="osrm-readout">--</span></div>
         <div class="row"><span>state</span><span id="state">searching</span></div>
         <div class="row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
         <div class="row"><span>event</span><span id="event-index">0/0</span></div>
@@ -156,11 +163,15 @@
         <div><span style="background:#7999aa"></span>heuristic</div>
         <div><span style="background:#c55339"></span>closed / avoid</div>
         <div><span style="background:#e7f1f3"></span>highlighted path</div>
+        <div><span style="background:#ff3b24"></span>cameras</div>
+        <div><span style="background:#ff8014"></span>traffic</div>
+        <div><span style="background:#7999aa"></span>osrm check</div>
     </div>
     <section class="modes panel">
-        <form id="place-form" class="place-form">
-            <input id="place-query" type="search" placeholder="any place" autocomplete="off" aria-label="Search any place">
-            <button type="submit">load streets</button>
+        <form id="route-form" class="place-form">
+            <input id="origin-query" type="search" placeholder="origin place" autocomplete="off" aria-label="Origin place">
+            <input id="destination-query" type="search" placeholder="destination place" autocomplete="off" aria-label="Destination place">
+            <button type="submit">load route</button>
             <button type="button" id="locate">use location</button>
         </form>
         <button id="astar" class="active">a*</button>
@@ -174,6 +185,9 @@
         <button id="resist" class="danger">avoid</button>
         <button id="amplify">prefer</button>
         <button id="clear">clear edge</button>
+        <button id="avoid-cameras" class="danger">avoid cameras</button>
+        <button id="avoid-traffic" class="danger">avoid traffic</button>
+        <button id="show-osrm">osrm check</button>
         <button id="reset-view">reset view</button>
         <button id="top-view">top view</button>
         <button id="iso-view">isometric</button>
@@ -204,6 +218,7 @@
     <script src="pathfinding-tactical-symbols.js"></script>
     <script src="pathfinding-tactical-renderer.js"></script>
     <script src="pathfinding-tactical-osm.js"></script>
+    <script src="pathfinding-tactical-live.js"></script>
     <script src="pathfinding-tactical-app.js"></script>
 </body>
 </html>

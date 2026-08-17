@@ -74,6 +74,17 @@ function squareFixture() {
                 nodes: [1, 2],
                 tags: { highway: 'proposed' },
             },
+            {
+                type: 'node',
+                id: 99,
+                lat: ORIGIN.lat,
+                lon: ORIGIN.lon + 0.001,
+                tags: {
+                    man_made: 'surveillance',
+                    'camera:type': 'fixed',
+                    'camera:direction': '90',
+                },
+            },
         ],
     };
 }
@@ -116,6 +127,22 @@ function squareFixture() {
         assert.ok(node.y > 0 && node.y < 900);
         assert.ok(typeof node.lat === 'number');
     }
+    assert.equal(graph.cameras.length, 1);
+    assert.equal(graph.cameras[0].edgeId, 0);
+    assert.ok(graph.edges[0].cameraCount >= 1);
+}
+
+{
+    const base = Osm.graphFromOverpass(squareFixture(), ORIGIN);
+    const avoided = Osm.withProfile(base, { avoidCameras: true });
+    const cameraEdge = avoided.edges.find(edge => edge.cameraCount > 0);
+    assert.ok(cameraEdge);
+    assert.ok(cameraEdge.effectiveCost > cameraEdge.baseCost);
+    const plain = Osm.withProfile(base, { avoidCameras: false });
+    assert.equal(
+        plain.edges[cameraEdge.id].effectiveCost,
+        plain.edges[cameraEdge.id].baseCost
+    );
 }
 
 {

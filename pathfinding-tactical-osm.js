@@ -42,6 +42,12 @@
     const HIGHWAY_REGEX = Object.keys(HIGHWAY_KIND).join('|');
     const METERS_PER_DEG_LAT = 111320;
     const MIN_KEEP_METERS = 22;
+    const CAMERA_COST = 4;
+    const SNAP_METERS = 42;
+    const CARDINALS = {
+        n: 0, ne: 45, e: 90, se: 135,
+        s: 180, sw: 225, w: 270, nw: 315,
+    };
 
     function classifyHighway(type) {
         return HIGHWAY_KIND[type] || null;
@@ -61,6 +67,41 @@
         };
     }
 
+    function bboxFromPoints(points, padM, maxSpanM = 2800) {
+        const list = points.filter(point => point && Number.isFinite(point.lat));
+        if (!list.length) throw new Error('no points for bbox');
+        let south = Infinity;
+        let north = -Infinity;
+        let west = Infinity;
+        let east = -Infinity;
+        for (const point of list) {
+            south = Math.min(south, point.lat);
+            north = Math.max(north, point.lat);
+            west = Math.min(west, point.lon);
+            east = Math.max(east, point.lon);
+        }
+        const midLat = (south + north) / 2;
+        const padLat = padM / METERS_PER_DEG_LAT;
+        const padLon =
+            padM /
+            (METERS_PER_DEG_LAT *
+                Math.max(0.08, Math.cos((midLat * Math.PI) / 180)));
+        south -= padLat;
+        north += padLat;
+        west -= padLon;
+        east += padLon;
+        const spanM = Math.hypot(
+            (north - south) * METERS_PER_DEG_LAT,
+            (east - west) *
+                METERS_PER_DEG_LAT *
+                Math.max(0.08, Math.cos((midLat * Math.PI) / 180))
+        );
+        if (spanM > maxSpanM) {
+            return bboxFromCenter(midLat, (west + east) / 2, maxSpanM / 2);
+        }
+        return { south, north, west, east };
+    }
+
     function projectLocal(lat, lon, originLat, originLon) {
         const metersPerDegLon =
             METERS_PER_DEG_LAT *
@@ -71,7 +112,7 @@
         };
     }
 
-    function fitNodesToWorld(raw, world) {
+    function computeFit(raw, world) {
         const list = Object.values(raw);
         let minX = Infinity;
         let maxX = -Infinity;
@@ -87,22 +128,105 @@
         const spanY = Math.max(1, maxY - minY);
         const innerW = world.width - world.marginX * 2;
         const innerH = world.height - world.marginY * 2;
-        const scale = Math.min(innerW / spanX, innerH / spanY);
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        const ox = world.width / 2;
-        const oy = world.height / 2;
+        return {
+            scale: Math.min(innerW / spanX, innerH / spanY),
+            cx: (minX + maxX) / 2,
+            cy: (minY + maxY) / 2,
+            ox: world.width / 2,
+            oy: world.height / 2,
+        };
+    }
+
+    function applyFit(x, y, fit) {
+        return {
+            x: fit.ox + (x - fit.cx) * fit.scale,
+            y: fit.oy + (y - fit.cy) * fit.scale,
+        };
+    }
+
+    function fitNodesToWorld(raw, world) {
+        const fit = computeFit(raw, world);
         const nodes = {};
-        for (const node of list) {
+        for (const node of Object.values(raw)) {
+            const point = applyFit(node.x, node.y, fit);
             nodes[node.id] = {
                 id: node.id,
-                x: ox + (node.x - cx) * scale,
-                y: oy + (node.y - cy) * scale,
+                x: point.x,
+                y: point.y,
                 lat: node.lat,
                 lon: node.lon,
             };
         }
         return nodes;
+    }
+
+    function pointToSegment(point, a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lengthSquared = dx * dx + dy * dy || 1;
+        const t = Math.max(
+            0,
+            Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared)
+        );
+        return Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t));
+    }
+
+    function parseBearing(value) {
+        if (value == null || value === '') return null;
+        const numeric = parseFloat(value);
+        if (!Number.isNaN(numeric)) return numeric;
+        return CARDINALS[String(value).toLowerCase()] ?? null;
+    }
+
+    function parseCameras(elements) {
+        const cameras = [];
+        for (const element of elements) {
+            if (element.type !== 'node' || !element.tags) continue;
+            if (element.tags.man_made !== 'surveillance') continue;
+            cameras.push({
+                id: String(element.id),
+                lat: element.lat,
+                lon: element.lon,
+                type:
+                    element.tags['camera:type'] ||
+                    element.tags['surveillance:type'] ||
+                    'fixed',
+                direction:
+                    parseBearing(element.tags['camera:direction']) ??
+                    parseBearing(element.tags.direction),
+                edgeId: null,
+            });
+        }
+        return cameras;
+    }
+
+    function snapPointsToEdges(nodes, rawEdges, points, maxDistance) {
+        for (const point of points) {
+            let bestIndex = -1;
+            let bestDistance = Infinity;
+            for (let index = 0; index < rawEdges.length; index++) {
+                const edge = rawEdges[index];
+                const distance = pointToSegment(
+                    point,
+                    nodes[edge.a],
+                    nodes[edge.b]
+                );
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestIndex = index;
+                }
+            }
+            if (bestIndex >= 0 && bestDistance <= maxDistance) {
+                point.edgeId = bestIndex;
+            }
+        }
+        return points;
+    }
+
+    function projectOntoGraph(graph, lat, lon) {
+        const meters = projectLocal(lat, lon, graph.lat, graph.lon);
+        const point = applyFit(meters.x, meters.y, graph.fit);
+        return { x: point.x, y: point.y, lat, lon };
     }
 
     function neighborSets(ways, projected) {
@@ -152,7 +276,10 @@
                             a: last,
                             b: id,
                             kind: way.kind,
+                            name: way.name || '',
                             bend: 0,
+                            cameraCount: 0,
+                            trafficSeverity: 0,
                         });
                     }
                 }
@@ -182,20 +309,35 @@
             );
             const preferred = profile.preferredEdges.has(id);
             const blocked = profile.blockedEdges.has(id);
+            const cameraCount = raw.cameraCount || 0;
+            const trafficSeverity = raw.trafficSeverity || 0;
+            const cameraMult =
+                profileInput?.avoidCameras && cameraCount ? CAMERA_COST : 1;
+            const trafficMult =
+                profileInput?.avoidTraffic && trafficSeverity
+                    ? 1 + trafficSeverity
+                    : 1;
             const effectiveCost =
-                baseCost * resistance * (preferred ? 0.62 : 1);
+                baseCost *
+                resistance *
+                cameraMult *
+                trafficMult *
+                (preferred ? 0.62 : 1);
             edges.push({
                 id,
                 a: raw.a,
                 b: raw.b,
                 kind: raw.kind,
+                name: raw.name || '',
                 distance: raw.distance,
                 bend: raw.bend,
                 baseCost,
                 effectiveCost,
-                resistance,
+                resistance: resistance * cameraMult * trafficMult,
                 preferred,
                 blocked,
+                cameraCount,
+                trafficSeverity,
             });
             if (!blocked) {
                 adjacency[raw.a].push({
@@ -219,6 +361,14 @@
             lat: meta.lat,
             lon: meta.lon,
             label: meta.label || '',
+            fit: meta.fit || null,
+            cameras: meta.cameras || [],
+            traffic: meta.traffic || [],
+            weather: meta.weather || null,
+            osrm: meta.osrm || null,
+            originLabel: meta.originLabel || '',
+            destinationLabel: meta.destinationLabel || '',
+            trafficCoverage: meta.trafficCoverage || false,
             nodes,
             adjacency,
             edges,
@@ -244,7 +394,13 @@
                 element.tags.highway
             ) {
                 const kind = classifyHighway(element.tags.highway);
-                if (kind) ways.push({ nodes: element.nodes || [], kind });
+                if (kind) {
+                    ways.push({
+                        nodes: element.nodes || [],
+                        kind,
+                        name: element.tags.name || '',
+                    });
+                }
             }
         }
 
@@ -281,20 +437,60 @@
         if (Object.keys(simplified.nodes).length < 2) {
             throw new Error('not enough street nodes');
         }
-        const nodes = fitNodesToWorld(simplified.nodes, world);
+        const fit = computeFit(simplified.nodes, world);
+        const nodes = {};
+        for (const node of Object.values(simplified.nodes)) {
+            const point = applyFit(node.x, node.y, fit);
+            nodes[node.id] = {
+                id: node.id,
+                x: point.x,
+                y: point.y,
+                lat: node.lat,
+                lon: node.lon,
+            };
+        }
         const rawEdges = simplified.rawEdges.map(edge => ({
             ...edge,
+            cameraCount: 0,
+            trafficSeverity: 0,
             distance: Math.hypot(
                 nodes[edge.b].x - nodes[edge.a].x,
                 nodes[edge.b].y - nodes[edge.a].y
             ),
         }));
         if (rawEdges.length < 1) throw new Error('not enough street edges');
+        const snapDistance = SNAP_METERS * fit.scale;
+        const cameras = snapPointsToEdges(
+            nodes,
+            rawEdges,
+            parseCameras(elements).map(camera => {
+                const meters = projectLocal(
+                    camera.lat,
+                    camera.lon,
+                    originLat,
+                    originLon
+                );
+                const point = applyFit(meters.x, meters.y, fit);
+                return { ...camera, x: point.x, y: point.y };
+            }),
+            snapDistance
+        );
+        for (const camera of cameras) {
+            if (camera.edgeId == null) continue;
+            rawEdges[camera.edgeId].cameraCount += 1;
+        }
         return assembleGraph(nodes, rawEdges, options.profile, {
             source: 'osm',
             lat: originLat,
             lon: originLon,
             label: options.label || '',
+            fit,
+            cameras,
+            traffic: options.traffic || [],
+            weather: options.weather || null,
+            osrm: options.osrm || null,
+            originLabel: options.originLabel || '',
+            destinationLabel: options.destinationLabel || '',
         });
     }
 
@@ -304,6 +500,14 @@
             lat: graph.lat,
             lon: graph.lon,
             label: graph.label,
+            fit: graph.fit,
+            cameras: graph.cameras,
+            traffic: graph.traffic,
+            weather: graph.weather,
+            osrm: graph.osrm,
+            originLabel: graph.originLabel,
+            destinationLabel: graph.destinationLabel,
+            trafficCoverage: graph.trafficCoverage,
         });
     }
 
@@ -381,7 +585,7 @@
     }
 
     function overpassQuery(bbox) {
-        return `[out:json][timeout:25];(way["highway"~"^(${HIGHWAY_REGEX})$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
+        return `[out:json][timeout:25];(way["highway"~"^(${HIGHWAY_REGEX})$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});node["man_made"="surveillance"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out body;>;out skel qt;`;
     }
 
     async function fetchOverpass(bbox, options = {}) {
@@ -458,7 +662,7 @@
     }
 
     async function graphFromLocation(lat, lon, options = {}) {
-        const radiusM = options.radiusM || 850;
+        const radiusM = options.radiusM || 900;
         const bbox = bboxFromCenter(lat, lon, radiusM);
         const payload =
             options.payload || (await fetchOverpass(bbox, options));
@@ -468,6 +672,25 @@
             profile: options.profile,
             world: options.world,
             label: options.label || '',
+            originLabel: options.originLabel || options.label || '',
+            destinationLabel: options.destinationLabel || '',
+        });
+    }
+
+    async function graphFromEndpoints(origin, destination, options = {}) {
+        const points = [origin, destination].filter(Boolean);
+        const bbox = bboxFromPoints(points, options.padM || 450);
+        const payload =
+            options.payload || (await fetchOverpass(bbox, options));
+        const ref = origin || destination;
+        return graphFromOverpass(payload, {
+            lat: ref.lat,
+            lon: ref.lon,
+            profile: options.profile,
+            world: options.world,
+            label: options.label || origin?.label || '',
+            originLabel: origin?.label || '',
+            destinationLabel: destination?.label || '',
         });
     }
 
@@ -499,12 +722,20 @@
     return {
         OVERPASS_MIRRORS,
         HIGHWAY_KIND,
+        CAMERA_COST,
         classifyHighway,
         bboxFromCenter,
+        bboxFromPoints,
         projectLocal,
+        computeFit,
+        applyFit,
         fitNodesToWorld,
+        parseCameras,
+        snapPointsToEdges,
+        projectOntoGraph,
         graphFromOverpass,
         graphFromLocation,
+        graphFromEndpoints,
         withProfile,
         nearestNodeToLatLon,
         nearestNodeToPoint,
