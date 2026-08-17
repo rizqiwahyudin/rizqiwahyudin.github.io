@@ -51,7 +51,10 @@
             font-size: 8px; line-height: 1.82; letter-spacing: .08em;
         }
         .row { display: flex; justify-content: space-between; gap: 22px; color: var(--muted); }
-        .row span:last-child { color: var(--ink); }
+        .row span:last-child {
+            color: var(--ink); max-width: 148px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
         .specimen {
             right: 14px; top: 228px; width: 218px; padding: 10px 12px;
             font-size: 8px; line-height: 1.75; color: var(--muted);
@@ -67,7 +70,21 @@
         .specimen-empty { opacity: .5; }
         .modes {
             left: 16px; bottom: 112px; padding: 8px; display: flex;
-            flex-wrap: wrap; gap: 5px; width: 335px;
+            flex-wrap: wrap; gap: 5px; width: 420px;
+        }
+        .place-form {
+            display: flex; gap: 5px; flex-basis: 100%;
+        }
+        .place-form input {
+            flex: 1; min-width: 0; min-height: 28px; padding: 0 9px;
+            color: var(--ink); background: transparent;
+            border: 1px solid var(--line); font-size: 8px;
+            letter-spacing: .08em;
+        }
+        #loading {
+            position: fixed; left: 50%; top: 44%; transform: translate(-50%,-50%);
+            z-index: 12; padding: 12px 16px; font-size: 10px;
+            letter-spacing: .14em;
         }
         button, select {
             min-height: 28px; padding: 0 9px; color: var(--muted);
@@ -120,9 +137,10 @@
     <header class="title panel">
         <div class="eyebrow">routing analysis</div>
         <h1>tactical interferometry</h1>
-        <div class="subtitle">path planning on a searchable network</div>
+        <div class="subtitle">path planning on real streets</div>
     </header>
     <aside class="telemetry panel">
+        <div class="row"><span>place</span><span id="place-name">synthetic grid</span></div>
         <div class="row"><span>state</span><span id="state">searching</span></div>
         <div class="row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
         <div class="row"><span>event</span><span id="event-index">0/0</span></div>
@@ -140,6 +158,11 @@
         <div><span style="background:#e7f1f3"></span>highlighted path</div>
     </div>
     <section class="modes panel">
+        <form id="place-form" class="place-form">
+            <input id="place-query" type="search" placeholder="any place" autocomplete="off" aria-label="Search any place">
+            <button type="submit">load streets</button>
+            <button type="button" id="locate">use location</button>
+        </form>
         <button id="astar" class="active">a*</button>
         <button id="dijkstra">dijkstra</button>
         <button id="run">search</button>
@@ -170,6 +193,7 @@
         </div>
         <input id="timeline" type="range" min="0" max="1" value="0" aria-label="Search event timeline">
     </section>
+    <div id="loading" class="panel" hidden>loading streets</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -179,6 +203,7 @@
     <script src="pathfinding-analytics.js"></script>
     <script src="pathfinding-tactical-symbols.js"></script>
     <script src="pathfinding-tactical-renderer.js"></script>
+    <script src="pathfinding-tactical-osm.js"></script>
     <script src="pathfinding-tactical-app.js"></script>
 </body>
 </html>

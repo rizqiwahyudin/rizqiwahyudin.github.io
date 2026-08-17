@@ -10,12 +10,14 @@
             'dijkstra', 'run', 'random', 'endpoints', 'scan',
             'inspect', 'cut', 'resist', 'amplify',
             'clear', 'reset-view', 'top-view', 'iso-view', 'side-view',
-            'speed', 'specimen',
+            'speed', 'specimen', 'place-name', 'place-query',
+            'place-form', 'locate', 'loading',
         ].map(id => [id, document.getElementById(id)])
     );
 
     let algorithm = 'astar';
     let graph;
+    let streetSource = null;
     let result;
     let previousResult = null;
     let timeline;
@@ -32,18 +34,71 @@
     let selectedEdgeId = null;
     let scanVisible = false;
     let pointerStart = null;
+    let placeLabel = 'synthetic grid';
+    let loading = false;
+    let loadToken = 0;
     const profile = {
         blockedEdges: new Set(),
         resistance: new Map(),
         preferredEdges: new Set(),
     };
 
+    function setLoading(next, message) {
+        loading = next;
+        if (ui.loading) {
+            ui.loading.hidden = !next;
+            ui.loading.textContent = message || 'loading streets';
+        }
+        if (message) ui.state.textContent = message;
+    }
+
+    function shortLabel(label) {
+        const text = String(label || '')
+            .split(',')
+            .slice(0, 2)
+            .join(',')
+            .trim();
+        return text.length > 36 ? `${text.slice(0, 34)}…` : text;
+    }
+
+    function resetProfile() {
+        profile.blockedEdges.clear();
+        profile.resistance.clear();
+        profile.preferredEdges.clear();
+        selectedEdgeId = null;
+        previousResult = null;
+    }
+
+    function currentGraph() {
+        if (streetSource) return TacticalOsm.withProfile(streetSource, profile);
+        return SymbioteGraph.createGraph(32841, profile);
+    }
+
+    function ensureTerminals(nextGraph) {
+        if (!nextGraph.nodes[originId]) {
+            originId = streetSource
+                ? TacticalOsm.nearestNodeToLatLon(
+                      nextGraph,
+                      streetSource.lat,
+                      streetSource.lon
+                  )
+                : Object.keys(nextGraph.nodes)[0];
+        }
+        if (!nextGraph.nodes[destinationId] || destinationId === originId) {
+            destinationId =
+                TacticalOsm.pickDestination(nextGraph, originId) ||
+                Object.keys(nextGraph.nodes).find(id => id !== originId) ||
+                originId;
+        }
+    }
+
     function runSearch(options) {
         const keepGhost = Boolean(options && options.keepGhost && result);
         if (keepGhost) previousResult = result;
         else previousResult = null;
 
-        graph = SymbioteGraph.createGraph(32841, profile);
+        graph = currentGraph();
+        ensureTerminals(graph);
         result = SymbiotePathfinding.search(
             graph,
             originId,
@@ -62,6 +117,7 @@
         ui.play.textContent = 'pause';
         ui.state.textContent = 'searching';
         ui['algorithm-stat'].textContent = algorithm === 'astar' ? 'a*' : 'dijkstra';
+        ui['place-name'].textContent = placeLabel;
         renderer.setGraph(graph);
         renderer.setGhost(
             keepGhost && previousResult && previousResult.edgeIds
@@ -78,6 +134,77 @@
         );
         renderer.setNotesVisible(false);
         updateSnapshot();
+    }
+
+    async function loadStreets(lat, lon, label) {
+        const token = loadToken;
+        setLoading(true, 'loading streets');
+        try {
+            const next = await TacticalOsm.graphFromLocation(lat, lon, {
+                profile: {
+                    blockedEdges: new Set(),
+                    resistance: new Map(),
+                    preferredEdges: new Set(),
+                },
+                label,
+            });
+            if (token !== loadToken) return;
+            if (Object.keys(next.nodes).length < 4 || next.edges.length < 3) {
+                throw new Error('not enough streets');
+            }
+            resetProfile();
+            streetSource = next;
+            placeLabel = shortLabel(
+                label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+            );
+            originId = TacticalOsm.nearestNodeToLatLon(next, lat, lon);
+            destinationId = TacticalOsm.pickDestination(next, originId);
+            runSearch();
+        } catch (_error) {
+            if (token !== loadToken) return;
+            if (!streetSource) {
+                placeLabel = 'synthetic grid';
+                ui['place-name'].textContent = placeLabel;
+            }
+            ui.state.textContent = 'streets unavailable';
+        } finally {
+            if (token === loadToken) setLoading(false);
+        }
+    }
+
+    async function locateAndLoad() {
+        const token = ++loadToken;
+        setLoading(true, 'locating');
+        try {
+            const position = await TacticalOsm.requestGeolocation();
+            if (token !== loadToken) return;
+            const label = await TacticalOsm.reverseGeocode(
+                position.lat,
+                position.lon
+            );
+            if (token !== loadToken) return;
+            await loadStreets(position.lat, position.lon, label);
+        } catch (_error) {
+            if (token !== loadToken) return;
+            setLoading(false);
+            if (!streetSource) ui.state.textContent = 'search a place';
+        }
+    }
+
+    async function searchAndLoad(query) {
+        const trimmed = String(query || '').trim();
+        if (!trimmed) return;
+        const token = ++loadToken;
+        setLoading(true, 'finding place');
+        try {
+            const place = await TacticalOsm.searchPlace(trimmed);
+            if (token !== loadToken) return;
+            await loadStreets(place.lat, place.lon, place.label);
+        } catch (_error) {
+            if (token !== loadToken) return;
+            setLoading(false);
+            ui.state.textContent = 'place not found';
+        }
     }
 
     function updateSnapshot() {
@@ -159,20 +286,11 @@
     }
 
     function nearestNode(point) {
-        let best = null;
-        let distance = Infinity;
-        for (const node of Object.values(graph.nodes)) {
-            const candidate =
-                (node.x - point.x) ** 2 + (node.y - point.y) ** 2;
-            if (candidate < distance) {
-                distance = candidate;
-                best = node.id;
-            }
-        }
-        return best;
+        return TacticalOsm.nearestNodeToPoint(graph, point);
     }
 
     function handleClick(clientX, clientY) {
+        if (loading) return;
         const point = renderer.groundPoint(clientX, clientY);
         if (!point) return;
         if (endpointStage) {
@@ -243,8 +361,16 @@
         const random = SymbioteGraph.mulberry32(
             Math.floor(performance.now() * 1000)
         );
-        originId = `${1 + Math.floor(random() * 5)}:${1 + Math.floor(random() * 15)}`;
-        destinationId = `${23 + Math.floor(random() * 5)}:${1 + Math.floor(random() * 15)}`;
+        if (streetSource) {
+            const pair = TacticalOsm.pickRandomPair(graph, random);
+            if (pair) {
+                originId = pair.originId;
+                destinationId = pair.destinationId;
+            }
+        } else {
+            originId = `${1 + Math.floor(random() * 5)}:${1 + Math.floor(random() * 15)}`;
+            destinationId = `${23 + Math.floor(random() * 5)}:${1 + Math.floor(random() * 15)}`;
+        }
         runSearch();
     });
     ui.endpoints.addEventListener('click', () => {
@@ -292,6 +418,13 @@
     ui['top-view'].addEventListener('click', () => renderer.topView());
     ui['iso-view'].addEventListener('click', () => renderer.isoView());
     ui['side-view'].addEventListener('click', () => renderer.sideView());
+    ui['place-form'].addEventListener('submit', event => {
+        event.preventDefault();
+        searchAndLoad(ui['place-query'].value);
+    });
+    ui.locate.addEventListener('click', () => {
+        locateAndLoad();
+    });
     window.addEventListener('resize', () =>
         renderer.resize(window.innerWidth, window.innerHeight)
     );
@@ -305,4 +438,5 @@
     setInteraction('inspect');
     runSearch();
     requestAnimationFrame(animate);
+    locateAndLoad();
 })();
