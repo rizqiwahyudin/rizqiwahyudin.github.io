@@ -16,6 +16,11 @@
             this.reset();
         }
 
+        setGraph(graph) {
+            this.graph = graph;
+            this.reset();
+        }
+
         reset() {
             this.result = null;
             this.tendrils = new Map();

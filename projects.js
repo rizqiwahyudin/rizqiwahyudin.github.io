@@ -60,11 +60,11 @@ const projects = [
     {
         type: "sim",
         title: "symbiote pathfinder",
-        subtitle: "living shortest-path search",
+        subtitle: "living shortest-path search on real streets",
         desc: "",
         classification: "canvas // graph search",
         sim: "pathfinding.html",
-        tags: ["a*", "dijkstra", "generative", "routing"]
+        tags: ["a*", "dijkstra", "osm", "gps"]
     },
     {
         type: "sim",

@@ -9,6 +9,7 @@
         tendrils: document.getElementById('tendrils'),
         quality: document.getElementById('quality'),
         cost: document.getElementById('cost'),
+        place: document.getElementById('place-name'),
         astar: document.getElementById('astar'),
         dijkstra: document.getElementById('dijkstra'),
         run: document.getElementById('run'),
@@ -16,6 +17,9 @@
         pause: document.getElementById('pause'),
         speed: document.getElementById('speed'),
         creep: document.getElementById('creep'),
+        placeForm: document.getElementById('place-form'),
+        placeQuery: document.getElementById('place-query'),
+        locate: document.getElementById('locate'),
     };
 
     const WORLD = { width: 1600, height: 900, marginX: 90, marginY: 80 };
@@ -41,6 +45,9 @@
     let lastFrame = performance.now();
     let lastRenderAt = 0;
     let lastRenderSimulationTime = 0;
+    let streetSource = null;
+    let placeLabel = 'synthetic grid';
+    let loadToken = 0;
 
     function mulberry32(seed) {
         return function random() {
@@ -136,6 +143,85 @@
         };
     }
 
+    function shortLabel(label) {
+        const text = String(label || '')
+            .split(',')
+            .slice(0, 2)
+            .join(',')
+            .trim();
+        return text.length > 42 ? `${text.slice(0, 40)}…` : text;
+    }
+
+    function setPlace(label) {
+        placeLabel = shortLabel(label || 'synthetic grid');
+        if (ui.place) ui.place.textContent = placeLabel;
+    }
+
+    function applyGraph(next, origin, destination) {
+        graph = next;
+        streetSource = next.source === 'osm' ? next : null;
+        simulation.setGraph(graph);
+        view.setGraph(graph);
+        originId = origin;
+        destinationId = destination;
+        selecting = 'origin';
+        simulationTime = 0;
+        lastRenderSimulationTime = 0;
+        runSearch();
+    }
+
+    async function loadStreets(lat, lon, label) {
+        const token = ++loadToken;
+        ui.state.textContent = 'loading streets';
+        try {
+            const next = await TacticalOsm.graphFromLocation(lat, lon, {
+                label,
+            });
+            if (token !== loadToken) return;
+            if (Object.keys(next.nodes).length < 4 || next.edges.length < 3) {
+                throw new Error('not enough streets');
+            }
+            const origin = TacticalOsm.nearestNodeToLatLon(next, lat, lon);
+            const destination =
+                TacticalOsm.pickDestination(next, origin) || origin;
+            setPlace(label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`);
+            applyGraph(next, origin, destination);
+        } catch (_error) {
+            if (token !== loadToken) return;
+            if (!streetSource) setPlace('synthetic grid');
+            ui.state.textContent = 'streets unavailable';
+        }
+    }
+
+    async function locateAndLoad() {
+        ui.state.textContent = 'locating';
+        try {
+            const position = await TacticalOsm.requestGeolocation();
+            const label = await TacticalOsm.reverseGeocode(
+                position.lat,
+                position.lon
+            );
+            await loadStreets(position.lat, position.lon, label);
+        } catch (_error) {
+            if (!streetSource) {
+                setPlace('synthetic grid');
+                ui.state.textContent = 'search a place';
+            }
+        }
+    }
+
+    async function searchAndLoad(query) {
+        const trimmed = String(query || '').trim();
+        if (!trimmed) return;
+        ui.state.textContent = 'finding place';
+        try {
+            const place = await TacticalOsm.searchPlace(trimmed);
+            await loadStreets(place.lat, place.lon, place.label);
+        } catch (_error) {
+            ui.state.textContent = 'place not found';
+        }
+    }
+
     function update(deltaSeconds) {
         if (paused || documentHidden || !simulation.result) return;
         simulation.update(
@@ -214,10 +300,17 @@
 
     function randomEndpoints() {
         const random = mulberry32(Math.floor(performance.now() * 1000) ^ graphSeed);
-        const leftCol = 1 + Math.floor(random() * 5);
-        const rightCol = graph.cols - 2 - Math.floor(random() * 5);
-        originId = `${leftCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
-        destinationId = `${rightCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+        if (streetSource) {
+            const pair = TacticalOsm.pickRandomPair(graph, random);
+            if (!pair) return;
+            originId = pair.originId;
+            destinationId = pair.destinationId;
+        } else {
+            const leftCol = 1 + Math.floor(random() * 5);
+            const rightCol = graph.cols - 2 - Math.floor(random() * 5);
+            originId = `${leftCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+            destinationId = `${rightCol}:${1 + Math.floor(random() * (graph.rows - 2))}`;
+        }
         selecting = 'origin';
         runSearch();
     }
@@ -272,6 +365,15 @@
               ? 'route bonded'
               : 'propagating';
     });
+    if (ui.placeForm) {
+        ui.placeForm.addEventListener('submit', event => {
+            event.preventDefault();
+            searchAndLoad(ui.placeQuery.value);
+        });
+    }
+    if (ui.locate) {
+        ui.locate.addEventListener('click', () => locateAndLoad());
+    }
 
     window.addEventListener('keydown', event => {
         if (event.code === 'Space') {
@@ -297,7 +399,9 @@
     graph = SymbioteGraph.createGraph(graphSeed);
     simulation = new SymbioteOrganism.OrganismSimulation(graph);
     view = new SymbioteBiomass.BiomassRenderer(canvas, graph, WORLD, ROAD_STYLE);
+    setPlace('synthetic grid');
     resize();
     requestAnimationFrame(animate);
     setTimeout(runSearch, 450);
+    locateAndLoad();
 })();

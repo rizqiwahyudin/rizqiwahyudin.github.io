@@ -163,6 +163,18 @@
             return lines;
         }
 
+        setGraph(graph) {
+            this.graph = graph;
+            if (this.roadObject) {
+                this.scene.remove(this.roadObject);
+                this.roadObject.geometry.dispose();
+                this.roadObject.material.dispose();
+            }
+            this.roadObject = this.buildRoadNetwork();
+            this.scene.add(this.roadObject);
+            this.reset();
+        }
+
         createEndpointRing(color, radius) {
             const points = [];
             for (let index = 0; index < 40; index++) {

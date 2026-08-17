@@ -45,4 +45,49 @@ assert.equal(simulation.tendrils.size, 0);
 assert.equal(simulation.routeStart, 0);
 assert.equal(simulation.settledCount, 0);
 
+{
+    const Osm = require('./pathfinding-tactical-osm.js');
+    const streets = Osm.graphFromOverpass(
+        {
+            elements: [
+                { type: 'node', id: 1, lat: 51.5, lon: -0.12 },
+                { type: 'node', id: 2, lat: 51.5, lon: -0.118 },
+                { type: 'node', id: 3, lat: 51.502, lon: -0.118 },
+                { type: 'node', id: 4, lat: 51.502, lon: -0.12 },
+                {
+                    type: 'way',
+                    id: 10,
+                    nodes: [1, 2],
+                    tags: { highway: 'residential' },
+                },
+                {
+                    type: 'way',
+                    id: 11,
+                    nodes: [2, 3],
+                    tags: { highway: 'primary' },
+                },
+                {
+                    type: 'way',
+                    id: 12,
+                    nodes: [3, 4],
+                    tags: { highway: 'residential' },
+                },
+                {
+                    type: 'way',
+                    id: 13,
+                    nodes: [4, 1],
+                    tags: { highway: 'service' },
+                },
+            ],
+        },
+        { lat: 51.5, lon: -0.12 }
+    );
+    simulation.setGraph(streets);
+    const origin = Osm.nearestNodeToLatLon(streets, 51.5, -0.12);
+    const destination = Osm.pickDestination(streets, origin);
+    const streetResult = simulation.start(origin, destination, 'astar');
+    assert.equal(streetResult.found, true);
+    assert.ok(streetResult.edgeIds.length > 0);
+}
+
 console.log('pathfinding-organism: all tests passed');
