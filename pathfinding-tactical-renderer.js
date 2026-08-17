@@ -2,18 +2,16 @@
     root.TacticalInterferometryRenderer = factory(
         root.THREE,
         root.SymbioteGeometry,
-        root.TacticalSymbols,
-        root.PathfindingAnalytics
+        root.TacticalSymbols
     );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
     THREE,
     Geo,
-    Symbols,
-    Analytics
+    Symbols
 ) {
     'use strict';
 
-    const MAX_SIGNAL_VERTICES = 120000;
+    const MAX_SIGNAL_VERTICES = 24000;
 
     class Renderer {
         constructor(canvas, graph) {
@@ -44,51 +42,36 @@
 
             const table = new THREE.Mesh(
                 new THREE.PlaneGeometry(1800, 1100),
-                new THREE.MeshBasicMaterial({
-                    color: 0x0b0e10,
-                    transparent: false,
-                })
+                new THREE.MeshBasicMaterial({ color: 0x0b0e10 })
             );
             table.rotation.x = -Math.PI / 2;
             table.position.set(800, -1.5, -450);
             this.scene.add(table);
 
-            const grid = new THREE.GridHelper(
-                1800,
-                36,
-                0x2b3032,
-                0x171b1d
-            );
+            const grid = new THREE.GridHelper(1800, 36, 0x2b3032, 0x171b1d);
             grid.position.set(800, -0.9, -450);
             this.scene.add(grid);
 
-            this.signalPositions = new Float32Array(
-                MAX_SIGNAL_VERTICES * 3
-            );
-            this.signalColors = new Float32Array(
-                MAX_SIGNAL_VERTICES * 3
-            );
+            this.signalPositions = new Float32Array(MAX_SIGNAL_VERTICES * 3);
+            this.signalColors = new Float32Array(MAX_SIGNAL_VERTICES * 3);
             this.signalGeometry = new THREE.BufferGeometry();
             this.signalGeometry.setAttribute(
                 'position',
-                new THREE.BufferAttribute(
-                    this.signalPositions,
-                    3
-                ).setUsage(THREE.DynamicDrawUsage)
+                new THREE.BufferAttribute(this.signalPositions, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
             );
             this.signalGeometry.setAttribute(
                 'color',
-                new THREE.BufferAttribute(
-                    this.signalColors,
-                    3
-                ).setUsage(THREE.DynamicDrawUsage)
+                new THREE.BufferAttribute(this.signalColors, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
             );
             this.signalGeometry.setDrawRange(0, 0);
             this.signalMaterial = new THREE.LineBasicMaterial({
                 vertexColors: true,
                 transparent: true,
-                opacity: 0.94,
-                blending: THREE.AdditiveBlending,
+                opacity: 0.96,
                 depthWrite: false,
             });
             this.signals = new THREE.LineSegments(
@@ -108,20 +91,18 @@
             );
             this.nodeGeometry.setAttribute(
                 'position',
-                new THREE.BufferAttribute(
-                    this.nodePositions,
-                    3
-                ).setUsage(THREE.DynamicDrawUsage)
+                new THREE.BufferAttribute(this.nodePositions, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
             );
             this.nodeGeometry.setAttribute(
                 'color',
-                new THREE.BufferAttribute(
-                    this.nodeColors,
-                    3
-                ).setUsage(THREE.DynamicDrawUsage)
+                new THREE.BufferAttribute(this.nodeColors, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
             );
             this.nodeMaterial = new THREE.PointsMaterial({
-                size: 4,
+                size: 10,
                 sizeAttenuation: true,
                 vertexColors: true,
                 transparent: true,
@@ -137,17 +118,28 @@
             this.conductors = null;
             this.buildConductors();
 
-            this.contourGroup = new THREE.Group();
-            this.scene.add(this.contourGroup);
-            this.guidance = new THREE.LineSegments(
+            this.ghost = new THREE.LineSegments(
                 new THREE.BufferGeometry(),
                 new THREE.LineBasicMaterial({
-                    color: 0x5c7f95,
+                    color: 0xb08a5a,
                     transparent: true,
-                    opacity: 0.27,
+                    opacity: 0.55,
                     depthWrite: false,
                 })
             );
+            this.ghost.visible = false;
+            this.scene.add(this.ghost);
+
+            this.guidance = new THREE.Line(
+                new THREE.BufferGeometry(),
+                new THREE.LineBasicMaterial({
+                    color: 0x8eb0c0,
+                    transparent: true,
+                    opacity: 0.85,
+                    depthWrite: false,
+                })
+            );
+            this.guidance.visible = false;
             this.scene.add(this.guidance);
 
             this.scanPlane = new THREE.Mesh(
@@ -162,12 +154,10 @@
             );
             this.scanPlane.position.set(0, 128, -450);
             this.scanPlane.rotation.y = Math.PI / 2;
+            this.scanPlane.visible = false;
             this.scene.add(this.scanPlane);
 
-            this.originSymbol = this.createSymbol(
-                Symbols.ring(13),
-                0xdce5e7
-            );
+            this.originSymbol = this.createSymbol(Symbols.ring(13), 0xdce5e7);
             this.destinationSymbol = this.createSymbol(
                 Symbols.reticle(15),
                 0xf0b35a
@@ -183,13 +173,14 @@
                 this.selectedSymbol
             );
 
+            this.cardGroup = new THREE.Group();
+            this.scene.add(this.cardGroup);
+            this.notes = [];
+            this.notesVisible = false;
+
             this.raycaster = new THREE.Raycaster();
-            this.groundPlane = new THREE.Plane(
-                new THREE.Vector3(0, 1, 0),
-                0
-            );
+            this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
             this.tmpHit = new THREE.Vector3();
-            this.lastContourMode = null;
         }
 
         createSymbol(geometry, color) {
@@ -248,14 +239,13 @@
                 'color',
                 new THREE.Float32BufferAttribute(colors, 3)
             );
-            const material = new THREE.LineBasicMaterial({
-                vertexColors: true,
-                transparent: true,
-                opacity: 0.82,
-            });
             this.conductors = new THREE.LineSegments(
                 geometry,
-                material
+                new THREE.LineBasicMaterial({
+                    vertexColors: true,
+                    transparent: true,
+                    opacity: 0.82,
+                })
             );
             this.conductors.renderOrder = 1;
             this.scene.add(this.conductors);
@@ -263,8 +253,32 @@
 
         setGraph(graph) {
             this.graph = graph;
-            this.lastContourMode = null;
             this.buildConductors();
+        }
+
+        setGhost(edgeIds) {
+            if (this.ghost.geometry) this.ghost.geometry.dispose();
+            if (!edgeIds || !edgeIds.length) {
+                this.ghost.visible = false;
+                this.ghost.geometry = new THREE.BufferGeometry();
+                return;
+            }
+            const positions = [];
+            for (const edgeId of edgeIds) {
+                const edge = this.graph.edges[edgeId];
+                if (!edge) continue;
+                const a = this.graph.nodes[edge.a];
+                const b = this.graph.nodes[edge.b];
+                positions.push(a.x, 4.5, -a.y, b.x, 4.5, -b.y);
+            }
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute(
+                'position',
+                new THREE.Float32BufferAttribute(positions, 3)
+            );
+            geometry.computeLineDistances();
+            this.ghost.geometry = geometry;
+            this.ghost.visible = true;
         }
 
         resetCamera() {
@@ -285,14 +299,26 @@
             this.controls.update();
         }
 
+        isoView() {
+            const distance = 1180;
+            const yaw = Math.PI / 4;
+            const pitch = Math.atan(1 / Math.sqrt(2));
+            this.camera.position.set(
+                this.target.x +
+                    distance * Math.cos(pitch) * Math.sin(yaw),
+                distance * Math.sin(pitch),
+                this.target.z +
+                    distance * Math.cos(pitch) * Math.cos(yaw)
+            );
+            this.controls.target.copy(this.target);
+            this.controls.update();
+        }
+
         resize(width, height) {
             const budget = 5200000;
             const ratio = Math.sqrt(budget / Math.max(1, width * height));
             this.renderer.setPixelRatio(
-                Math.max(
-                    1,
-                    Math.min(window.devicePixelRatio || 1, 2, ratio)
-                )
+                Math.max(1, Math.min(window.devicePixelRatio || 1, 2, ratio))
             );
             this.renderer.setSize(width, height, false);
             this.camera.aspect = width / Math.max(1, height);
@@ -310,173 +336,52 @@
             return index + 1;
         }
 
-        signalColor(edgeState, snapshot, currentIndex, timeline) {
-            if (edgeState.route && snapshot.routeFound) {
-                const locked = Analytics.carrierLocked(
-                    timeline.result.edgeIds.indexOf(edgeState.edgeId),
-                    timeline.result.edgeIds.length,
-                    snapshot.carrierLock
-                )
-                    ? 1
-                    : 0;
-                return [
-                    0.74 + locked * 0.18,
-                    0.8 + locked * 0.16,
-                    0.82 + locked * 0.16,
-                ];
-            }
-            if (edgeState.settledAt !== null) {
-                return [0.55, 0.62, 0.64];
-            }
-            if (
-                edgeState.discoveredAt !== null &&
-                edgeState.discoveredAt < currentIndex
-            ) {
-                return [0.95, 0.52, 0.12];
-            }
-            return [0.16, 0.2, 0.21];
-        }
-
-        signalHot(edgeState, snapshot) {
-            if (edgeState.settledAt === null) return true;
-            return (
-                edgeState.route &&
-                snapshot.routeFound &&
-                snapshot.carrierLock < 1
-            );
-        }
-
-        signalFrequency(edge, hot) {
-            return hot
-                ? 1.8 + Math.min(2.4, edge.effectiveCost / 24)
-                : 1.15 + Math.min(1.35, edge.effectiveCost / 36);
-        }
-
-        signalSubdivisions(edge, hot) {
-            const frequency = this.signalFrequency(edge, hot);
-            const samplesPerCycle = hot ? 20 : 12;
-            const minimum = hot ? 40 : 24;
-            return Math.max(
-                minimum,
-                Math.round(frequency * samplesPerCycle)
-            );
-        }
-
-        allocateSubdivisions(active, snapshot) {
-            const groups = [
-                active.filter(edgeState =>
-                    this.signalHot(edgeState, snapshot)
-                ),
-                active.filter(
-                    edgeState => !this.signalHot(edgeState, snapshot)
-                ),
-            ];
-            const floors = [32, 20];
-            const subdivisions = new Map();
-            let remaining = MAX_SIGNAL_VERTICES;
-            groups.forEach((group, groupIndex) => {
-                if (!group.length || remaining < floors[groupIndex] * 2) {
-                    return;
-                }
-                let need = 0;
-                const desired = group.map(edgeState => {
-                    const count = this.signalSubdivisions(
-                        this.graph.edges[edgeState.edgeId],
-                        groupIndex === 0
-                    );
-                    need += count * 2;
-                    return count;
-                });
-                const scale = need > remaining ? remaining / need : 1;
-                group.forEach((edgeState, index) => {
-                    const count = Math.max(
-                        floors[groupIndex],
-                        Math.round(desired[index] * scale)
-                    );
-                    subdivisions.set(edgeState.edgeId, count);
-                    remaining -= count * 2;
-                });
-            });
-            return subdivisions;
-        }
-
-        buildSignals(snapshot, timeline, time) {
-            const active = [];
+        buildSignals(snapshot, time) {
+            let cursor = 0;
             for (const edgeState of snapshot.edges) {
                 if (edgeState.discoveredAt === null) continue;
-                active.push(edgeState);
-            }
-            const subdivisionsByEdge = this.allocateSubdivisions(
-                active,
-                snapshot
-            );
-
-            let cursor = 0;
-            for (const edgeState of active) {
                 const edge = this.graph.edges[edgeState.edgeId];
                 const a = this.graph.nodes[edge.a];
                 const b = this.graph.nodes[edge.b];
-                const hot = this.signalHot(edgeState, snapshot);
-                const color = this.signalColor(
-                    edgeState,
-                    snapshot,
-                    snapshot.eventIndex,
-                    timeline
-                );
-                const fHeight =
-                    timeline.normalize(edgeState.f, 'f') * 190;
-                const settledFactor =
-                    edgeState.settledAt !== null ? 0.42 : 1;
-                const locked =
-                    edgeState.route &&
-                    snapshot.routeFound &&
-                    Analytics.carrierLocked(
-                        timeline.result.edgeIds.indexOf(edgeState.edgeId),
-                        timeline.result.edgeIds.length,
-                        snapshot.carrierLock
-                    );
-                const routeFactor = locked ? 0.12 : 1;
-                const height =
-                    4 + fHeight * settledFactor * routeFactor;
-                const frequency = this.signalFrequency(edge, hot);
-                const amplitude = locked
-                    ? 0.7
-                    : edgeState.route && snapshot.routeFound
-                      ? 2.1
-                      : hot
-                        ? 3.4 + edgeState.amplitude * 2.2
-                        : 1.7;
-                const subdivisions =
-                    subdivisionsByEdge.get(edgeState.edgeId) || 16;
+                const highlighted =
+                    edgeState.route && snapshot.routeFound;
+                const frontier =
+                    !highlighted && edgeState.settledAt === null;
+                const color = highlighted
+                    ? [0.9, 0.94, 0.95]
+                    : frontier
+                      ? [0.94, 0.61, 0.21]
+                      : [0.62, 0.68, 0.7];
+                const pulse = frontier
+                    ? 0.55 + 0.45 * Math.sin(time * 0.008)
+                    : 1;
+                const lit = [
+                    color[0] * pulse,
+                    color[1] * pulse,
+                    color[2] * pulse,
+                ];
+                const height = highlighted ? 2.8 : frontier ? 4.2 : 1.8;
+                const samples = 10;
                 const dx = b.x - a.x;
-                const dz = -(b.y - a.y);
-                const length = Math.max(0.001, Math.hypot(dx, dz));
-                const nx = -dz / length;
-                const nz = dx / length;
-                let previous = null;
-                for (let sample = 0; sample <= subdivisions; sample++) {
-                    const t = sample / subdivisions;
-                    const x = a.x + (b.x - a.x) * t;
-                    const z = -(a.y + (b.y - a.y) * t);
-                    const phase =
-                        time * 0.004 -
-                        t * frequency * Math.PI * 2 +
-                        edgeState.phase * 0.19;
-                    const wave = Math.sin(phase) * amplitude;
-                    const point = {
-                        x: x + nx * wave,
-                        y: height + wave * 0.22,
-                        z: z + nz * wave,
-                    };
-                    if (previous) {
-                        cursor = this.writeSignal(
-                            cursor,
-                            previous,
-                            color
-                        );
-                        cursor = this.writeSignal(cursor, point, color);
+                const dy = b.y - a.y;
+                const length = Math.max(0.001, Math.hypot(dx, dy));
+                const ox = (-dy / length) * (frontier ? 2.4 : 1.4);
+                const oz = (dx / length) * (frontier ? 2.4 : 1.4);
+                for (const offset of [0, 1, -1]) {
+                    let previous = null;
+                    for (let sample = 0; sample <= samples; sample++) {
+                        const t = sample / samples;
+                        const point = {
+                            x: a.x + dx * t + ox * offset,
+                            y: height,
+                            z: -(a.y + dy * t) + oz * offset,
+                        };
+                        if (previous) {
+                            cursor = this.writeSignal(cursor, previous, lit);
+                            cursor = this.writeSignal(cursor, point, lit);
+                        }
+                        previous = point;
                     }
-                    previous = point;
                 }
             }
             this.signalGeometry.setDrawRange(0, cursor);
@@ -484,21 +389,20 @@
             this.signalGeometry.attributes.color.needsUpdate = true;
         }
 
-        updateNodes(snapshot, timeline) {
+        updateNodes(snapshot) {
             let index = 0;
             for (const node of Object.values(this.graph.nodes)) {
                 const state = snapshot.nodes[node.id];
                 this.nodePositions[index * 3] = node.x;
-                this.nodePositions[index * 3 + 1] =
-                    state.f === null
-                        ? 0.8
-                        : 2 + timeline.normalize(state.f, 'f') * 190;
+                this.nodePositions[index * 3 + 1] = 1.4;
                 this.nodePositions[index * 3 + 2] = -node.y;
                 const color =
-                    state.queueState === 'settled'
-                        ? [0.78, 0.84, 0.85]
-                        : state.queueState === 'frontier'
-                          ? [1, 0.55, 0.12]
+                    state.queueState === 'frontier'
+                        ? [1, 0.55, 0.12]
+                        : state.queueState === 'settled'
+                          ? snapshot.routeFound
+                            ? [0.88, 0.92, 0.93]
+                            : [0.7, 0.76, 0.77]
                           : [0.13, 0.16, 0.17];
                 this.nodeColors[index * 3] = color[0];
                 this.nodeColors[index * 3 + 1] = color[1];
@@ -509,120 +413,140 @@
             this.nodeGeometry.attributes.color.needsUpdate = true;
         }
 
-        rebuildContours(mode, snapshot, timeline) {
-            const key = `${mode}:${Math.floor(snapshot.eventIndex / 12)}:${snapshot.settledCount}`;
-            if (key === this.lastContourMode) return;
-            this.lastContourMode = key;
-            while (this.contourGroup.children.length) {
-                const child = this.contourGroup.children.pop();
-                child.geometry.dispose();
-                child.material.dispose();
-            }
-            if (mode === 'off') return;
-            const max =
-                mode === 'g'
-                    ? timeline.maxG
-                    : mode === 'h'
-                      ? timeline.maxH
-                      : timeline.maxF;
-            for (let band = 1; band <= 7; band++) {
-                const threshold = (band / 7) * max;
-                const positions = [];
-                for (const edge of this.graph.edges) {
-                    const a = this.graph.nodes[edge.a];
-                    const b = this.graph.nodes[edge.b];
-                    const crossing = Analytics.isolineCrossing(
-                        a.x,
-                        a.y,
-                        snapshot.nodes[edge.a][mode],
-                        b.x,
-                        b.y,
-                        snapshot.nodes[edge.b][mode],
-                        threshold
-                    );
-                    if (!crossing) continue;
-                    const dx = b.x - a.x;
-                    const dz = -(b.y - a.y);
-                    const length = Math.max(0.001, Math.hypot(dx, dz));
-                    const nx = -dz / length;
-                    const nz = dx / length;
-                    const half = 5.5;
-                    const x = crossing.x;
-                    const z = -crossing.y;
-                    positions.push(
-                        x - nx * half,
-                        1,
-                        z - nz * half,
-                        x + nx * half,
-                        1,
-                        z + nz * half
-                    );
-                }
-                if (!positions.length) continue;
-                const geometry = new THREE.BufferGeometry();
-                geometry.setAttribute(
-                    'position',
-                    new THREE.Float32BufferAttribute(positions, 3)
-                );
-                const line = new THREE.LineSegments(
-                    geometry,
-                    new THREE.LineBasicMaterial({
-                        color:
-                            mode === 'h'
-                                ? 0x58748a
-                                : 0x4d5659,
-                        transparent: true,
-                        opacity: 0.32,
-                    })
-                );
-                this.contourGroup.add(line);
-            }
-        }
-
         updateGuidance(snapshot, destinationId, algorithm) {
-            if (algorithm !== 'astar') {
-                this.guidance.geometry.setDrawRange(0, 0);
+            if (algorithm !== 'astar' || !snapshot.frontierNodeId) {
+                this.guidance.visible = false;
                 return;
             }
+            const origin = this.graph.nodes[snapshot.frontierNodeId];
             const destination = this.graph.nodes[destinationId];
-            const positions = [];
-            let count = 0;
-            for (const node of Object.values(this.graph.nodes)) {
-                const state = snapshot.nodes[node.id];
-                if (state.queueState !== 'frontier') continue;
-                if (count++ > 80) break;
-                positions.push(
-                    node.x,
-                    3,
-                    -node.y,
-                    destination.x,
-                    3,
-                    -destination.y
-                );
+            if (!origin || !destination) {
+                this.guidance.visible = false;
+                return;
             }
+            const positions = [
+                origin.x,
+                3,
+                -origin.y,
+                destination.x,
+                3,
+                -destination.y,
+            ];
             this.guidance.geometry.dispose();
             this.guidance.geometry = new THREE.BufferGeometry();
             this.guidance.geometry.setAttribute(
                 'position',
                 new THREE.Float32BufferAttribute(positions, 3)
             );
+            this.guidance.visible = true;
+        }
+
+        makeCardTexture(title, body) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 192;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgba(10, 13, 14, 0.92)';
+            ctx.strokeStyle = 'rgba(217, 225, 226, 0.28)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.rect(6, 6, 500, 180);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#ef9b35';
+            ctx.font = '28px monospace';
+            ctx.fillText(title, 28, 58);
+            ctx.fillStyle = 'rgba(217, 225, 226, 0.78)';
+            ctx.font = '22px monospace';
+            const words = String(body).split(' ');
+            let line = '';
+            let y = 104;
+            for (const word of words) {
+                const next = line ? `${line} ${word}` : word;
+                if (ctx.measureText(next).width > 450) {
+                    ctx.fillText(line, 28, y);
+                    line = word;
+                    y += 32;
+                } else {
+                    line = next;
+                }
+            }
+            if (line) ctx.fillText(line, 28, y);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        setNotes(notes) {
+            while (this.cardGroup.children.length) {
+                const child = this.cardGroup.children[0];
+                this.cardGroup.remove(child);
+                if (child.material) {
+                    if (child.material.map) child.material.map.dispose();
+                    child.material.dispose();
+                }
+                if (child.geometry) child.geometry.dispose();
+            }
+            this.notes = notes || [];
+            this.notes.forEach((note, index) => {
+                const lift = 96;
+                const slot = index - (this.notes.length - 1) / 2;
+                const cardX = note.x + (800 - note.x) * 0.18 + slot * 110;
+                const cardZ = -note.y + (-450 + note.y) * 0.18;
+                const texture = this.makeCardTexture(note.title, note.body);
+                const sprite = new THREE.Sprite(
+                    new THREE.SpriteMaterial({
+                        map: texture,
+                        transparent: true,
+                        depthTest: false,
+                        sizeAttenuation: true,
+                    })
+                );
+                sprite.scale.set(360, 135, 1);
+                sprite.position.set(cardX, lift, cardZ);
+                sprite.renderOrder = 20;
+                sprite.userData.anchor = {
+                    x: note.x,
+                    y: 1.6,
+                    z: -note.y,
+                };
+                this.cardGroup.add(sprite);
+
+                const leader = new THREE.Line(
+                    new THREE.BufferGeometry().setFromPoints([
+                        new THREE.Vector3(note.x, 1.6, -note.y),
+                        new THREE.Vector3(cardX, lift - 4, cardZ),
+                    ]),
+                    new THREE.LineBasicMaterial({
+                        color: 0xd5e0e2,
+                        transparent: true,
+                        opacity: 0.72,
+                        depthWrite: false,
+                    })
+                );
+                leader.renderOrder = 19;
+                this.cardGroup.add(leader);
+            });
+            this.cardGroup.visible = this.notesVisible;
+        }
+
+        setNotesVisible(visible) {
+            this.notesVisible = visible;
+            this.cardGroup.visible = visible && this.notes.length > 0;
         }
 
         render(options) {
             const {
                 snapshot,
-                timeline,
                 time,
                 algorithm,
-                contourMode,
                 scanVisible,
                 selectedEdgeId,
                 originId,
                 destinationId,
             } = options;
-            this.buildSignals(snapshot, timeline, time);
-            this.updateNodes(snapshot, timeline);
-            this.rebuildContours(contourMode, snapshot, timeline);
+            this.buildSignals(snapshot, time);
+            this.updateNodes(snapshot);
             this.updateGuidance(snapshot, destinationId, algorithm);
 
             const origin = this.graph.nodes[originId];
@@ -633,11 +557,7 @@
                 1.5,
                 -destination.y
             );
-            this.scanPlane.visible = scanVisible;
-            this.scanPlane.position.x =
-                (snapshot.eventIndex /
-                    Math.max(1, timeline.events.length)) *
-                1600;
+            this.scanPlane.visible = Boolean(scanVisible);
 
             if (selectedEdgeId !== null) {
                 const edge = this.graph.edges[selectedEdgeId];
@@ -684,8 +604,7 @@
                     0,
                     Math.min(
                         1,
-                        ((point.x - a.x) * dx +
-                            (point.y - a.y) * dy) /
+                        ((point.x - a.x) * dx + (point.y - a.y) * dy) /
                             lengthSquared
                     )
                 );
@@ -701,12 +620,17 @@
         }
 
         dispose() {
+            this.setNotes([]);
             this.signalGeometry.dispose();
             this.signalMaterial.dispose();
             this.nodeGeometry.dispose();
             this.nodeMaterial.dispose();
             this.conductors.geometry.dispose();
             this.conductors.material.dispose();
+            this.ghost.geometry.dispose();
+            this.ghost.material.dispose();
+            this.guidance.geometry.dispose();
+            this.guidance.material.dispose();
             this.controls.dispose();
             this.renderer.dispose();
         }

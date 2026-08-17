@@ -118,64 +118,54 @@
     <canvas id="scene" aria-label="3D tactical signal-field pathfinding analysis"></canvas>
     <a id="back" href="index.html">&larr; portfolio</a>
     <header class="title panel">
-        <div class="eyebrow">routing analysis // signal doctrine</div>
+        <div class="eyebrow">routing analysis</div>
         <h1>tactical interferometry</h1>
-        <div class="subtitle">graph search reconstructed as a phased transmission field</div>
+        <div class="subtitle">path planning on a searchable network</div>
     </header>
     <aside class="telemetry panel">
-        <div class="row"><span>state</span><span id="state">transmitting</span></div>
-        <div class="row"><span>algorithm</span><span id="algorithm-stat">a* phased</span></div>
+        <div class="row"><span>state</span><span id="state">searching</span></div>
+        <div class="row"><span>algorithm</span><span id="algorithm-stat">a*</span></div>
         <div class="row"><span>event</span><span id="event-index">0/0</span></div>
-        <div class="row"><span>event type</span><span id="event-type">ready</span></div>
-        <div class="row"><span>frontier</span><span id="frontier">0</span></div>
-        <div class="row"><span>settled</span><span id="settled">0</span></div>
-        <div class="row"><span>conflicts</span><span id="conflicts">0</span></div>
-        <div class="row"><span>route cost</span><span id="route-cost">--</span></div>
-        <div class="row"><span>carrier lock</span><span id="carrier-lock">0%</span></div>
+        <div class="row"><span>path cost</span><span id="route-cost">--</span></div>
         <div class="row"><span>selected</span><span id="selected-readout">--</span></div>
     </aside>
     <aside id="specimen" class="specimen panel">
-        <div class="specimen-empty">select a conductor</div>
+        <div class="specimen-empty">select an edge</div>
     </aside>
     <div class="legend">
-        <div><span style="background:#ef9b35"></span>active frontier</div>
-        <div><span style="background:#a4b1b4"></span>settled conductor</div>
-        <div><span style="background:#7999aa"></span>heuristic projection</div>
-        <div><span style="background:#c55339"></span>intervention</div>
-        <div><span style="background:#e7f1f3"></span>locked carrier</div>
+        <div><span style="background:#ef9b35"></span>frontier</div>
+        <div><span style="background:#a4b1b4"></span>settled path</div>
+        <div><span style="background:#7999aa"></span>heuristic</div>
+        <div><span style="background:#c55339"></span>closed / avoid</div>
+        <div><span style="background:#e7f1f3"></span>highlighted path</div>
     </div>
     <section class="modes panel">
-        <button id="astar" class="active">a* phased</button>
-        <button id="dijkstra">dijkstra uniform</button>
-        <button id="run">retransmit</button>
+        <button id="astar" class="active">a*</button>
+        <button id="dijkstra">dijkstra</button>
+        <button id="run">search</button>
         <button id="random">new terminals</button>
         <button id="endpoints">set terminals</button>
-        <button id="scan" class="active">scan plane</button>
-        <select id="contour" aria-label="Cost contour channel">
-            <option value="off">contours off</option>
-            <option value="g">contours g</option>
-            <option value="h">contours h</option>
-            <option value="f" selected>contours f</option>
-        </select>
+        <button id="scan">scan plane</button>
         <button id="inspect" class="active">inspect</button>
         <button id="cut" class="danger">cut</button>
-        <button id="resist" class="danger">resist</button>
-        <button id="amplify">amplify</button>
+        <button id="resist" class="danger">avoid</button>
+        <button id="amplify">prefer</button>
         <button id="clear">clear edge</button>
         <button id="reset-view">reset view</button>
         <button id="top-view">top view</button>
-        <button id="side-view">cost side</button>
+        <button id="iso-view">isometric</button>
+        <button id="side-view">side view</button>
     </section>
     <section class="timeline-panel panel">
         <div class="timeline-top">
             <button id="step-back">&larr; event</button>
             <button id="play">pause</button>
             <button id="step-forward">event &rarr;</button>
-            <button id="acquisition">jump acquisition</button>
+            <button id="acquisition">jump path</button>
             <span class="spacer"></span>
             <span class="timeline-label">event scan</span>
             <label class="speed">rate
-                <input id="speed" type="range" min="8" max="240" value="75">
+                <input id="speed" type="range" min="2" max="40" value="8">
             </label>
         </div>
         <input id="timeline" type="range" min="0" max="1" value="0" aria-label="Search event timeline">
