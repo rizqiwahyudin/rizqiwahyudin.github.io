@@ -78,11 +78,11 @@ const projects = [
     {
         type: "sim",
         title: "tactical interferometry",
-        subtitle: "signal-field pathfinding analysis",
+        subtitle: "path planning on real streets",
         desc: "",
         classification: "webgl // analytical routing",
         sim: "pathfinding-tactical.html",
-        tags: ["three.js", "a*", "signals", "analysis"]
+        tags: ["three.js", "a*", "osm", "gps"]
     },
     {
         type: "sim",

@@ -11,7 +11,7 @@
 ) {
     'use strict';
 
-    const MAX_SIGNAL_VERTICES = 24000;
+    const MAX_SIGNAL_VERTICES = 48000;
 
     class Renderer {
         constructor(canvas, graph) {
@@ -28,8 +28,8 @@
             this.renderer.outputEncoding = THREE.sRGBEncoding;
 
             this.camera = new THREE.PerspectiveCamera(47, 1, 1, 5000);
-            this.initialPosition = new THREE.Vector3(1120, 720, 520);
             this.target = new THREE.Vector3(800, 0, -450);
+            this.initialPosition = new THREE.Vector3(1120, 720, 520);
             this.camera.position.copy(this.initialPosition);
             this.controls = new THREE.OrbitControls(this.camera, canvas);
             this.controls.target.copy(this.target);
@@ -40,17 +40,16 @@
             this.controls.maxPolarAngle = Math.PI * 0.49;
             this.controls.update();
 
-            const table = new THREE.Mesh(
-                new THREE.PlaneGeometry(1800, 1100),
-                new THREE.MeshBasicMaterial({ color: 0x0b0e10 })
-            );
-            table.rotation.x = -Math.PI / 2;
-            table.position.set(800, -1.5, -450);
-            this.scene.add(table);
-
-            const grid = new THREE.GridHelper(1800, 36, 0x2b3032, 0x171b1d);
-            grid.position.set(800, -0.9, -450);
-            this.scene.add(grid);
+            this.table = null;
+            this.grid = null;
+            this.world = {
+                cx: 800,
+                cy: 450,
+                width: 1800,
+                height: 1100,
+                span: 1800,
+            };
+            this.loadedSignature = '';
 
             this.signalPositions = new Float32Array(MAX_SIGNAL_VERTICES * 3);
             this.signalColors = new Float32Array(MAX_SIGNAL_VERTICES * 3);
@@ -83,26 +82,10 @@
             this.scene.add(this.signals);
 
             this.nodeGeometry = new THREE.BufferGeometry();
-            this.nodePositions = new Float32Array(
-                Object.keys(graph.nodes).length * 3
-            );
-            this.nodeColors = new Float32Array(
-                Object.keys(graph.nodes).length * 3
-            );
-            this.nodeGeometry.setAttribute(
-                'position',
-                new THREE.BufferAttribute(this.nodePositions, 3).setUsage(
-                    THREE.DynamicDrawUsage
-                )
-            );
-            this.nodeGeometry.setAttribute(
-                'color',
-                new THREE.BufferAttribute(this.nodeColors, 3).setUsage(
-                    THREE.DynamicDrawUsage
-                )
-            );
+            this.nodePositions = new Float32Array(0);
+            this.nodeColors = new Float32Array(0);
             this.nodeMaterial = new THREE.PointsMaterial({
-                size: 10,
+                size: 8,
                 sizeAttenuation: true,
                 vertexColors: true,
                 transparent: true,
@@ -116,7 +99,7 @@
             this.scene.add(this.nodes);
 
             this.conductors = null;
-            this.buildConductors();
+            this.applyGraph(graph, true);
 
             this.ghost = new THREE.LineSegments(
                 new THREE.BufferGeometry(),
@@ -152,7 +135,7 @@
                     depthWrite: false,
                 })
             );
-            this.scanPlane.position.set(0, 128, -450);
+            this.scanPlane.position.set(this.world.cx, 128, -this.world.cy);
             this.scanPlane.rotation.y = Math.PI / 2;
             this.scanPlane.visible = false;
             this.scene.add(this.scanPlane);
@@ -194,6 +177,148 @@
             );
             line.frustumCulled = false;
             return line;
+        }
+
+        describeGraph(graph) {
+            return [
+                graph.source || graph.seed || 'synthetic',
+                graph.lat || '',
+                graph.lon || '',
+                Object.keys(graph.nodes).length,
+                graph.edges.length,
+            ].join('|');
+        }
+
+        computeBounds(graph) {
+            let minX = Infinity;
+            let maxX = -Infinity;
+            let minY = Infinity;
+            let maxY = -Infinity;
+            for (const node of Object.values(graph.nodes)) {
+                minX = Math.min(minX, node.x);
+                maxX = Math.max(maxX, node.x);
+                minY = Math.min(minY, node.y);
+                maxY = Math.max(maxY, node.y);
+            }
+            if (!Number.isFinite(minX)) {
+                minX = 0;
+                maxX = 1600;
+                minY = 0;
+                maxY = 900;
+            }
+            const pad = 90;
+            const width = Math.max(400, maxX - minX + pad * 2);
+            const height = Math.max(300, maxY - minY + pad * 2);
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            return {
+                minX: minX - pad,
+                maxX: maxX + pad,
+                minY: minY - pad,
+                maxY: maxY + pad,
+                cx,
+                cy,
+                width,
+                height,
+                span: Math.max(width, height),
+            };
+        }
+
+        disposeObject(object) {
+            if (!object) return;
+            this.scene.remove(object);
+            if (object.geometry) object.geometry.dispose();
+            if (Array.isArray(object.material)) {
+                object.material.forEach(material => material.dispose());
+            } else if (object.material) {
+                object.material.dispose();
+            }
+        }
+
+        applyBounds(resetCamera) {
+            const bounds = this.computeBounds(this.graph);
+            this.world = bounds;
+            this.target.set(bounds.cx, 0, -bounds.cy);
+            this.controls.target.copy(this.target);
+            this.controls.minDistance = Math.max(80, bounds.span * 0.12);
+            this.controls.maxDistance = Math.max(2500, bounds.span * 3.4);
+            this.camera.near = Math.max(1, bounds.span * 0.002);
+            this.camera.far = Math.max(5000, bounds.span * 6);
+            this.camera.updateProjectionMatrix();
+
+            this.disposeObject(this.table);
+            this.table = new THREE.Mesh(
+                new THREE.PlaneGeometry(bounds.width, bounds.height),
+                new THREE.MeshBasicMaterial({ color: 0x0b0e10 })
+            );
+            this.table.rotation.x = -Math.PI / 2;
+            this.table.position.set(bounds.cx, -1.5, -bounds.cy);
+            this.scene.add(this.table);
+
+            this.disposeObject(this.grid);
+            this.grid = new THREE.GridHelper(
+                bounds.span,
+                36,
+                0x2b3032,
+                0x171b1d
+            );
+            this.grid.position.set(bounds.cx, -0.9, -bounds.cy);
+            this.scene.add(this.grid);
+
+            if (this.scanPlane) {
+                this.scanPlane.position.set(bounds.cx, 128, -bounds.cy);
+                this.scanPlane.scale.set(
+                    Math.max(0.4, bounds.height / 900),
+                    Math.max(0.4, bounds.span / 1600),
+                    1
+                );
+            }
+
+            const distance = Math.max(720, bounds.span * 0.78);
+            const yaw = Math.PI / 4;
+            const pitch = Math.atan(1 / Math.sqrt(2));
+            this.initialPosition.set(
+                bounds.cx + distance * Math.cos(pitch) * Math.sin(yaw),
+                distance * Math.sin(pitch),
+                -bounds.cy + distance * Math.cos(pitch) * Math.cos(yaw)
+            );
+            if (resetCamera) this.isoView();
+        }
+
+        rebuildNodes() {
+            this.nodeGeometry.dispose();
+            const count = Object.keys(this.graph.nodes).length;
+            this.nodePositions = new Float32Array(count * 3);
+            this.nodeColors = new Float32Array(count * 3);
+            this.nodeGeometry = new THREE.BufferGeometry();
+            this.nodeGeometry.setAttribute(
+                'position',
+                new THREE.BufferAttribute(this.nodePositions, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
+            );
+            this.nodeGeometry.setAttribute(
+                'color',
+                new THREE.BufferAttribute(this.nodeColors, 3).setUsage(
+                    THREE.DynamicDrawUsage
+                )
+            );
+            this.nodes.geometry = this.nodeGeometry;
+            const span = this.world ? this.world.span : 1600;
+            this.nodeMaterial.size = Math.max(
+                5,
+                Math.min(11, span * 0.006)
+            );
+        }
+
+        applyGraph(graph, resetCamera) {
+            this.graph = graph;
+            const signature = this.describeGraph(graph);
+            const boundsChanged = signature !== this.loadedSignature;
+            this.loadedSignature = signature;
+            this.rebuildNodes();
+            this.buildConductors();
+            if (resetCamera || boundsChanged) this.applyBounds(true);
         }
 
         buildConductors() {
@@ -252,8 +377,7 @@
         }
 
         setGraph(graph) {
-            this.graph = graph;
-            this.buildConductors();
+            this.applyGraph(graph, false);
         }
 
         setGhost(edgeIds) {
@@ -288,28 +412,29 @@
         }
 
         topView() {
-            this.camera.position.set(800, 1450, -449);
+            const span = this.world.span;
+            this.camera.position.set(
+                this.world.cx,
+                Math.max(900, span * 1.05),
+                -this.world.cy + 0.01
+            );
             this.controls.target.copy(this.target);
             this.controls.update();
         }
 
         sideView() {
-            this.camera.position.set(800, 240, 900);
+            const span = this.world.span;
+            this.camera.position.set(
+                this.world.cx,
+                Math.max(160, span * 0.16),
+                -this.world.cy + Math.max(420, span * 0.62)
+            );
             this.controls.target.copy(this.target);
             this.controls.update();
         }
 
         isoView() {
-            const distance = 1180;
-            const yaw = Math.PI / 4;
-            const pitch = Math.atan(1 / Math.sqrt(2));
-            this.camera.position.set(
-                this.target.x +
-                    distance * Math.cos(pitch) * Math.sin(yaw),
-                distance * Math.sin(pitch),
-                this.target.z +
-                    distance * Math.cos(pitch) * Math.cos(yaw)
-            );
+            this.camera.position.copy(this.initialPosition);
             this.controls.target.copy(this.target);
             this.controls.update();
         }
@@ -491,8 +616,10 @@
             this.notes.forEach((note, index) => {
                 const lift = 96;
                 const slot = index - (this.notes.length - 1) / 2;
-                const cardX = note.x + (800 - note.x) * 0.18 + slot * 110;
-                const cardZ = -note.y + (-450 + note.y) * 0.18;
+                const cx = this.world.cx;
+                const cy = this.world.cy;
+                const cardX = note.x + (cx - note.x) * 0.18 + slot * 110;
+                const cardZ = -note.y + (-cy + note.y) * 0.18;
                 const texture = this.makeCardTexture(note.title, note.body);
                 const sprite = new THREE.Sprite(
                     new THREE.SpriteMaterial({
@@ -625,6 +752,8 @@
             this.signalMaterial.dispose();
             this.nodeGeometry.dispose();
             this.nodeMaterial.dispose();
+            this.disposeObject(this.table);
+            this.disposeObject(this.grid);
             this.conductors.geometry.dispose();
             this.conductors.material.dispose();
             this.ghost.geometry.dispose();
