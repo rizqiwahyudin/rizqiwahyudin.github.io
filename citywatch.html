@@ -465,7 +465,7 @@
         /* ── Transit search panel ── */
 
 
-        /* ── Transit sidebar (SL real-time) ── */
+        /* ── Transit sidebar (SL / Ruter) ── */
         #transit-sidebar {
             display: none;
             position: fixed;
@@ -545,7 +545,7 @@
     <button id="surveillance-btn">surveillance // off</button>
     <button id="regen-btn" title="regenerate city">regen</button>
 
-    <!-- Transit info sidebar (SL real-time) -->
+    <!-- Transit info sidebar -->
     <div id="transit-sidebar">
         <button id="transit-sidebar-close" style="position:absolute;top:6px;right:6px;background:none;border:1px solid rgba(221,213,192,0.25);color:rgba(221,213,192,0.5);font-family:'DotGothic16',monospace;font-size:12px;cursor:pointer;padding:1px 5px;line-height:1;">×</button>
         <div id="transit-sidebar-line"></div>
@@ -584,6 +584,7 @@
     // Cloudflare Worker proxy -- caches Overpass responses at the edge
     // After first request per tile, subsequent loads are served from CF cache (~50ms)
     const CF_WORKER = 'https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev';
+    const OSLO_TRANSIT_WORKER = 'https://citywatch-oslo-transit.rizqi-wahyudin.workers.dev';
     // Direct Overpass mirrors as fallback if Worker is down
     const OVERPASS_MIRRORS = [
         'https://overpass-api.de/api/interpreter',
@@ -2419,8 +2420,75 @@
     let _transitBatchMat = null;
     let _transitSlotMap = new Map();        // tripId -> {slot, targetDelay, currentDelay, color, line}
     let _transitMetroLines = [];            // THREE.Line objects for route shapes
-    const TRANSIT_MAX_SLOTS = 300;
+    const TRANSIT_MAX_SLOTS = 500;
     const TRANSIT_LINE_COLORS = { blue: [0.2, 0.4, 1.0], red: [1.0, 0.2, 0.2], green: [0.2, 0.85, 0.3] };
+    const TRANSIT_MODE_COLORS = {
+        metro: [0.93, 0.44, 0.05],
+        tram:  [0.05, 0.49, 0.40],
+        bus:   [0.90, 0.00, 0.00],
+        ferry: [0.00, 0.47, 0.78],
+    };
+    let _transitFreeSlots = [];
+    let _transitCity = null;
+
+    function transitRegion(lat, lon) {
+        if (lat == null || lon == null) return null;
+        if (lat >= 59.70 && lat <= 60.20 && lon >= 10.30 && lon <= 11.30) return 'oslo';
+        if (lat >= 59.15 && lat <= 59.55 && lon >= 17.70 && lon <= 18.30) return 'stockholm';
+        return null;
+    }
+
+    function transitBaseUrl(city) {
+        if (city === 'oslo') return OSLO_TRANSIT_WORKER;
+        return VPS_URL;
+    }
+
+    function transitScheduleUrl(city) {
+        if (city === 'oslo') return `${OSLO_TRANSIT_WORKER}/gtfs-rt/oslo-schedule.json`;
+        return `${VPS_URL}/gtfs-rt/metro-schedule.json`;
+    }
+
+    function transitLiveUrl(city) {
+        if (city === 'oslo') return `${OSLO_TRANSIT_WORKER}/gtfs-rt/oslo-live.json?t=${Date.now()}`;
+        return `${VPS_URL}/gtfs-rt/metro-live.json?t=${Date.now()}`;
+    }
+
+    function transitColorRgb(c, mode) {
+        if (c && TRANSIT_LINE_COLORS[c]) return TRANSIT_LINE_COLORS[c];
+        if (typeof c === 'string' && /^[0-9A-Fa-f]{6}$/.test(c)) {
+            return [
+                parseInt(c.slice(0, 2), 16) / 255,
+                parseInt(c.slice(2, 4), 16) / 255,
+                parseInt(c.slice(4, 6), 16) / 255,
+            ];
+        }
+        if (mode && TRANSIT_MODE_COLORS[mode]) return TRANSIT_MODE_COLORS[mode];
+        return [0.9, 0.65, 0.1];
+    }
+
+    function transitSecSinceMidnight() {
+        const nowUtcSec = (Date.now() / 1000) - _transitServerTimeOffset;
+        const tz = (_transitSchedule && _transitSchedule.tz) || (_transitCity === 'oslo' ? 'Europe/Oslo' : 'Europe/Stockholm');
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: tz,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hourCycle: 'h23',
+        }).formatToParts(new Date(nowUtcSec * 1000));
+        const pick = (type) => parseInt(parts.find((p) => p.type === type).value, 10);
+        return pick('hour') * 3600 + pick('minute') * 60 + pick('second');
+    }
+
+    function allocTransitSlot() {
+        if (_transitFreeSlots.length) return _transitFreeSlots.pop();
+        const used = new Set();
+        for (const e of _transitSlotMap.values()) used.add(e.slot);
+        for (let i = 0; i < TRANSIT_MAX_SLOTS; i++) {
+            if (!used.has(i)) return i;
+        }
+        return -1;
+    }
 
     const surveillanceBtn  = document.getElementById('surveillance-btn');
     const layerPanel       = document.getElementById('layer-panel');
@@ -2701,7 +2769,13 @@
         if (layerTransit) {
             if (!_transitSchedule) {
                 const ok = await fetchTransitSchedule();
-                if (!ok) { cbTransit.checked = false; layerTransit = false; return; }
+                if (!ok) {
+                    cbTransit.checked = false;
+                    layerTransit = false;
+                    const city = transitRegion(smoothLat, smoothLon);
+                    routeStatus.textContent = city ? 'transit feed down' : 'no transit here';
+                    return;
+                }
             }
             pollTransitLive();
             if (!transitPollInterval) {
@@ -3429,7 +3503,7 @@
             }
         }
         html += `\naircraft  <span>${aircraftCount}</span>`;
-        if (layerTransit) html += `\ntransit   <span>${_transitSlotMap.size}</span>`;
+        if (layerTransit) html += `\ntransit   <span>${_transitSlotMap.size}${_transitCity ? ' ' + _transitCity : ''}</span>`;
         html += `\ncameras   <span>${cameraCount}</span>`;
         html += `\nwind      <span>${windLabel}</span>`;
         tilePanel.innerHTML = html;
@@ -3512,6 +3586,8 @@
         _transitSchedule = null;
         _transitTripLookup = {};
         _transitShapeLookup = {};
+        _transitFreeSlots = [];
+        _transitCity = null;
         document.getElementById('transit-sidebar').classList.remove('visible');
     }
 
@@ -3559,6 +3635,15 @@
         if (typeof setAnchorSubMode === 'function') setAnchorSubMode('me');
         // Clear transit
         clearTransit();
+        if (surveillanceOn && layerTransit) {
+            fetchTransitSchedule().then((ok) => {
+                if (!ok) return;
+                pollTransitLive();
+                if (!transitPollInterval) {
+                    transitPollInterval = setInterval(pollTransitLive, 12000);
+                }
+            });
+        }
         // Dispose camera points from old city
         if (cameraPoints) {
             scene.remove(cameraPoints);
@@ -3972,6 +4057,7 @@
             _transitBatchMat = null;
         }
         _transitSlotMap.clear();
+        _transitFreeSlots = [];
     }
 
     function disposeTransitLines() {
@@ -3993,7 +4079,7 @@
             drawnShapes.add(sid);
             const pts = _transitShapeLookup[sid];
             if (!pts || pts.length < 2) continue;
-            const color = TRANSIT_LINE_COLORS[trip.color] || [0.5, 0.5, 0.5];
+            const color = transitColorRgb(trip.color, trip.mode);
             const positions = [];
             for (const p of pts) {
                 const w = latLonToWorld(p.lat, p.lon);
@@ -4014,8 +4100,11 @@
 
     async function fetchTransitSchedule() {
         try {
-            const res = await fetch(`${VPS_URL}/gtfs-rt/metro-schedule.json`, {
-                signal: AbortSignal.timeout(20000),
+            const city = transitRegion(smoothLat, smoothLon);
+            if (!city) return false;
+            _transitCity = city;
+            const res = await fetch(transitScheduleUrl(city), {
+                signal: AbortSignal.timeout(city === 'oslo' ? 45000 : 20000),
             });
             if (!res.ok) return false;
             const data = await res.json();
@@ -4023,7 +4112,13 @@
             _transitTripLookup = {};
             for (const [tid, t] of Object.entries(data.trips)) {
                 _transitTripLookup[tid] = {
-                    line: String(t.l), color: t.c, shapeId: t.s, stops: t.t,
+                    line: String(t.l),
+                    color: t.c,
+                    shapeId: t.s,
+                    stops: t.t,
+                    mode: t.m || null,
+                    headsign: t.h || '',
+                    stopNames: t.n || null,
                 };
             }
             _transitShapeLookup = {};
@@ -4041,7 +4136,9 @@
         if (!_transitSchedule) return;
         let data;
         try {
-            const res = await fetch(`${VPS_URL}/gtfs-rt/metro-live.json?t=${Date.now()}`, {
+            const city = _transitCity || transitRegion(smoothLat, smoothLon);
+            if (!city) return;
+            const res = await fetch(transitLiveUrl(city), {
                 signal: AbortSignal.timeout(12000),
             });
             if (!res.ok) return;
@@ -4064,14 +4161,14 @@
             const trip = _transitTripLookup[tid];
             if (!trip) continue;
             seenTrips.add(tid);
-            const color = TRANSIT_LINE_COLORS[trip.color] || [0.9, 0.65, 0.1];
+            const color = transitColorRgb(trip.color, trip.mode);
 
             if (_transitSlotMap.has(tid)) {
                 const entry = _transitSlotMap.get(tid);
                 entry.targetDelay = v.delay || 0;
             } else {
-                const slot = _transitSlotMap.size;
-                if (slot >= TRANSIT_MAX_SLOTS) continue;
+                const slot = allocTransitSlot();
+                if (slot < 0) continue;
                 colArr[slot * 3]     = color[0];
                 colArr[slot * 3 + 1] = color[1];
                 colArr[slot * 3 + 2] = color[2];
@@ -4085,10 +4182,11 @@
             }
         }
 
-        // Hide disappeared vehicles
+        // Hide disappeared vehicles and recycle slots
         for (const [tid, entry] of _transitSlotMap.entries()) {
             if (!seenTrips.has(tid)) {
                 posArr[entry.slot * 3 + 1] = -9999;
+                _transitFreeSlots.push(entry.slot);
                 _transitSlotMap.delete(tid);
             }
         }
@@ -4140,9 +4238,8 @@
     function scheduleInterpolateTransit() {
         if (!_transitBatch || !_transitSchedule) return;
         if (worldOriginLat === null) return;
-        const nowUtcSec = (Date.now() / 1000) - _transitServerTimeOffset;
-        const tzOffset = _transitSchedule.tzOffsetSec || 7200;
         const posArr = _transitBatch.geometry.getAttribute('position').array;
+        let secSinceMidnightBase = transitSecSinceMidnight();
 
         for (const [tid, entry] of _transitSlotMap.entries()) {
             entry.currentDelay += (entry.targetDelay - entry.currentDelay) * 0.02;
@@ -4151,11 +4248,7 @@
             const shape = _transitShapeLookup[trip.shapeId];
             if (!shape) continue;
 
-            const nowDate = new Date(nowUtcSec * 1000);
-            const midStr = nowDate.toLocaleDateString('en-CA', { timeZone: 'Europe/Stockholm' });
-            const midnightLocal = new Date(midStr + 'T00:00:00+02:00');
-            const midnightUtc = midnightLocal.getTime() / 1000;
-            let secSinceMidnight = nowUtcSec - midnightUtc;
+            let secSinceMidnight = secSinceMidnightBase;
             const tripStartSec = trip.stops[0][1];
             if (tripStartSec > 86400 && secSinceMidnight < 14400) {
                 secSinceMidnight += 86400;
@@ -4194,15 +4287,28 @@
         }
         transitFocused = tripId;
         try {
-            const res = await fetch(`${VPS_URL}/proxy/transit-trip?tripId=${encodeURIComponent(tripId)}`, {
-                signal: AbortSignal.timeout(8000),
-            });
-            if (!res.ok) return;
-            const data = await res.json();
+            const trip = _transitTripLookup[tripId];
+            let data = null;
+            if (trip && trip.stopNames && trip.stopNames.length && trip.stops && trip.stops.length) {
+                const nowSec = transitSecSinceMidnight();
+                const nextStops = [];
+                for (let i = 0; i < trip.stops.length; i++) {
+                    const eta = Math.round((trip.stops[i][2] - nowSec) / 60);
+                    if (eta < -1) continue;
+                    nextStops.push({ name: trip.stopNames[i] || `stop ${i + 1}`, etaMinutes: Math.max(0, eta) });
+                    if (nextStops.length >= 8) break;
+                }
+                data = { line: trip.line, headsign: trip.headsign || '', nextStops };
+            } else {
+                const res = await fetch(`${transitBaseUrl(_transitCity)}/proxy/transit-trip?tripId=${encodeURIComponent(tripId)}`, {
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (!res.ok) return;
+                data = await res.json();
+            }
 
             const sidebar = document.getElementById('transit-sidebar');
-            const trip = _transitTripLookup[tripId];
-            const color = trip ? (TRANSIT_LINE_COLORS[trip.color] || [0.5,0.5,0.5]) : [0.5,0.5,0.5];
+            const color = trip ? transitColorRgb(trip.color, trip.mode) : [0.5, 0.5, 0.5];
             const cr = Math.round(color[0] * 255), cg = Math.round(color[1] * 255), cb = Math.round(color[2] * 255);
             document.getElementById('transit-sidebar-line').textContent = data.line || (trip ? trip.line : '??');
             document.getElementById('transit-sidebar-line').style.color = `rgb(${cr},${cg},${cb})`;
