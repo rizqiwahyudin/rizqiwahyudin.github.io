@@ -561,6 +561,10 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script type="module">
+        import { parseTripUpdates } from './workers/oslo-transit/src/gtfs-rt.js';
+        window.parseOsloTripUpdates = parseTripUpdates;
+    </script>
 
     <div id="gps-override-overlay">
         <div id="gps-override-dialog">
@@ -584,7 +588,8 @@
     // Cloudflare Worker proxy -- caches Overpass responses at the edge
     // After first request per tile, subsequent loads are served from CF cache (~50ms)
     const CF_WORKER = 'https://citywatch-tile-proxy.rizqi-wahyudin.workers.dev';
-    const OSLO_TRANSIT_WORKER = 'https://citywatch-oslo-transit.rizqi-wahyudin.workers.dev';
+    const OSLO_SCHEDULE_URL = 'oslo-schedule.json';
+    const ENTUR_TRIP_UPDATES = 'https://api.entur.io/realtime/v1/gtfs-rt/trip-updates?datasource=RUT';
     // Direct Overpass mirrors as fallback if Worker is down
     const OVERPASS_MIRRORS = [
         'https://overpass-api.de/api/interpreter',
@@ -2438,18 +2443,12 @@
         return null;
     }
 
-    function transitBaseUrl(city) {
-        if (city === 'oslo') return OSLO_TRANSIT_WORKER;
-        return VPS_URL;
-    }
-
     function transitScheduleUrl(city) {
-        if (city === 'oslo') return `${OSLO_TRANSIT_WORKER}/gtfs-rt/oslo-schedule.json`;
+        if (city === 'oslo') return OSLO_SCHEDULE_URL;
         return `${VPS_URL}/gtfs-rt/metro-schedule.json`;
     }
 
     function transitLiveUrl(city) {
-        if (city === 'oslo') return `${OSLO_TRANSIT_WORKER}/gtfs-rt/oslo-live.json?t=${Date.now()}`;
         return `${VPS_URL}/gtfs-rt/metro-live.json?t=${Date.now()}`;
     }
 
@@ -4104,7 +4103,7 @@
             if (!city) return false;
             _transitCity = city;
             const res = await fetch(transitScheduleUrl(city), {
-                signal: AbortSignal.timeout(city === 'oslo' ? 45000 : 20000),
+                signal: AbortSignal.timeout(20000),
             });
             if (!res.ok) return false;
             const data = await res.json();
@@ -4132,25 +4131,60 @@
         }
     }
 
-    async function pollTransitLive() {
-        if (!_transitSchedule) return;
-        let data;
+    async function fetchOsloDelays() {
+        const map = new Map();
+        if (typeof window.parseOsloTripUpdates !== 'function') return map;
         try {
-            const city = _transitCity || transitRegion(smoothLat, smoothLon);
-            if (!city) return;
-            const res = await fetch(transitLiveUrl(city), {
+            const res = await fetch(ENTUR_TRIP_UPDATES, {
+                headers: { 'ET-Client-Name': 'rizqi-citywatch' },
                 signal: AbortSignal.timeout(12000),
             });
-            if (!res.ok) return;
-            data = await res.json();
+            if (!res.ok) return map;
+            const updates = window.parseOsloTripUpdates(await res.arrayBuffer());
+            for (const u of updates) map.set(u.tripId, u.delay || 0);
+        } catch (e) { /* Entur down — timetable only */ }
+        return map;
+    }
+
+    function osloVehiclesFromSchedule(delays) {
+        const nowSec = transitSecSinceMidnight();
+        const vehicles = [];
+        for (const [tid, trip] of Object.entries(_transitTripLookup)) {
+            const stops = trip.stops;
+            if (!stops || !stops.length) continue;
+            const delay = delays.has(tid) ? delays.get(tid) : 0;
+            const adj = nowSec + delay;
+            if (adj < stops[0][1] - 30) continue;
+            if (adj > stops[stops.length - 1][2] + 30) continue;
+            vehicles.push({ tripId: tid, delay });
+        }
+        return vehicles;
+    }
+
+    async function pollTransitLive() {
+        if (!_transitSchedule) return;
+        const city = _transitCity || transitRegion(smoothLat, smoothLon);
+        if (!city) return;
+        let incoming = [];
+        try {
+            if (city === 'oslo') {
+                const delays = await fetchOsloDelays();
+                incoming = osloVehiclesFromSchedule(delays);
+                _transitServerTimeOffset = 0;
+            } else {
+                const res = await fetch(transitLiveUrl(city), {
+                    signal: AbortSignal.timeout(12000),
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.serverTime) {
+                    _transitServerTimeOffset = (Date.now() / 1000) - data.serverTime;
+                }
+                incoming = data.vehicles || [];
+            }
         } catch (e) { return; }
 
-        if (data.serverTime) {
-            _transitServerTimeOffset = (Date.now() / 1000) - data.serverTime;
-        }
-
         buildTransitBatch();
-        const incoming = data.vehicles || [];
         const seenTrips = new Set();
         const colArr = _transitBatch.geometry.getAttribute('color').array;
         const posArr = _transitBatch.geometry.getAttribute('position').array;
@@ -4300,7 +4334,7 @@
                 }
                 data = { line: trip.line, headsign: trip.headsign || '', nextStops };
             } else {
-                const res = await fetch(`${transitBaseUrl(_transitCity)}/proxy/transit-trip?tripId=${encodeURIComponent(tripId)}`, {
+                const res = await fetch(`${VPS_URL}/proxy/transit-trip?tripId=${encodeURIComponent(tripId)}`, {
                     signal: AbortSignal.timeout(8000),
                 });
                 if (!res.ok) return;

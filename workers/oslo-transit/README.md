@@ -1,41 +1,27 @@
-# citywatch-oslo-transit
+# Oslo Ruter transit (static)
 
-Cloudflare Worker that turns Entur/Ruter GTFS into the compact JSON CityWatch already interpolates.
+Turns Entur/Ruter GTFS into the compact JSON CityWatch interpolates. No Cloudflare Worker.
 
-Ruter does not publish live GPS. Vehicles are placed on shapes from today's timetable, then delayed with GTFS-RT trip updates when Entur's feed is up.
+Ruter does not publish live GPS. Vehicles sit on today's shapes. The browser optionally layers GTFS-RT trip-update delays from Entur (CORS is open).
 
-## Endpoints
+## Files
 
 | Path | Role |
 |---|---|
-| `GET /gtfs-rt/oslo-schedule.json` | trips + downsampled shapes for a ~3h window around now |
-| `GET /gtfs-rt/oslo-live.json` | `{ serverTime, vehicles: [{ tripId, delay }] }` |
-| `GET /proxy/transit-trip?tripId=` | line, headsign, next stops |
-| `GET /health` | liveness |
+| `oslo-schedule.json` (repo root) | Full-day compact timetable, rebuilt by GitHub Actions |
+| `build-schedule.mjs` | Downloads the Ruter GTFS zip and writes that JSON |
+| `src/` | Parser, downsample, tests |
 
-Schedule is rebuilt on a 3-hour cron and cached at the edge. First request after a cold cache downloads the ~53 MB Ruter GTFS zip and streams `stop_times` / `shapes` so the worker never holds the uncompressed 300 MB archive.
+## Refresh
 
-Identify as `ET-Client-Name: rizqi-citywatch` (NLOD). Change that string if you deploy under another name.
+`.github/workflows/oslo-schedule.yml` runs four times a day and on `workflow_dispatch`. It commits `oslo-schedule.json` when the timetable changes.
 
-## Deploy
-
-```bash
-cd workers/oslo-transit
-npx wrangler login
-npx wrangler deploy
-```
-
-That publishes `https://citywatch-oslo-transit.<your-subdomain>.workers.dev`. CityWatch is wired to:
-
-`https://citywatch-oslo-transit.rizqi-wahyudin.workers.dev`
-
-If your workers.dev subdomain differs, change `OSLO_TRANSIT_WORKER` in `citywatch.html`.
-
-## Local tests
+Local rebuild:
 
 ```bash
 cd workers/oslo-transit
 npm test
+npm run build
 ```
 
-No Entur key is required. The GTFS zip is public.
+Identify as `ET-Client-Name: rizqi-citywatch` (NLOD).
