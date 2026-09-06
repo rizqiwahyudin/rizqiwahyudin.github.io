@@ -1,6 +1,0 @@
-name = "citywatch-oslo-transit"
-main = "src/index.js"
-compatibility_date = "2025-10-01"
-
-[triggers]
-crons = ["0 */3 * * *"]

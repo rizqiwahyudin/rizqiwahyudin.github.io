@@ -8,6 +8,7 @@ import {
     tripOverlapsWindow,
     downsampleShape,
     serviceIdsForDate,
+    scheduleWindow,
 } from './gtfs.js';
 
 assert.deepEqual(
@@ -18,6 +19,10 @@ assert.deepEqual(
     ], '20260905')],
     ['A']
 );
+
+assert.deepEqual(scheduleWindow(15 * 3600, undefined), { fromSec: 15 * 3600 - 900, toSec: 18 * 3600 });
+assert.deepEqual(scheduleWindow(15 * 3600, false), { fromSec: 0, toSec: 36 * 3600 });
+assert.deepEqual(scheduleWindow(15 * 3600, 'day'), { fromSec: 0, toSec: 36 * 3600 });
 
 assert.equal(tripOverlapsWindow([[0, 36000, 36000], [100, 39000, 39000]], 37000, 40000), true);
 assert.equal(tripOverlapsWindow([[0, 1000, 1000], [100, 2000, 2000]], 5000, 8000), false);
@@ -106,6 +111,17 @@ assert.equal(schedule.city, 'oslo');
 assert.ok(schedule.trips['metro-now']);
 assert.ok(schedule.trips['bus-now']);
 assert.equal(schedule.trips['metro-later'], undefined, 'trip outside window excluded');
+
+{
+    const allDay = buildScheduleFromTables(tables, {
+        date: '20260905',
+        nowSec: 15 * 3600,
+        timeZone: 'Europe/Oslo',
+        tzOffsetSec: 7200,
+        windowSec: 'day',
+    });
+    assert.ok(allDay.trips['metro-later'], 'full-day window keeps evening trips');
+}
 assert.equal(schedule.trips['wrong-day'], undefined, 'other service date excluded');
 assert.equal(schedule.trips['metro-now'].l, '5');
 assert.equal(schedule.trips['metro-now'].m, 'metro');

@@ -101,6 +101,13 @@ export function tripOverlapsWindow(stops, fromSec, toSec) {
     return start <= toSec && end >= fromSec;
 }
 
+/** `windowSec: false | 'day'` keeps every trip on the service date (for static files). */
+export function scheduleWindow(nowSec, windowSec) {
+    const span = windowSec === undefined || windowSec == null ? 3 * 3600 : windowSec;
+    if (span === false || span === 'day') return { fromSec: 0, toSec: 36 * 3600 };
+    return { fromSec: nowSec - 15 * 60, toSec: nowSec + span };
+}
+
 function rowFromLine(headers, line) {
     const cols = splitCsvLine(line);
     const row = {};
@@ -117,9 +124,9 @@ export function buildScheduleFromTables(tables, opts = {}) {
     const timeZone = opts.timeZone || OSLO_TZ;
     const ymd = opts.date || yyyymmddInZone(now, timeZone);
     const bbox = opts.bbox || DEFAULT_BBOX;
-    const windowSec = opts.windowSec == null ? 3 * 3600 : opts.windowSec;
     const nowSec = opts.nowSec != null ? opts.nowSec : secSinceMidnightInZone(now, timeZone);
     const tzOffsetSec = opts.tzOffsetSec != null ? opts.tzOffsetSec : tzOffsetSecAt(now, timeZone);
+    const { fromSec, toSec } = scheduleWindow(nowSec, opts.windowSec);
 
     const serviceIds = serviceIdsForDate(tables.calendar_dates || [], ymd);
     const routes = new Map((tables.routes || []).map((r) => [r.route_id, r]));
@@ -150,8 +157,6 @@ export function buildScheduleFromTables(tables, opts = {}) {
         neededStopIds.add(st.stop_id);
     }
 
-    const fromSec = nowSec - 15 * 60;
-    const toSec = nowSec + windowSec;
     const activeTripRows = todayTrips.filter((t) => {
         const stops = stopsByTrip.get(t.trip_id);
         return stops && tripOverlapsWindow(stops, fromSec, toSec);
@@ -233,9 +238,9 @@ export async function buildScheduleFromZip(bytes, opts = {}) {
     const timeZone = opts.timeZone || OSLO_TZ;
     const ymd = opts.date || yyyymmddInZone(now, timeZone);
     const bbox = opts.bbox || DEFAULT_BBOX;
-    const windowSec = opts.windowSec == null ? 3 * 3600 : opts.windowSec;
     const nowSec = opts.nowSec != null ? opts.nowSec : secSinceMidnightInZone(now, timeZone);
     const tzOffsetSec = opts.tzOffsetSec != null ? opts.tzOffsetSec : tzOffsetSecAt(now, timeZone);
+    const { fromSec, toSec } = scheduleWindow(nowSec, opts.windowSec);
 
     const calText = await readZipText(bytes, 'calendar_dates.txt');
     const serviceIds = serviceIdsForDate(parseCsv(calText), ymd);
@@ -274,8 +279,6 @@ export async function buildScheduleFromZip(bytes, opts = {}) {
         neededStopIds.add(st.stop_id);
     });
 
-    const fromSec = nowSec - 15 * 60;
-    const toSec = nowSec + windowSec;
     const activeTripRows = todayTrips.filter((t) => {
         const stops = stopsByTrip.get(t.trip_id);
         return stops && tripOverlapsWindow(stops, fromSec, toSec);
