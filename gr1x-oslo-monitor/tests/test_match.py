@@ -1,6 +1,6 @@
 import unittest
 
-from gr1x_monitor.match import is_gr1x_listing, looks_buyable
+from gr1x_monitor.match import GR1X, PS5_PRO, classify, is_gr1x_listing, looks_buyable
 
 
 class MatchTests(unittest.TestCase):
@@ -22,6 +22,17 @@ class MatchTests(unittest.TestCase):
     def test_ignores_accessories(self):
         self.assertFalse(is_gr1x_listing("GR1X sleeve"))
         self.assertFalse(is_gr1x_listing("ProArt GR1X veske"))
+
+    def test_ps5_pro_console(self):
+        self.assertEqual(classify("PlayStation 5 Pro-konsoll"), PS5_PRO)
+        self.assertEqual(classify("Sony PS5 Pro console"), PS5_PRO)
+        self.assertIsNone(classify("PlayStation 5 Slim"))
+        self.assertIsNone(classify("PS5 Pro-konsolldeksler – Marvel's Wolverine"))
+        self.assertIsNone(classify("Diskstasjon for PlayStation 5 Slim Digital Edition/PS5 Pro"))
+        self.assertIsNone(classify("Bruksklar PlayStation 5 og Installering Av SSD"))
+
+    def test_classify_ids(self):
+        self.assertEqual(classify("ASUS ProArt GR1X Mini PC"), GR1X)
 
     def test_buyable_signals(self):
         self.assertTrue(looks_buyable("På lager — Legg i handlekurv"))

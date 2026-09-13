@@ -13,10 +13,17 @@
     "Karl Johan",
     "Sandvika"
   ],
-  "queries": [
-    "GR1X",
-    "ProArt GR1X",
-    "ASUS GR1X"
+  "products": [
+    {
+      "id": "gr1x",
+      "label": "ASUS ProArt GR1X",
+      "queries": ["GR1X", "ProArt GR1X", "ASUS GR1X"]
+    },
+    {
+      "id": "ps5-pro",
+      "label": "PlayStation 5 Pro",
+      "queries": ["PS5 Pro", "PlayStation 5 Pro"]
+    }
   ],
   "watch_urls": [],
   "enabled_stores": [

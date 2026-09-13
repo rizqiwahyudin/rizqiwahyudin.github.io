@@ -108,6 +108,65 @@ class PowerStoreTests(unittest.TestCase):
         self.assertIn("Lille Grensen: 2", hit.oslo_stock)
         self.assertNotIn("Bergen", hit.oslo_stock)
         self.assertTrue(hit.url.startswith("https://www.power.no/"))
+        self.assertEqual(hit.product, "gr1x")
+
+    def test_ps5_pro_console_not_accessories(self):
+        payload = {
+            "totalProductCount": 3,
+            "products": [
+                {
+                    "title": "PlayStation 5 Pro-konsoll",
+                    "shortDescription": "PS5 Pro",
+                    "url": "/gaming/playstation/playstation-5-pro-konsoll/p-4193724/",
+                    "productId": 4193724,
+                    "price": 10999.0,
+                    "stockCount": 0,
+                    "canAddToCart": False,
+                    "webStockText": "Product.Stock.WebStock",
+                },
+                {
+                    "title": "PS5 Pro-konsolldeksler – Marvel's Wolverine Battle Yellow Limited Edition",
+                    "shortDescription": "deksel",
+                    "url": "/gaming/playstation/ps5-pro-konsolldeksler/p-4520968/",
+                    "productId": 4520968,
+                    "price": 899.0,
+                    "stockCount": 54,
+                    "canAddToCart": True,
+                    "webStockText": "Product.Stock.GoodStock",
+                },
+                {
+                    "title": "Diskstasjon for PlayStation 5 Slim Digital Edition/PS5 Pro",
+                    "shortDescription": "diskstasjon",
+                    "url": "/gaming/playstation/diskstasjon/p-2856457/",
+                    "productId": 2856457,
+                    "price": 1799.0,
+                    "stockCount": 0,
+                    "canAddToCart": True,
+                    "webStockText": "Product.Stock.ComingIn",
+                },
+            ],
+        }
+        fake = FakeHttp(
+            {
+                "productlists": HttpResponse(
+                    "https://www.power.no/api/v2/productlists",
+                    200,
+                    json.dumps(payload),
+                    "application/json",
+                ),
+                "/stores": HttpResponse(
+                    "https://www.power.no/api/v2/products/4193724/stores",
+                    200,
+                    json.dumps(POWER_STORES),
+                    "application/json",
+                ),
+            }
+        )
+        result = search_power(_cfg(), fake)
+        self.assertEqual([item.title for item in result.listings], ["PlayStation 5 Pro-konsoll"])
+        self.assertEqual(result.listings[0].product, "ps5-pro")
+        self.assertFalse(result.listings[0].buyable)
+        self.assertEqual(result.listings[0].price_nok, 10999.0)
 
 
 class HtmlStoreTests(unittest.TestCase):

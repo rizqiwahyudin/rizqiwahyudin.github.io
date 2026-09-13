@@ -15,8 +15,9 @@ Poster = Callable[..., object]
 def format_alert(listing: Listing) -> str:
     price = f"{listing.price_nok:.0f} NOK" if listing.price_nok is not None else "price unknown"
     oslo = listing.oslo_stock or "no Oslo pickup count yet"
+    name = listing.product_label or listing.product or listing.title
     return (
-        f"GR1X {listing.status.upper()} @ {listing.store}\n"
+        f"{name} {listing.status.upper()} @ {listing.store}\n"
         f"{listing.title}\n"
         f"{price}\n"
         f"{listing.url}\n"
@@ -44,7 +45,7 @@ def notify_discord(cfg: Config, listing: Listing, poster: Poster = post_json) ->
     poster(
         cfg.discord_webhook,
         {
-            "content": f"@everyone GR1X {listing.status} on {listing.store}",
+            "content": f"@everyone {listing.product_label or listing.product or listing.title} {listing.status} on {listing.store}",
             "embeds": [
                 {
                     "title": listing.title,

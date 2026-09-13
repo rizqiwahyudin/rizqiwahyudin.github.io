@@ -1,8 +1,8 @@
-# ASUS ProArt GR1X — Oslo drop monitor
+# Oslo drop monitor — ASUS ProArt GR1X + PS5 Pro
 
-Watches Norwegian retailers for the **ASUS ProArt GR1X** (RTX Spark mini PC) and pings you the moment a listing or buyable stock appears. Oslo store stock is checked on Power once a product ID exists.
+Watches Norwegian retailers for the **ASUS ProArt GR1X** and **PlayStation 5 Pro**. Pings you when a listing appears or stock flips to buyable. Power also checks Oslo pickup for postal `0150`.
 
-Announced at IFA 2026. No Norwegian listing as of 13 Sep 2026. This is ready to leave running until that changes.
+GR1X is still unlisted (IFA 2026). PS5 Pro is listed and usually sold out — that listing is the live proof the store search works.
 
 Copy this whole folder anywhere. It does not depend on the rest of this repository. Python 3.11+ standard library only.
 
@@ -17,7 +17,9 @@ python3 run.py                 # keep watching
 python3 run.py --self-check    # which stores answer from your network
 ```
 
-`--once` is what you want the first time. Then leave `python3 run.py` running in tmux / a terminal.
+`--once` is what you want the first time. You should see the PS5 Pro console on Power as `listed` (not buyable). GR1X should stay at zero until it exists.
+
+The process has to stay alive to keep polling. Laptop with sleep off, a Pi on your home network, or a cheap VPS. Home IP reaches Elkjøp/Komplett more often than a datacenter.
 
 ```bash
 tmux new -s gr1x 'cd /path/to/gr1x-oslo-monitor && python3 run.py'
@@ -47,13 +49,14 @@ It does **not** enter card details or complete checkout. You buy it on the store
 | CDON | Search page | |
 | ASUS Norge / global | Official GR1X pages + search | Fires only when a Norwegian retailer is named on the product page |
 
-Live check from a datacenter on 13 Sep 2026: Power, Kjell, NetOnNet, Multicom, ASUS answered; **0 GR1X listings**. Elkjøp (429), Komplett (timeout), Proshop/CDON (403) are blocked here — they usually work from a home IP in Oslo.
+Power is the store used to verify the hookup: it returns `PlayStation 5 Pro-konsoll` (10 999 NOK, stock 0) and ignores covers/disk drives. Elkjøp/Komplett/Proshop/CDON are often blocked from datacenters and work from a home IP in Oslo.
 
 Add extra product URLs to `watch_urls` in `config.json` the second you see a SKU anywhere (Twitter, Discord, ASUS mail). Those pages get polled every cycle.
 
 ## Matching
 
-A hit needs **GR1X** in the title/snippet, or **RTX Spark** together with ASUS/ProArt on a desktop/mini-PC (not P16 / P14 / PX13 / skjerm).
+- **GR1X:** title has GR1X, or RTX Spark + ASUS/ProArt on a desktop/mini-PC. Ignores P16 / P14 / PX13 / skjerm / sleeves.
+- **PS5 Pro:** PlayStation 5 / PS5 + Pro + console/konsoll. Ignores covers, disk drives, install services.
 
 ## Config
 

@@ -19,6 +19,8 @@ class Listing:
     stock_text: str = ""
     oslo_stock: str = ""
     query: str = ""
+    product: str = ""
+    product_label: str = ""
 
     @property
     def status(self) -> str:

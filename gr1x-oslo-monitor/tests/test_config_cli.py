@@ -11,6 +11,9 @@ class ConfigTests(unittest.TestCase):
     def test_defaults(self):
         cfg = load_config(None)
         self.assertIn("GR1X", cfg.queries)
+        self.assertIn("PS5 Pro", cfg.queries)
+        self.assertTrue(cfg.has_product("gr1x"))
+        self.assertTrue(cfg.has_product("ps5-pro"))
         self.assertGreaterEqual(cfg.interval_seconds, 8)
         self.assertIn("power", cfg.enabled_stores)
 

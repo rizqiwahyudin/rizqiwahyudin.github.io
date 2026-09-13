@@ -9,7 +9,7 @@ from typing import Any
 from . import htmlutil
 from .config import Config
 from .http import HttpResponse, abs_url, fetch
-from .match import is_gr1x_listing, looks_buyable
+from .match import GR1X, classify, looks_buyable
 from .models import Listing, StoreResult
 
 Fetcher = Callable[..., HttpResponse]
@@ -46,33 +46,37 @@ def _is_search_shell_title(title: str) -> bool:
     if "|" not in cleaned:
         return False
     head, tail = [part.strip() for part in cleaned.split("|", 1)]
-    if not re.fullmatch(r"(asus\s+)?(proart\s+)?gr[\s\-]?1x", head, re.I):
+    if not re.search(r"(kjell|elkj|komplett|power|netonnet|proshop|asus|s[øo]k|search)", tail, re.I):
         return False
-    return bool(re.search(r"(kjell|elkj|komplett|power|netonnet|proshop|asus|s[øo]k|search)", tail, re.I))
+    return not re.search(r"konsoll|mini\s*pc|desktop", head, re.I)
 
 
 def _listing_from_card(
     store: str,
     card: dict[str, str],
     query: str,
+    cfg: Config,
     page_text: str = "",
 ) -> Listing | None:
     title = card.get("title") or ""
     snippet = card.get("snippet") or ""
-    if _is_search_shell_title(title) and not is_gr1x_listing(snippet):
+    if _is_search_shell_title(title):
         return None
-    if not is_gr1x_listing(title, snippet):
+    product_id = classify(title, snippet)
+    if not product_id or not cfg.has_product(product_id):
         return None
     blob = f"{title} {snippet} {page_text}"
     return Listing(
         store=store,
-        title=title or "ASUS ProArt GR1X",
+        title=title or cfg.product_label(product_id),
         url=card["url"],
         sku=card.get("sku") or "",
         price_nok=_price(card.get("price")),
         buyable=looks_buyable(blob),
         stock_text=snippet,
         query=query,
+        product=product_id,
+        product_label=cfg.product_label(product_id),
     )
 
 
@@ -114,7 +118,8 @@ def search_power(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
         for product in products:
             title = str(product.get("title") or "")
             snippet = str(product.get("shortDescription") or "")
-            if not is_gr1x_listing(title, snippet):
+            product_id = classify(title, snippet)
+            if not product_id or not cfg.has_product(product_id):
                 continue
             path = str(product.get("url") or "")
             product_url = abs_url("https://www.power.no/", path)
@@ -134,6 +139,8 @@ def search_power(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
                     stock_text=str(product.get("webStockText") or ""),
                     oslo_stock=oslo,
                     query=query,
+                    product=product_id,
+                    product_label=cfg.product_label(product_id),
                 )
             )
     return StoreResult(store="power", listings=_dedupe(listings), error=last_error, raw_count=total)
@@ -173,11 +180,12 @@ def _html_search(
     cfg: Config,
     fetcher: Fetcher,
     extra_href_needles: tuple[str, ...] = (),
+    queries: list[str] | None = None,
 ) -> StoreResult:
     listings: list[Listing] = []
     last_error = ""
     raw = 0
-    for query in cfg.queries:
+    for query in queries if queries is not None else cfg.queries:
         url = search_url.format(q=urllib.parse.quote_plus(query))
         try:
             resp = fetcher(url, timeout=cfg.request_timeout_seconds)
@@ -202,7 +210,7 @@ def _html_search(
                         }
                     )
         for card in cards:
-            item = _listing_from_card(store, card, query, html[:6000])
+            item = _listing_from_card(store, card, query, cfg, html[:6000])
             if item:
                 listings.append(item)
     return StoreResult(store=store, listings=_dedupe(listings), error=last_error, raw_count=raw)
@@ -260,6 +268,8 @@ _NO_RETAILER = re.compile(
 
 
 def search_asus(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
+    if not cfg.has_product(GR1X):
+        return StoreResult(store="asus")
     listings: list[Listing] = []
     last_error = ""
     raw = 0
@@ -286,10 +296,12 @@ def search_asus(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
                 buyable=looks_buyable(resp.body),
                 stock_text="Norwegian retailer named on official page",
                 query="official",
+                product=GR1X,
+                product_label=cfg.product_label(GR1X),
             )
         )
     search_url = "https://www.asus.com/no/searchresult?searchKey={q}"
-    extra = _html_search("asus", search_url, cfg, fetcher)
+    extra = _html_search("asus", search_url, cfg, fetcher, queries=cfg.queries_for(GR1X))
     listings.extend(extra.listings)
     if extra.error and not last_error:
         last_error = extra.error
@@ -310,9 +322,7 @@ def watch_urls(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
             continue
         title = htmlutil.page_title(resp.body) or url
         snippet = resp.body[:8000]
-        if not is_gr1x_listing(title, snippet) and "gr1x" not in url.lower():
-            # User pinned this URL on purpose.
-            pass
+        product_id = classify(title, snippet) or classify(url, "")
         listings.append(
             Listing(
                 store="watch",
@@ -321,6 +331,8 @@ def watch_urls(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
                 buyable=looks_buyable(snippet),
                 stock_text="pinned URL",
                 query="watch_urls",
+                product=product_id or "watch",
+                product_label=cfg.product_label(product_id) if product_id else title,
             )
         )
     return StoreResult(store="watch", listings=_dedupe(listings), error=last_error, raw_count=len(cfg.watch_urls))
