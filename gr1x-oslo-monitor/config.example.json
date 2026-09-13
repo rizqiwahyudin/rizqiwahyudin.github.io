@@ -1,0 +1,40 @@
+{
+  "interval_seconds": 20,
+  "open_browser": true,
+  "beep": true,
+  "oslo_postal_code": "0150",
+  "oslo_store_name_hints": [
+    "Oslo",
+    "Lille Grensen",
+    "Storo",
+    "Alnabru",
+    "Alna",
+    "Oslo City",
+    "Karl Johan",
+    "Sandvika"
+  ],
+  "queries": [
+    "GR1X",
+    "ProArt GR1X",
+    "ASUS GR1X"
+  ],
+  "watch_urls": [],
+  "enabled_stores": [
+    "power",
+    "elkjop",
+    "komplett",
+    "netonnet",
+    "multicom",
+    "kjell",
+    "proshop",
+    "cdon",
+    "asus"
+  ],
+  "discord_webhook": "",
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "generic_webhook": "",
+  "state_path": "gr1x-state.json",
+  "log_path": "alerts.log",
+  "request_timeout_seconds": 15
+}

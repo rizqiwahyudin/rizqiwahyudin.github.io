@@ -1,0 +1,7 @@
+config.json
+gr1x-state.json
+alerts.log
+__pycache__/
+*.pyc
+.venv/
+venv/
