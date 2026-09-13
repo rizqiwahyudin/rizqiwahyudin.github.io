@@ -33,6 +33,24 @@ def _price(value: Any) -> float | None:
         return None
 
 
+_SEARCH_TITLE = re.compile(
+    r"^(s[øo]k|search|visert? resultater|resultater)[:\s]",
+    re.I,
+)
+
+
+def _is_search_shell_title(title: str) -> bool:
+    cleaned = title.strip()
+    if _SEARCH_TITLE.match(cleaned):
+        return True
+    if "|" not in cleaned:
+        return False
+    head, tail = [part.strip() for part in cleaned.split("|", 1)]
+    if not re.fullmatch(r"(asus\s+)?(proart\s+)?gr[\s\-]?1x", head, re.I):
+        return False
+    return bool(re.search(r"(kjell|elkj|komplett|power|netonnet|proshop|asus|s[øo]k|search)", tail, re.I))
+
+
 def _listing_from_card(
     store: str,
     card: dict[str, str],
@@ -41,6 +59,8 @@ def _listing_from_card(
 ) -> Listing | None:
     title = card.get("title") or ""
     snippet = card.get("snippet") or ""
+    if _is_search_shell_title(title) and not is_gr1x_listing(snippet):
+        return None
     if not is_gr1x_listing(title, snippet):
         return None
     blob = f"{title} {snippet} {page_text}"
@@ -173,17 +193,14 @@ def _html_search(
         cards.extend(htmlutil.productish_anchors(html, resp.url))
         if extra_href_needles:
             for href, text in htmlutil.anchors(html):
-                if any(needle in href.lower() for needle in extra_href_needles):
+                if text and any(needle in href.lower() for needle in extra_href_needles):
                     cards.append(
                         {
-                            "title": text or htmlutil.page_title(html),
+                            "title": text,
                             "url": abs_url(resp.url, href),
                             "sku": "",
                         }
                     )
-        title = htmlutil.page_title(html)
-        if is_gr1x_listing(title, html[:4000]) and not cards:
-            cards.append({"title": title, "url": resp.url, "sku": ""})
         for card in cards:
             item = _listing_from_card(store, card, query, html[:6000])
             if item:
@@ -236,8 +253,8 @@ _ASUS_PAGES = (
     "https://www.asus.com/us/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
 )
 
-_RETAILER_HINT = re.compile(
-    r"(where to buy|hvor du kan kj.pe|authorized dealer|forhandler|buy now|kj.p n.|shop now|retailer)",
+_NO_RETAILER = re.compile(
+    r"(elkj[øo]p|komplett\.no|power\.no|netonnet|proshop\.no|multicom\.no|kjell\.com|cdon\.no)",
     re.I,
 )
 
@@ -256,23 +273,21 @@ def search_asus(cfg: Config, fetcher: Fetcher = fetch) -> StoreResult:
         if resp.status != 200:
             last_error = f"HTTP {resp.status} on {page}"
             continue
-        title = htmlutil.page_title(resp.body) or "ASUS ProArt GR1X"
-        if not is_gr1x_listing(title, resp.body[:3000]) and "gr1x" not in page.lower():
+        if "gr1x" not in resp.url.lower():
             continue
-        buyable = bool(_RETAILER_HINT.search(resp.body)) and looks_buyable(resp.body)
-        # Official spec page existing is useful, but we only alert as a listing
-        # once retailer/buy language appears, or the NO search starts returning it.
-        if _RETAILER_HINT.search(resp.body) or "elkjop" in resp.body.lower() or "komplett" in resp.body.lower():
-            listings.append(
-                Listing(
-                    store="asus",
-                    title=title,
-                    url=resp.url,
-                    buyable=buyable,
-                    stock_text="retailer links present on official page",
-                    query="official",
-                )
+        title = htmlutil.page_title(resp.body) or "ASUS ProArt GR1X"
+        if not _NO_RETAILER.search(resp.body):
+            continue
+        listings.append(
+            Listing(
+                store="asus",
+                title=title,
+                url=resp.url,
+                buyable=looks_buyable(resp.body),
+                stock_text="Norwegian retailer named on official page",
+                query="official",
             )
+        )
     search_url = "https://www.asus.com/no/searchresult?searchKey={q}"
     extra = _html_search("asus", search_url, cfg, fetcher)
     listings.extend(extra.listings)

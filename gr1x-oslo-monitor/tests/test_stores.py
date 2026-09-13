@@ -3,7 +3,14 @@ import unittest
 
 from gr1x_monitor.config import load_config
 from gr1x_monitor.http import HttpResponse
-from gr1x_monitor.stores import search_elkjop, search_power, watch_urls
+from gr1x_monitor.stores import (
+    search_asus,
+    search_elkjop,
+    search_kjell,
+    search_netonnet,
+    search_power,
+    watch_urls,
+)
 
 
 def _cfg():
@@ -134,6 +141,96 @@ class HtmlStoreTests(unittest.TestCase):
         result = watch_urls(cfg, fake)
         self.assertEqual(len(result.listings), 1)
         self.assertFalse(result.listings[0].buyable)
+
+    def test_netonnet_optical_drive_is_ignored(self):
+        html = """<html><head><title>Søk: ASUS GR1X</title></head>
+        <body><a href="/art/data-og-nettbrett/tilbehor/cddvdogblu-ray/asus-sdrw/1002762.11080/">ASUS SDRW-08U9M</a>
+        </body></html>"""
+        fake = FakeHttp(
+            {
+                "netonnet.no": HttpResponse(
+                    "https://www.netonnet.no/search?query=ASUS+GR1X", 200, html, "text/html"
+                )
+            }
+        )
+        self.assertEqual(search_netonnet(_cfg(), fake).listings, [])
+
+    def test_kjell_empty_search_is_not_a_listing(self):
+        html = """<html><head><title>GR1X | Kjell &amp; Company</title></head>
+        <body><p>Vi fant ingen produkter</p></body></html>"""
+        fake = FakeHttp(
+            {
+                "kjell.com": HttpResponse(
+                    "https://www.kjell.com/no/sok?q=GR1X", 200, html, "text/html"
+                )
+            }
+        )
+        self.assertEqual(search_kjell(_cfg(), fake).listings, [])
+
+    def test_asus_homepage_redirect_ignored(self):
+        html = """<html><head><title>ASUS Norge</title></head>
+        <body>Kjøp nå hos Elkjøp og Komplett</body></html>"""
+        spec = """<html><head><title>ProArt GR1X Mini PC</title></head>
+        <body>Create without limits. Where to buy coming soon.</body></html>"""
+        fake = FakeHttp(
+            {
+                "asus.com/no/displays": HttpResponse("https://www.asus.com/no/", 200, html, "text/html"),
+                "asus.com/displays": HttpResponse(
+                    "https://www.asus.com/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
+                    200,
+                    spec,
+                    "text/html",
+                ),
+                "asus.com/us/": HttpResponse(
+                    "https://www.asus.com/us/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
+                    200,
+                    spec,
+                    "text/html",
+                ),
+                "searchresult": HttpResponse(
+                    "https://www.asus.com/no/searchresult?searchKey=GR1X",
+                    200,
+                    "<html><head><title>Søk - GR1X</title></head><body>Vi fant ingen resultater</body></html>",
+                    "text/html",
+                ),
+            }
+        )
+        self.assertEqual(search_asus(_cfg(), fake).listings, [])
+
+    def test_asus_alerts_when_elkjop_appears(self):
+        spec = """<html><head><title>ProArt GR1X Mini PC</title></head>
+        <body>Kjøp hos Elkjøp.no — på lager</body></html>"""
+        fake = FakeHttp(
+            {
+                "asus.com/no/displays": HttpResponse(
+                    "https://www.asus.com/no/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
+                    200,
+                    spec,
+                    "text/html",
+                ),
+                "asus.com/displays": HttpResponse(
+                    "https://www.asus.com/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
+                    200,
+                    spec,
+                    "text/html",
+                ),
+                "asus.com/us/": HttpResponse(
+                    "https://www.asus.com/us/displays-desktops/mini-pcs/proart-mini-pc-series/proart-gr1x-mini-pc/",
+                    200,
+                    spec,
+                    "text/html",
+                ),
+                "searchresult": HttpResponse(
+                    "https://www.asus.com/no/searchresult",
+                    200,
+                    "<html><head><title>Søk</title></head><body></body></html>",
+                    "text/html",
+                ),
+            }
+        )
+        result = search_asus(_cfg(), fake)
+        self.assertGreaterEqual(len(result.listings), 1)
+        self.assertTrue(any("elkjop" in (item.stock_text or "").lower() or item.store == "asus" for item in result.listings))
 
 
 if __name__ == "__main__":

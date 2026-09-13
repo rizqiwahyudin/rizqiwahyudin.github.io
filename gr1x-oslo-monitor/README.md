@@ -45,7 +45,9 @@ It does **not** enter card details or complete checkout. You buy it on the store
 | Kjell & Company | Search page | |
 | Proshop | Search page | Cloudflare; home IP is better |
 | CDON | Search page | |
-| ASUS Norge / global | Official GR1X pages + search | Watches for “where to buy” / retailer links appearing |
+| ASUS Norge / global | Official GR1X pages + search | Fires only when a Norwegian retailer is named on the product page |
+
+Live check from a datacenter on 13 Sep 2026: Power, Kjell, NetOnNet, Multicom, ASUS answered; **0 GR1X listings**. Elkjøp (429), Komplett (timeout), Proshop/CDON (403) are blocked here — they usually work from a home IP in Oslo.
 
 Add extra product URLs to `watch_urls` in `config.json` the second you see a SKU anywhere (Twitter, Discord, ASUS mail). Those pages get polled every cycle.
 
