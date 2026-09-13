@@ -64,7 +64,8 @@ Add extra product URLs to `watch_urls` in `config.json` the second you see a SKU
 
 Useful knobs:
 
-- `interval_seconds` — 20 is a reasonable default. Do not go below 8.
+- `interval_seconds` / `interval_max_seconds` — each cycle waits a random time in that window (default 20–45s). Floor is 8.
+- `backoff_max_seconds` — a store that returns 429/403/timeout is skipped and the wait doubles, up to this cap (default 300s). Success puts it back on the normal cadence.
 - `oslo_postal_code` — `0150` for Sentrum; `0480` Storo, `0661` Alnabru if you prefer those Power stores first.
 - `open_browser` — set `false` on a headless VPS.
 - `discord_webhook` — Discord channel → Integrations → Webhooks → copy URL.

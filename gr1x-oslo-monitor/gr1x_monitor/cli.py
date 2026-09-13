@@ -42,7 +42,10 @@ def resolve_config_path(raw: str | None) -> Path | None:
 def self_check(cfg) -> int:
     print("products: " + ", ".join(f"{p.label} ({', '.join(p.queries)})" for p in cfg.products))
     print(f"oslo postal: {cfg.oslo_postal_code}")
-    print(f"interval: {cfg.interval_seconds}s")
+    print(
+        f"interval: {cfg.interval_seconds}-{cfg.interval_max_seconds}s "
+        f"(backoff up to {cfg.backoff_max_seconds}s)"
+    )
     results = poll_all(cfg, fetcher=fetch)
     print(summarize(results))
     by_product: dict[str, int] = {}
@@ -80,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     state = MonitorState.load(cfg.state_file)
     names = ", ".join(p.label for p in cfg.products) or "configured products"
     print(
-        f"watching {names} in Norway / Oslo every {cfg.interval_seconds}s "
+        f"watching {names} in Norway / Oslo every "
+        f"{cfg.interval_seconds}-{cfg.interval_max_seconds}s "
         f"({', '.join(cfg.enabled_stores)})"
     )
     print(f"state: {cfg.state_file}")

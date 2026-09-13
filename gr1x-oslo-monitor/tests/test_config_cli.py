@@ -15,6 +15,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(cfg.has_product("gr1x"))
         self.assertTrue(cfg.has_product("ps5-pro"))
         self.assertGreaterEqual(cfg.interval_seconds, 8)
+        self.assertGreaterEqual(cfg.interval_max_seconds, cfg.interval_seconds)
+        self.assertGreaterEqual(cfg.backoff_max_seconds, cfg.interval_max_seconds)
         self.assertIn("power", cfg.enabled_stores)
 
     def test_floor_interval(self):
@@ -23,6 +25,7 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps({"interval_seconds": 1}), encoding="utf-8")
             cfg = load_config(path)
             self.assertEqual(cfg.interval_seconds, 8)
+            self.assertGreaterEqual(cfg.interval_max_seconds, 8)
             self.assertEqual(cfg.root, path.parent)
 
     def test_parser(self):

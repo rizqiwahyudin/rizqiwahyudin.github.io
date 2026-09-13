@@ -22,6 +22,8 @@ DEFAULT_PRODUCTS: list[dict[str, Any]] = [
 
 DEFAULTS: dict[str, Any] = {
     "interval_seconds": 20,
+    "interval_max_seconds": 45,
+    "backoff_max_seconds": 300,
     "open_browser": True,
     "beep": True,
     "oslo_postal_code": "0150",
@@ -68,6 +70,8 @@ class Product:
 @dataclass
 class Config:
     interval_seconds: int = 20
+    interval_max_seconds: int = 45
+    backoff_max_seconds: int = 300
     open_browser: bool = True
     beep: bool = True
     oslo_postal_code: str = "0150"
@@ -153,8 +157,12 @@ def load_config(path: Path | None) -> Config:
         data.update(loaded)
         root = path.parent
     interval = max(8, int(data["interval_seconds"]))
+    interval_max = max(interval, int(data.get("interval_max_seconds") or 45))
+    backoff_max = max(interval_max, int(data.get("backoff_max_seconds") or 300))
     return Config(
         interval_seconds=interval,
+        interval_max_seconds=interval_max,
+        backoff_max_seconds=backoff_max,
         open_browser=bool(data["open_browser"]),
         beep=bool(data["beep"]),
         oslo_postal_code=str(data["oslo_postal_code"]),

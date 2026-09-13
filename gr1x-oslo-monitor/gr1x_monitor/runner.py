@@ -9,17 +9,25 @@ from .config import Config
 from .http import fetch
 from .models import Listing, StoreResult
 from .notify import fire
+from .pace import Pacer
 from .state import MonitorState
 from .stores import STORE_SEARCHERS, poll_store
 
 
-def poll_all(cfg: Config, fetcher=fetch) -> list[StoreResult]:
+def store_names(cfg: Config) -> list[str]:
     names = [name for name in cfg.enabled_stores if name in STORE_SEARCHERS]
     if cfg.watch_urls:
         names.append("watch")
+    return names
+
+
+def poll_all(cfg: Config, fetcher=fetch, names: list[str] | None = None) -> list[StoreResult]:
+    chosen = names if names is not None else store_names(cfg)
     results: list[StoreResult] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, max(1, len(names)))) as pool:
-        futures = {pool.submit(poll_store, name, cfg, fetcher): name for name in names}
+    if not chosen:
+        return results
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, max(1, len(chosen)))) as pool:
+        futures = {pool.submit(poll_store, name, cfg, fetcher): name for name in chosen}
         for future in concurrent.futures.as_completed(futures):
             name = futures[future]
             try:
@@ -55,9 +63,13 @@ def run_pass(
     fetcher=fetch,
     fire_alert: Callable[..., None] = fire,
     stdout=None,
+    pacer: Pacer | None = None,
+    names: list[str] | None = None,
 ) -> list[Listing]:
     out = stdout or sys.stdout
-    results = poll_all(cfg, fetcher=fetcher)
+    results = poll_all(cfg, fetcher=fetcher, names=names)
+    if pacer is not None:
+        pacer.note(results)
     listings = flatten(results)
     hits = state.fresh_hits(listings)
     stamp = time.strftime("%H:%M:%S")
@@ -79,15 +91,38 @@ def loop(
     sleeper: Callable[[float], None] = time.sleep,
     fire_alert: Callable[..., None] = fire,
     stdout=None,
+    pacer: Pacer | None = None,
 ) -> None:
+    pace = pacer or Pacer(cfg)
+    out = stdout or sys.stdout
     while True:
+        due, cooling = pace.due_stores(store_names(cfg))
+        cool = pace.cooling_text(cooling)
+        if cool:
+            out.write(f"{cool}\n")
+            out.flush()
         try:
-            run_pass(cfg, state, fetcher=fetcher, fire_alert=fire_alert, stdout=stdout)
+            if due:
+                run_pass(
+                    cfg,
+                    state,
+                    fetcher=fetcher,
+                    fire_alert=fire_alert,
+                    stdout=out,
+                    pacer=pace,
+                    names=due,
+                )
+            else:
+                out.write("all stores cooling\n")
+                out.flush()
         except KeyboardInterrupt:
             raise
         except Exception as exc:
-            (stdout or sys.stdout).write(f"cycle error: {exc}\n")
+            out.write(f"cycle error: {exc}\n")
         if once:
             state.save()
             return
-        sleeper(cfg.interval_seconds)
+        delay = pace.next_sleep()
+        out.write(f"next in {delay:.1f}s\n")
+        out.flush()
+        sleeper(delay)
