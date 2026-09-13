@@ -30,6 +30,10 @@ class MatchTests(unittest.TestCase):
         self.assertIsNone(classify("PS5 Pro-konsolldeksler – Marvel's Wolverine"))
         self.assertIsNone(classify("Diskstasjon for PlayStation 5 Slim Digital Edition/PS5 Pro"))
         self.assertIsNone(classify("Bruksklar PlayStation 5 og Installering Av SSD"))
+        self.assertIsNone(classify("Corsair MP600 ELITE for PS5 2TB", "optimalisert for PS5 og PS5 PRO"))
+        self.assertIsNone(classify("Deltaco Wireless PS5 Pro Controller with RGB"))
+        self.assertIsNone(classify("Sony PS5 Slim Ultra HD Blu-ray Disc Drive Diskleser for PS5 Digital Slim og PS5 Pro"))
+        self.assertEqual(classify("Sony PlayStation 5 Pro (2025)", "PlayStation®5 Pro Console – 2TB"), PS5_PRO)
 
     def test_classify_ids(self):
         self.assertEqual(classify("ASUS ProArt GR1X Mini PC"), GR1X)

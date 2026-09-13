@@ -45,10 +45,14 @@ def classify(title: str, snippet: str = "") -> str | None:
         return None if _ACCESSORY.search(blob) else GR1X
     if _SPARK.search(blob) and _ASUS.search(blob):
         return None if _LAPTOP.search(blob) else GR1X
-    if _PS5.search(blob) and _PRO.search(blob):
-        if _ACCESSORY.search(blob):
+    if _PS5.search(title) and _PRO.search(title):
+        if _ACCESSORY.search(title) or re.search(
+            r"ssd|diskleser|blu-?ray|heatsink|tilbeh|controller|kontroll|for\s+(ps[\s\-]?5|playstation)",
+            title,
+            re.I,
+        ):
             return None
-        if _CONSOLE.search(blob) or re.search(r"playstation\s*5\s*pro|ps[\s\-]?5\s*pro", blob, re.I):
+        if _CONSOLE.search(title) or re.search(r"playstation\s*5\s*pro|ps[\s\-]?5\s*pro", title, re.I):
             return PS5_PRO
     return None
 
